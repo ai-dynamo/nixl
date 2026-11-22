@@ -17,7 +17,7 @@
 
 namespace nixl_ep_v2::elastic::adaptive {
 
-// Dispatch on a fixed grid; `EPTopology` supplies rank decomposition and the active block count.
+// Dispatch on a fixed grid; `EPTopology` supplies the rank decomposition.
 // Elastic on the NIXL transport: the active ranks are the mask product of `topology.cuh`; masked peers are not counted, written, signalled or waited for
 template <bool kDoCPUSync,
           int kNumLaunchSMs,
@@ -64,9 +64,6 @@ adaptive_dispatch_impl(
     const auto topo = topology::load(topology_ptr);
     const auto sm_idx = static_cast<int>(blockIdx.x), thread_idx = static_cast<int>(threadIdx.x);
 
-    // Surplus blocks of the fixed grid release their SM at once (before any barrier or mbarrier init)
-    if (sm_idx >= topo.num_active_sms)
-        return;
     topo.check_launch();
 
     // The transport context comes from the topology descriptor (`EPTopology`), not from the launch
@@ -76,13 +73,12 @@ adaptive_dispatch_impl(
     // Runtime topology-derived values
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
-    const int num_active_sms = topo.num_active_sms;
     const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
     const int num_active_scaleup_ranks = topo.num_active_scaleup_ranks();
     const int num_experts_per_rank = kNumExpertsPerRank;
     const int num_experts = num_ranks * kNumExpertsPerRank;
     const int num_experts_per_scaleout = num_scaleup_ranks * kNumExpertsPerRank;
-    const int num_channels = kNumChannelsPerSM * num_active_sms;
+    constexpr int num_channels = kNumChannelsPerSM * kNumLaunchSMs;
     const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
 
     // Direct mode: one active NVLink domain, including a nonzero domain index.
@@ -115,9 +111,9 @@ adaptive_dispatch_impl(
     const int channel_in_sm_idx = (warp_idx - kNumNotifyWarps) % kNumChannelsPerSM;
     const int channel_idx = sm_idx * kNumChannelsPerSM + channel_in_sm_idx;
 
-    // Transport handle. Each warp is a channel, spread over the active blocks and the context's channel count (`comm::get_channel_idx`)
-    const auto transport = nixl::NIXLTransport(ctx, comm::get_channel_idx<kNumChannelsPerSM, true>(
-        sm_idx, channel_in_sm_idx, ctx.num_channels, num_active_sms, warp_idx < kNumNotifyWarps));
+    // Transport handle. Each warp is a channel, spread over the fixed launch grid and the context's channel count (`comm::get_channel_idx`)
+    const auto transport = nixl::NIXLTransport(ctx, comm::get_channel_idx<kNumLaunchSMs, kNumChannelsPerSM, true>(
+        sm_idx, channel_in_sm_idx, ctx.num_channels, warp_idx < kNumNotifyWarps));
 
     // Global parallel barriers for scale-out subteam and scale-up subteam
     comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridDispatchTag0, kNumMaxScaleupRanks, false, false, true>(
@@ -196,7 +192,7 @@ adaptive_dispatch_impl(
 
         // Atomic add on shared memory
         const auto global_warp_idx = sm_idx * kNumNotifyWarps + warp_idx;
-        for (int i = global_warp_idx; i < num_tokens; i += kNumNotifyWarps * num_active_sms) {
+        for (int i = global_warp_idx; i < num_tokens; i += kNumNotifyWarps * kNumLaunchSMs) {
             // Expert choice can not be redundant
             // NOTES: no assertions here as they are expensive
             const auto dst_expert_idx = lane_idx < kNumTopk ?
@@ -223,11 +219,11 @@ adaptive_dispatch_impl(
         // Do the remaining work by SM 0
         if (sm_idx == 0) {
             // Reduce all SM's count
-            // Wait all active SMs' arrival
+            // Wait for every launched block to arrive
             for (int i = thread_idx; i < num_ranks + num_experts; i += kNumNotifyThreads) {
                 comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
                     const auto status = ptx::ld_volatile<int64_t>(workspace_layout.get_notify_reduction_workspace_ptr() + i);
-                    if ((status >> 32) == num_active_sms) {
+                    if ((status >> 32) == kNumLaunchSMs) {
                         // Encode and write into the send buffer (hybrid) or shared memory (direct)
                         const auto encoded = math::encode_decode_positive<int>(status & 0xffffffffll);
                         if (is_direct) {
@@ -254,7 +250,7 @@ adaptive_dispatch_impl(
                         printf("NIXL EP adaptive notify (GPU reduction) timeout, scale-out: %d/%d, scale-up: %d/%d, "
                                "slot: %d, status: %d | %d, expected: %d\n",
                                scaleout_rank_idx, num_scaleout_ranks, scaleup_rank_idx, num_scaleup_ranks, i,
-                               static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), num_active_sms);
+                               static_cast<int>(status >> 32), static_cast<int>(status & 0xffffffff), kNumLaunchSMs);
                     }
                     return false;
                 });
@@ -535,8 +531,8 @@ adaptive_dispatch_impl(
         // Warp-major channel numbering sends consecutive tokens to different SMs, so a
         // small batch uses every SM's write bandwidth instead of piling onto SM 0 (the hybrid roles number
         // channels SM-major because their per-channel buffers and tails are laid out that way)
-        const int num_data_channels = kNumDataWarps * num_active_sms;
-        const int channel_idx = data_warp_idx * num_active_sms + sm_idx;
+        constexpr int num_data_channels = kNumDataWarps * kNumLaunchSMs;
+        const int channel_idx = data_warp_idx * kNumLaunchSMs + sm_idx;
 
         // My region in every peer's scale-up buffer (`[num_scaleup_ranks][...]`, indexed by my position; the slots beyond
         // `num_max_tokens_per_rank` that an extent above 1 adds stay unused in direct mode)

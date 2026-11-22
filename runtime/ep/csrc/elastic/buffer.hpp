@@ -11,6 +11,8 @@
 #include <optional>
 #include <vector>
 #include <c10/cuda/CUDAGraphsC10Utils.h>
+#include <c10/cuda/CUDAGuard.h>
+#include <c10/util/ScopeExit.h>
 
 #include <nixl_ep_v2/common/layout.cuh>
 #include <nixl_ep_v2/common/compiled.cuh>
@@ -39,7 +41,6 @@ class ElasticBuffer {
     // Control words reset at rest except combine readiness; barrier counters retain their epochs.
     void *workspace;
     void *host_workspace, *mapped_host_workspace;
-    std::shared_ptr<layout::WorkspaceLayout> workspace_layout;
     torch::Tensor profile_storage;
 
     // CUDA streams
@@ -61,15 +62,16 @@ class ElasticBuffer {
     // The transport: this rank's NIXL agent, its registered region (workspace + GPU buffer) and the peers' views
     std::shared_ptr<nixl::NIXLEPContext> nixl_context;
 
-    // The declared maximum world and this rank's coordinates in it; the staged topology descriptor (`EPTopology`) awaits `commit_topology`
+    // Capacity bounds; caller-assigned world ranks are independent of topology coordinates.
     int max_num_scaleout_ranks = 0, max_num_scaleup_ranks = 0, max_num_ranks = 0;
-    int scaleout_rank_idx = 0, scaleup_rank_idx = 0;
     // Physical routing slots per rank; independent of the model's logical expert count.
     int num_experts_per_rank = 0;
+    // Fixed number of participating main-kernel blocks for this buffer.
+    const int num_launch_sms;
     // Adaptive kernels: device-side topology descriptor (+ host mirror)
-    torch::Tensor topology_tensor;
-    topology::EPTopology topology_host{}, staged_topology{};
-    bool topology_staged = false;
+    torch::Tensor topology_tensor, rank_mapping_tensor;
+    std::vector<int> committed_rank_maps;  // world-to-slot followed by slot-to-world
+    topology::EPTopology topology_host{};
 
 public:
     // The 2 MB unit of the workspace, the GPU buffer and `calculate_buffer_size`
@@ -82,9 +84,9 @@ public:
                   const int& num_cpu_timeout_secs, const int& num_gpu_timeout_secs,
                   const bool& explicitly_destroy,
                   const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
-                  const int& scaleout_rank_idx, const int& scaleup_rank_idx,
+                  const int& world_rank,
                   const int& num_nixl_channels, const std::string& agent_name_prefix,
-                  const int& num_experts_per_rank):
+                  const int& num_experts_per_rank, const int& num_launch_sms):
         num_buffer_bytes(num_buffer_bytes),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
@@ -92,41 +94,43 @@ public:
         use_fp8_dispatch(use_fp8_dispatch),
         prefer_overlap_with_compute(prefer_overlap_with_compute),
         max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks), max_num_ranks(max_num_scaleout_ranks * max_num_scaleup_ranks),
-        scaleout_rank_idx(scaleout_rank_idx), scaleup_rank_idx(scaleup_rank_idx), num_experts_per_rank(num_experts_per_rank) {
+        num_experts_per_rank(num_experts_per_rank),
+        num_launch_sms(num_launch_sms) {
         // Check buffer bytes alignment (2 MB)
         EP_HOST_ASSERT(num_buffer_bytes > 0 and num_buffer_bytes % kNumAlignmentBytes == 0);
+        EP_HOST_ASSERT(2 <= num_launch_sms and num_launch_sms <= topology::kNumMaxLaunchSMs and num_launch_sms % 2 == 0 and
+                       "`num_launch_sms` must be even, between 2 and 64");
 
         // Workspace is aligned to 2 MB so that it sits cleanly at the front of the symmetric memory
         const auto num_workspace_bytes = math::align<int64_t>(
             layout::WorkspaceLayout::get_num_bytes(), kNumAlignmentBytes);
 
-        // The declared maximum world and this rank's coordinates in it. Every rank of a world declares the same maximum world:
-        // the world-rank numbering (`topology::world_rank`) and the handle shapes depend on it, and no exchange compares it
-        // (`connect_ranks` checks a peer's world-rank range and region size only). The dispatch capacity flag must also match
-        // because it determines the source arena offsets.
+        // Capacity and wire-format settings must match across peers.
         EP_HOST_ASSERT(0 < max_num_scaleout_ranks and max_num_scaleout_ranks <= topology::kNumMaxScaleoutRanksCap and
                        0 < max_num_scaleup_ranks and max_num_scaleup_ranks <= topology::kNumMaxScaleupRanksCap and "Bad declared maximum world");
-        EP_HOST_ASSERT(0 <= scaleout_rank_idx and scaleout_rank_idx < max_num_scaleout_ranks and
-                       0 <= scaleup_rank_idx and scaleup_rank_idx < max_num_scaleup_ranks and
-                       "This rank's coordinates are outside the declared maximum world");
+        EP_HOST_ASSERT(0 <= world_rank and world_rank < max_num_ranks and
+                       "World rank is outside the declared maximum world");
 
-        // All declared slots must fit, including currently inactive ranks. Zero is for barrier-only buffers.
-        EP_HOST_ASSERT(0 <= num_experts_per_rank and
-                       "Invalid number of physical expert slots per rank");
+        // All declared slots must fit, including currently inactive ranks.
+        EP_HOST_ASSERT(0 < num_experts_per_rank and
+                       "The number of physical expert slots per rank must be positive");
         EP_HOST_ASSERT(static_cast<int64_t>(max_num_ranks) * num_experts_per_rank <= layout::WorkspaceLayout::kNumMaxExperts and
                        "The declared maximum world's physical expert slots exceed workspace capacity");
 
         // Create the transport: one symmetric region per rank, registered with this rank's agent
         // Symmetric memory layout: [[Workspace] GPU buffer]
-        const int world_rank = topology::world_rank(scaleout_rank_idx, scaleup_rank_idx, max_num_scaleup_ranks);
         this->nixl_context = std::make_shared<nixl::NIXLEPContext>(
             agent_name_prefix + "_" + std::to_string(world_rank), world_rank, max_num_ranks,
             max_num_scaleup_ranks, num_workspace_bytes + num_buffer_bytes, num_nixl_channels);
         workspace = this->nixl_context->region_base();
 
-        // Topology descriptor (`EPTopology`); its `mode` follows the active domains: the Python layer derives it for every world it stages
+        // Topology descriptor (`EPTopology`); Python derives its mode from the active domains.
         topology_tensor = torch::empty({static_cast<int64_t>(sizeof(topology::EPTopology))},
                                        torch::TensorOptions().dtype(torch::kByte).device(torch::kCUDA));
+
+        // Fixed device addresses let captured kernels use a newly activated rank mapping.
+        rank_mapping_tensor = torch::empty({2, max_num_ranks}, torch::TensorOptions().dtype(torch::kInt).device(torch::kCUDA));
+        committed_rank_maps.resize(2 * max_num_ranks, -1);
 
         // Timeout
         this->num_cpu_timeout_secs = num_cpu_timeout_secs;
@@ -136,28 +140,28 @@ public:
         build_barrier(max_num_scaleup_ranks, num_gpu_timeout_cycles);
 
         // Assign workspaces and buffers
-        workspace_layout = std::make_shared<layout::WorkspaceLayout>(workspace);
         buffer = static_cast<uint8_t*>(workspace) + num_workspace_bytes;
         CUDA_RUNTIME_CHECK(cudaMemset(workspace, 0, num_workspace_bytes));
 
         if (jit::Compiler::profiling_enabled()) {
-            const int num_blocks = std::max(topology::get_num_launch_sms(), jit::device_runtime->get_num_sms());
+            const auto workspace_layout = layout::WorkspaceLayout(workspace);
+            const int num_blocks = std::max(num_launch_sms, jit::device_runtime->get_num_sms());
             const int num_warps = jit::device_runtime->get_max_warps_per_block();
             profile_storage = torch::empty({profile::kNumPhases, num_blocks, num_warps},
                                            torch::TensorOptions().dtype(torch::kInt64).device(torch::kCUDA));
             CUDA_RUNTIME_CHECK(cudaMemset(profile_storage.data_ptr(), 0, profile_storage.nbytes()));
             const profile::Header profile_header{profile_storage.data_ptr<int64_t>(), num_blocks, num_warps};
-            CUDA_RUNTIME_CHECK(cudaMemcpy(workspace_layout->get_profile_header(), &profile_header,
+            CUDA_RUNTIME_CHECK(cudaMemcpy(workspace_layout.get_profile_header(), &profile_header,
                                           sizeof(profile_header), cudaMemcpyHostToDevice));
             CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
         }
 
-        // Initial topology: this rank alone in direct mode, with every launched block active.
+        // Initial topology: this rank alone in direct mode.
         topology::ScaleupMask self = {};
-        self.words[scaleup_rank_idx / 64] = 1ull << (scaleup_rank_idx % 64);
-        stage_topology(topology::kModeDirect, 1u << scaleout_rank_idx, self, topology::get_num_launch_sms());
+        self.words[0] = 1;
         // No live topology exists yet: an upload failure unwinds the constructor's owned resources.
-        publish_topology(at::cuda::getCurrentCUDAStream());
+        publish_topology(make_topology(topology::kModeDirect, 1u, self),
+                         at::cuda::getCurrentCUDAStream());
 
         // Allocate host workspaces
         CUDA_RUNTIME_CHECK(cudaMallocHost(&host_workspace, layout::WorkspaceLayout::get_num_bytes(), cudaHostAllocMapped));
@@ -199,24 +203,37 @@ public:
     }
 
     // ---- Topology descriptor (`EPTopology`) ----
-    // Two-step and collective: `stage_topology_masks` validates a world on the host, `commit_topology` writes it to the device
-    // with one stream-ordered copy (after the transport's view swap when peers changed). Membership: see `topology.cuh`
+    // Validate the new world before activating prepared views and publishing it to the device.
 
     // Python-facing: the position mask as 64-bit words, least significant first (missing words are zero)
-    void stage_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
-                              const int& num_active_sms) {
+    void update_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
+                               const std::vector<int>& disconnect_ranks) {
+        EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
+                       "Topology updates must run outside CUDA-graph capture, between launches");
         EP_HOST_ASSERT(scaleup_mask_words.size() <= static_cast<size_t>(topology::kNumScaleupMaskWords) and
                        "The position mask exceeds `kNumMaxScaleupRanksCap` bits");
         topology::ScaleupMask scaleup_mask = {};
         for (size_t i = 0; i < scaleup_mask_words.size(); ++ i)
             scaleup_mask.words[i] = scaleup_mask_words[i];
-        stage_topology(mode, scaleout_mask, scaleup_mask, num_active_sms);
+        const bool inactive_retirement = not disconnect_ranks.empty() and not topology_host.is_active();
+        const auto next = inactive_retirement ? topology_host : make_topology(mode, scaleout_mask, scaleup_mask);
+        if (next.is_active())
+            for (const int wr: disconnect_ranks) {
+                const int slot = 0 <= wr and wr < max_num_ranks ? nixl_context->get_world_to_slot()[wr] : -1;
+                EP_HOST_ASSERT((slot < 0 or not next.is_active(slot / max_num_scaleup_ranks, slot % max_num_scaleup_ranks)) and
+                               "Disconnecting peers must be excluded from the requested active topology");
+            }
+        if (not disconnect_ranks.empty()) {
+            nixl_context->disconnect_ranks(disconnect_ranks);
+            // Logical retirement has already changed peer state; activation failure cannot be recovered.
+            nixl::mutate_transport_or_abort(nixl_context->world_rank, "peer retirement", [&] { apply_topology(next, inactive_retirement); });
+        } else {
+            apply_topology(next);
+        }
     }
 
 private:
-    // Validate the world through a local descriptor, then hold it for `commit_topology` (a refused world leaves the staged one untouched)
-    void stage_topology(const int& mode, const uint32_t& scaleout_mask, const topology::ScaleupMask& scaleup_mask,
-                        const int& num_active_sms) {
+    topology::EPTopology make_topology(const int& mode, const uint32_t& scaleout_mask, const topology::ScaleupMask& scaleup_mask) const {
         EP_HOST_ASSERT(mode == topology::kModeDirect or mode == topology::kModeHybrid);
         EP_HOST_ASSERT(scaleout_mask != 0 and scaleup_mask.popc() > 0 and "No rank is active");
         const int num_scaleout_ranks = 32 - __builtin_clz(scaleout_mask);
@@ -227,76 +244,90 @@ private:
         next.mode = static_cast<topology::Mode>(mode);
         next.num_scaleout_ranks = num_scaleout_ranks;
         next.num_scaleup_ranks = num_scaleup_ranks;
-        next.scaleout_rank_idx = scaleout_rank_idx;
-        next.scaleup_rank_idx = scaleup_rank_idx;
-        next.num_active_sms = num_active_sms;
+        const auto& world_to_slot = nixl_context->get_world_to_slot();
+        const int self_slot = world_to_slot[nixl_context->world_rank];
+        next.scaleout_rank_idx = self_slot / max_num_scaleup_ranks;
+        next.scaleup_rank_idx = self_slot % max_num_scaleup_ranks;
+        next.num_world_ranks = max_num_ranks;
+        next.world_to_slot = rank_mapping_tensor.data_ptr<int>();
+        next.slot_to_world = rank_mapping_tensor.data_ptr<int>() + max_num_ranks;
         next.scaleout_mask = scaleout_mask;
         next.scaleup_mask = scaleup_mask;
         next.transport = nixl_context->get_device_context_ptr();
         EP_HOST_ASSERT((mode == topology::kModeHybrid or next.num_active_scaleout_ranks() == 1) and
                        "Direct mode needs exactly one active NVLink domain");
-        EP_HOST_ASSERT(2 <= num_active_sms and num_active_sms <= topology::get_num_launch_sms() and num_active_sms % 2 == 0 and
-                       "`num_active_sms` must be even, between 2 and the launch grid (`get_adaptive_num_launch_sms()`, NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS)");
 
         // An active rank requires every active peer in its logical membership; the transport chooses the endpoints.
-        if (next.is_active())
+        if (next.is_active()) {
+            std::vector<int> slot_to_world(max_num_ranks, -1);
+            for (int wr = 0; wr < max_num_ranks; ++ wr)
+                if (world_to_slot[wr] >= 0)
+                    slot_to_world[world_to_slot[wr]] = wr;
             for (int d = 0; d < next.num_scaleout_ranks; ++ d) for (int k = 0; k < next.num_scaleup_ranks; ++ k) {
-                const int wr = topology::world_rank(d, k, max_num_scaleup_ranks);
-                if (next.is_active(d, k) and not nixl_context->is_connected(wr))
-                    EP_HOST_UNREACHABLE(fmt::format("Rank {} stages a world with active world rank {} (domain {}, position {}) that is not connected: call `connect_ranks` first", nixl_context->world_rank, wr, d, k));
+                const int wr = slot_to_world[d * max_num_scaleup_ranks + k];
+                if (next.is_active(d, k) and (wr < 0 or not nixl_context->is_connected(wr)))
+                    EP_HOST_UNREACHABLE(fmt::format("Rank {} requests domain {}, position {} without a connected peer: call `connect_ranks` first", nixl_context->world_rank, d, k));
             }
-        staged_topology = next;
-        topology_staged = true;
+        }
+        return next;
     }
 
-    void publish_topology(const at::cuda::CUDAStream& stream) {
-        // One stream-ordered write of the staged topology descriptor (`EPTopology`) on the current stream, which the
-        // communication stream then waits for (a pageable source: CUDA takes the bytes now and refuses it under capture)
-        CUDA_RUNTIME_CHECK(cudaMemcpyAsync(topology_tensor.data_ptr(), &staged_topology, sizeof(topology::EPTopology),
+    void publish_topology(const topology::EPTopology& next, const at::cuda::CUDAStream& stream) {
+        // The caller drained the old world; publish maps and descriptor on the same ordered stream.
+        const auto& prepared = nixl_context->get_world_to_slot();
+        std::copy(prepared.begin(), prepared.end(), committed_rank_maps.begin());
+        std::fill(committed_rank_maps.begin() + max_num_ranks, committed_rank_maps.end(), -1);
+        for (int wr = 0; wr < max_num_ranks; ++ wr)
+            if (prepared[wr] >= 0)
+                committed_rank_maps[max_num_ranks + prepared[wr]] = wr;
+        CUDA_RUNTIME_CHECK(cudaMemcpyAsync(rank_mapping_tensor.data_ptr(), committed_rank_maps.data(),
+                                           2 * max_num_ranks * sizeof(int), cudaMemcpyHostToDevice, stream));
+        topology_host = next;
+        CUDA_RUNTIME_CHECK(cudaMemcpyAsync(topology_tensor.data_ptr(), &topology_host, sizeof(topology::EPTopology),
                                            cudaMemcpyHostToDevice, stream));
         stream_wait(comm_stream, stream);
+    }
 
-        topology_host = staged_topology;
-        topology_staged = false;
+    void apply_topology(const topology::EPTopology& next, bool preserve_mapping = false) {
+        const auto stream = at::cuda::getCurrentCUDAStream();
+
+        // Activate prepared transport views before publishing the topology.
+        nixl_context->commit(stream);
+
+        if (preserve_mapping)
+            return;
+
+        // The descriptor may already have changed if the stream dependency fails; do not expose a stale host mirror.
+        nixl::mutate_transport_or_abort(nixl_context->world_rank, "topology update", [&] { publish_topology(next, stream); });
     }
 
 public:
-    void commit_topology() {
-        EP_HOST_ASSERT((topology_staged or nixl_context->has_staged_views()) and
-                       "Nothing staged: call `stage_topology`, `connect_ranks` or `disconnect_ranks` first");
-        EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
-                       "`commit_topology` inside a CUDA-graph capture: commit between launches");
-        // Peers changed but the world did not (e.g. dropping the peers a previous commit excluded): recommit it
-        if (not topology_staged)
-            staged_topology = topology_host;
-        const auto stream = at::cuda::getCurrentCUDAStream();
-
-        // Peers changed since the last commit: swap the transport's views in first (a device sync inside)
-        if (nixl_context->has_staged_views()) {
-            nixl_context->commit(stream);
-        }
-
-        // The descriptor may already have changed if the stream dependency fails; do not expose a stale host mirror.
-        nixl::mutate_transport_or_abort(nixl_context->world_rank, "topology commit", [&] { publish_topology(stream); });
-    }
-
-    std::tuple<int, int> get_topology() const {
-        return {static_cast<int>(topology_host.mode), topology_host.num_active_sms};
+    int get_mode() const {
+        return static_cast<int>(topology_host.mode);
     }
 
     const topology::EPTopology* get_topology_ptr() const {
         return static_cast<const topology::EPTopology*>(topology_tensor.data_ptr());
     }
 
+    std::vector<int> get_active_ranks() const {
+        std::vector<int> active;
+        for (int wr = 0; wr < max_num_ranks; ++ wr) {
+            const int slot = committed_rank_maps[wr];
+            if (slot >= 0 and topology_host.is_active(slot / max_num_scaleup_ranks, slot % max_num_scaleup_ranks))
+                active.push_back(wr);
+        }
+        return active;
+    }
+
+    std::vector<int> get_rank_mapping() const {
+        return {committed_rank_maps.begin(), committed_rank_maps.begin() + max_num_ranks};
+    }
+
     // The masks of the active domains and positions of the committed topology descriptor (`EPTopology`), the position mask as its 64-bit words
     std::tuple<uint32_t, std::vector<uint64_t>> get_topology_masks() const {
         std::vector<uint64_t> words(topology_host.scaleup_mask.words, topology_host.scaleup_mask.words + topology::kNumScaleupMaskWords);
         return {topology_host.scaleout_mask, words};
-    }
-
-    // Whether a world is staged and not committed (`set_num_active_sms` refuses to overwrite it)
-    bool has_staged_topology() const {
-        return topology_staged;
     }
 
 private:
@@ -308,7 +339,7 @@ private:
 
 public:
     // ---- Peers ----
-    // Join: `connect_ranks`, then stage and commit. Leave: commit a world without the rank, then `disconnect_ranks`
+    // Join: `connect_ranks`, then `set_active_ranks`. Leave: `disconnect_ranks` excludes and retires peers.
     std::string get_local_agent_name() const {
         return nixl_context->get_local_agent_name();
     }
@@ -322,7 +353,7 @@ public:
     }
 
     void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
-                       const std::vector<peer_info_t>& peer_infos) {
+                       const std::vector<peer_info_t>& peer_infos, const std::vector<int>& world_to_slot) {
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                        "`connect_ranks` inside a CUDA-graph capture: prepare peers outside capture");
         std::vector<nixl::NIXLPeerInfo> infos;
@@ -333,7 +364,7 @@ public:
         // A connected pair counts its barriers from zero on both sides (the peer runs this for us too): zero our words for
         // the world rank now, before our hello goes out, since the peer can write to us only once it has our hello and committed
         const auto stream = at::cuda::getStreamFromPool();
-        const auto& wl = *workspace_layout;
+        const auto wl = layout::WorkspaceLayout(workspace);
         for (const int wr: world_ranks) {
             if (nixl_context->is_connected(wr))
                 EP_HOST_UNREACHABLE(fmt::format("Rank {}: world rank {} is this rank or already connected", nixl_context->world_rank, wr));
@@ -341,24 +372,7 @@ public:
             CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_expected_ptr(wr), 0, sizeof(int64_t), stream));
         }
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
-        nixl_context->connect_ranks(world_ranks, remote_agent_names, infos);
-    }
-
-    void disconnect_ranks(const std::vector<int>& world_ranks) {
-        // Active and staged worlds must exclude a peer before it leaves the logical membership.
-        if (topology_host.is_active()) {
-            for (const int wr: world_ranks) {
-                if (topology_host.is_active(wr / max_num_scaleup_ranks, wr % max_num_scaleup_ranks))
-                    EP_HOST_UNREACHABLE(fmt::format("Rank {} disconnects world rank {}, which is active: commit a world without it first", nixl_context->world_rank, wr));
-            }
-        }
-        if (topology_staged and staged_topology.is_active()) {
-            for (const int wr: world_ranks) {
-                if (staged_topology.is_active(wr / max_num_scaleup_ranks, wr % max_num_scaleup_ranks))
-                    EP_HOST_UNREACHABLE(fmt::format("Rank {} disconnects world rank {}, which is active in the staged world: stage a world without it first", nixl_context->world_rank, wr));
-            }
-        }
-        nixl_context->disconnect_ranks(world_ranks);
+        nixl_context->connect_ranks(world_ranks, remote_agent_names, infos, world_to_slot);
     }
 
     std::vector<int> get_connected_ranks() const {
@@ -403,12 +417,13 @@ public:
     }
 
     torch::cuda::CUDAStream stream_control_prologue(const std::optional<EventHandle>& previous_event,
-                                                    const bool& allocate_on_comm_stream) const {
+                                                    const bool& allocate_on_comm_stream,
+                                                    c10::cuda::OptionalCUDAStreamGuard& stream_guard) const {
         // Allocate all tensors on communication stream if set
         // NOTES: do not allocate tensors upfront!
         const auto compute_stream = at::cuda::getCurrentCUDAStream();
         if (allocate_on_comm_stream)
-            at::cuda::setCurrentCUDAStream(comm_stream);
+            stream_guard.reset_stream(comm_stream);
 
         // Assertion for safety
         // `previous_event` implicitly means the overlapping computation kernels are launched first,
@@ -455,10 +470,6 @@ public:
                 for (auto& t: tensors) if (t.has_value())
                     t->record_stream(compute_stream);
         }
-
-        // Switch back compute stream
-        if (allocate_on_comm_stream)
-            at::cuda::setCurrentCUDAStream(compute_stream);
 
         // The CUDA event marking the finishing
         return event;
@@ -541,9 +552,6 @@ public:
         // The worst case SF bytes must be less than the main part
         EP_HOST_ASSERT(get_max_num_fp8_sf_packs(hidden) * sizeof(sf_pack_t) <= hidden);
 
-        // Reserve for the maximum supported top-k.
-        num_topk = num_topk == 0 ? 32 : num_topk;
-
         // Shared receive regions plus the two send buffers (see `get_buffer_arena_sizes`), aligned to 2 MB
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena_sizes(
             num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, use_fp8_dispatch, max_num_scaleout_ranks, max_num_scaleup_ranks);
@@ -586,16 +594,12 @@ public:
         EP_HOST_ASSERT((not nvfp4 or (sf.has_value() and hidden % 64 == 0)) and
                        "NVFP4 requires packed uint8 codes and block scales, with logical hidden divisible by 64");
         EP_HOST_ASSERT(not (nvfp4 and use_tma_aligned_col_major_sf) and "NVFP4 scales must use row-major layout");
-        EP_HOST_ASSERT(num_experts_per_rank > 0 and "Dispatch requires num_experts_per_rank at buffer construction");
         const int num_local_experts = num_experts_per_rank;
         EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
         EP_HOST_ASSERT((not use_fp8_dispatch or x.element_size() == sizeof(__nv_fp8_e4m3)) and
                        "An FP8-capacity buffer requires one-byte dispatch activations; construct with use_fp8_dispatch=False for BF16");
         EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
         EP_HOST_ASSERT(num_tokens <= num_max_tokens_per_rank);
-
-        // Capacities of the handle tensors: the maximum world, fixed local slots, the whole launch grid
-        const int num_launch_channels = get_num_launch_channels();
 
         // Check SF stuffs
         int num_sf_packs = 0;
@@ -654,9 +658,10 @@ public:
 
         // Stream control
         // All new tensor allocations should happen after this
-        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream);
+        c10::cuda::OptionalCUDAStreamGuard stream_guard;
+        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream, stream_guard);
 
-        // Handle tensors: capacity storage (the maximum world, the whole launch grid) handed back as extent-shaped views
+        // Handle tensors: maximum-world storage handed back as extent-shaped views
         const auto int_options = at::TensorOptions(torch::kCUDA).dtype(torch::kInt);
         const auto alloc_flat = [&](const int64_t& capacity, const std::vector<int64_t>& extent_shape) {
             const auto extent_numel = std::accumulate(extent_shape.begin(), extent_shape.end(), int64_t(1), std::multiplies<>());
@@ -673,6 +678,10 @@ public:
 
         // Combine's per-rank prefix sums; the total occupies the fixed last slot. Zero before dispatch.
         auto psum_num_recv_tokens_per_scaleup_rank = torch::empty({max_num_scaleup_ranks + 1}, int_options);
+        // A prelaunch refusal must retain storage until the queued initialization completes.
+        auto preserve_prefix_on_failure = c10::make_scope_exit([&] {
+            psum_num_recv_tokens_per_scaleup_rank.record_stream(comm_stream);
+        });
         CUDA_RUNTIME_CHECK(cudaMemsetAsync(psum_num_recv_tokens_per_scaleup_rank.data_ptr(), 0,
                                            psum_num_recv_tokens_per_scaleup_rank.nbytes(), comm_stream));
 
@@ -683,14 +692,13 @@ public:
             max_num_ranks, num_smem_bytes, prefer_overlap_with_compute);
         if (get_env<int>("NIXL_EP_BUFFER_DEBUG"))
             printf("Elastic buffer uses %d channels per SM\n", num_channels_per_sm);
-        const int num_channels = topo.num_active_sms * num_channels_per_sm;
+        const int num_channels = num_launch_sms * num_channels_per_sm;
 
         // Handles: the forwarding metadata and the linked list are allocated in both modes (the direct mode
         // leaves them unused), so that a captured graph can switch modes
-        // Capacities: `num_channels * num_max_tokens_per_channel <= num_max_tokens_per_rank + num_channels` at the whole launch grid
         const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
-        const int64_t max_channel_tokens = static_cast<int64_t>(num_max_tokens_per_rank) + num_launch_channels;
-        const int64_t max_linked_list_len = max_num_scaleout_ranks * max_channel_tokens + num_launch_channels;
+        const int64_t max_linked_list_len = static_cast<int64_t>(num_channels) *
+            (static_cast<int64_t>(max_num_scaleout_ranks) * num_max_tokens_per_channel + 1);
 
         // Forwarded token [channel, token]: source rank/token (0), chunk-end flag (1),
         // top-k scale-up peers (2:2+topk), then their destination slots (2+topk:).
@@ -742,11 +750,13 @@ public:
                         mapped_host_workspace,
                         get_topology_ptr(),
                         max_num_scaleout_ranks, max_num_scaleup_ranks,
+                        num_launch_sms,
                         num_channels_per_sm,
                         num_smem_bytes,
                         num_gpu_timeout_cycles,
                         do_cpu_sync,
                         comm_stream);
+        preserve_prefix_on_failure.release();
 
         // Received token counters
         int num_recv_tokens = 0, num_expanded_tokens = 0;
@@ -869,7 +879,7 @@ public:
                                       num_sf_packs, recv_sf_token_stride, recv_sf_hidden_stride,
                                       num_experts_per_rank, num_topk, expert_alignment,
                                       get_topology_ptr(),
-                                      jit::device_runtime->get_num_sms(),
+                                      jit::device_runtime->get_num_sms(), num_launch_sms,
                                       jit::device_runtime->get_num_smem_bytes(),
                                       num_channels_per_sm,
                                       do_expand, do_zero_padding,
@@ -915,7 +925,6 @@ public:
             const torch::Tensor& channel_linked_list,
             const bool& recv_count_is_exact,
             const int& num_max_tokens_per_rank,
-            const int& num_sms,
             const std::optional<EventHandle>& previous_event,
             const std::optional<EventHandle>& previous_event_before_epilogue,
             const bool& async_with_compute_stream,
@@ -924,7 +933,6 @@ public:
         const auto& topo = active_rank_topology();
 
         // Check data
-        EP_HOST_ASSERT(num_experts_per_rank > 0 and "Combine requires num_experts_per_rank at buffer construction");
         const auto [num_tokens, hidden] = get_shape<2>(x);
         EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
         EP_HOST_ASSERT(x.scalar_type() == torch::kBFloat16);
@@ -964,7 +972,8 @@ public:
 
         // Stream control
         // All new tensor allocations should happen after this
-        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream);
+        c10::cuda::OptionalCUDAStreamGuard stream_guard;
+        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream, stream_guard);
 
         // Check buffer size
         const auto arena = get_buffer_arena(num_max_tokens_per_rank, hidden, num_topk);
@@ -972,12 +981,10 @@ public:
         // The forwarding metadata of the dispatch handle
         // The token metadata during forward
         const auto [num_channels_, d1, d2] = get_shape<3>(token_metadata_at_forward);
-        EP_HOST_ASSERT(num_sms > 0 and num_sms == topo.num_active_sms and
-                       "The handle was produced with another active SM count");
-        EP_HOST_ASSERT(num_channels_ > 0 and num_channels_ % num_sms == 0 and
-                       num_channels_ / num_sms <= kNumMaxChannelsPerSM and
+        EP_HOST_ASSERT(num_channels_ > 0 and num_channels_ % num_launch_sms == 0 and
+                       num_channels_ / num_launch_sms <= kNumMaxChannelsPerSM and
                        "Invalid dispatch handle channel count");
-        const int num_channels_per_sm = num_channels_ / num_sms;
+        const int num_channels_per_sm = num_channels_ / num_launch_sms;
         const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels_);
         const int num_channels = num_channels_;
         int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
@@ -1006,6 +1013,7 @@ public:
             hidden, num_topk,
             num_gpu_timeout_cycles,
             max_num_scaleup_ranks,
+            num_launch_sms,
             num_channels_per_sm,
             jit::device_runtime->get_num_smem_bytes(),
             use_expanded_layout, allow_multiple_reduction,
@@ -1025,7 +1033,7 @@ public:
                                        buffer,
                                        bias_ptrs[0], bias_ptrs[1],
                                        get_topology_ptr(),
-                                       jit::device_runtime->get_num_sms(),
+                                       jit::device_runtime->get_num_sms(), num_launch_sms,
                                        jit::device_runtime->get_num_smem_bytes(),
                                        max_num_scaleup_ranks,
                                        num_channels_per_sm,
@@ -1053,25 +1061,23 @@ static void register_apis(pybind11::module_& m) {
         .def("current_stream_wait", &EventHandle::current_stream_wait);
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
-        .def(pybind11::init<int64_t, bool, bool, bool, int, int, bool, int, int, int, int, int, std::string, int>())
+        .def(pybind11::init<int64_t, bool, bool, bool, int, int, bool, int, int, int, int, std::string, int, int>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
-        .def("stage_topology_masks", &ElasticBuffer::stage_topology_masks)
-        .def("commit_topology", &ElasticBuffer::commit_topology)
-        .def("get_topology", &ElasticBuffer::get_topology)
+        .def("update_topology_masks", &ElasticBuffer::update_topology_masks)
+        .def("get_mode", &ElasticBuffer::get_mode)
         .def("get_topology_masks", &ElasticBuffer::get_topology_masks)
-        .def("has_staged_topology", &ElasticBuffer::has_staged_topology)
+        .def("get_active_ranks", &ElasticBuffer::get_active_ranks)
+        .def("get_rank_mapping", &ElasticBuffer::get_rank_mapping)
         .def("get_local_agent_name", &ElasticBuffer::get_local_agent_name)
         .def("get_local_peer_info", &ElasticBuffer::get_local_peer_info)
         .def("connect_ranks", &ElasticBuffer::connect_ranks)
-        .def("disconnect_ranks", &ElasticBuffer::disconnect_ranks)
         .def("get_connected_ranks", &ElasticBuffer::get_connected_ranks)
         .def("read_profile", &ElasticBuffer::read_profile)
         .def("barrier", &ElasticBuffer::barrier)
         .def("dispatch", &ElasticBuffer::dispatch)
         .def("combine", &ElasticBuffer::combine);
     m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
-    m.attr("min_elastic_buffer_bytes") = ElasticBuffer::kNumAlignmentBytes;
 }
 
 }  // namespace nixl_ep_v2::elastic

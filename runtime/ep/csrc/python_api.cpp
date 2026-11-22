@@ -17,8 +17,6 @@
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "NIXL EP: an efficient expert-parallel communication library";
 
-    m.def("get_adaptive_num_launch_sms", []() { return nixl_ep_v2::elastic::topology::get_num_launch_sms(); });
-    m.attr("min_num_active_ranks") = nixl_ep_v2::elastic::topology::kMinNumActiveRanks;
     m.def("is_fabric_handle_supported", &nixl_ep_v2::elastic::nixl::is_fabric_handle_supported);
 
     // The integer type of top-k indices

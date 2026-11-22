@@ -32,12 +32,11 @@ def run(local_rank, num_local_ranks, args):
         num_max_tokens_per_rank=max(args.token_counts),
         hidden=args.hidden,
         num_topk=args.num_topk,
+        num_launch_sms=args.num_sms,
         allow_multiple_reduction=bool(args.allow_multiple_reduction),
         explicitly_destroy=True,
     )
-    modes = (
-        ("direct", "hybrid") if buffer._get_topology()[0] == "direct" else ("hybrid",)
-    )
+    modes = ("direct", "hybrid") if buffer._get_mode() == "direct" else ("hybrid",)
     first_kernels = None
     for capacity in args.token_counts:
         for mode in modes:
@@ -93,7 +92,7 @@ def parse_args():
     parser.add_argument("--hidden", type=int, default=7168)
     parser.add_argument("--num-topk", type=int, default=6)
     parser.add_argument("--num-experts", type=int, default=256)
-    parser.add_argument("--num-sms", type=int, default=0)
+    parser.add_argument("--num-sms", type=int, default=24)
     parser.add_argument(
         "--allow-multiple-reduction", type=int, choices=(0, 1), default=1
     )

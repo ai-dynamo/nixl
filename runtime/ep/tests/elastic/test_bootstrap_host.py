@@ -14,7 +14,7 @@ from types import SimpleNamespace
 from unittest.mock import Mock, patch
 
 import torch.distributed as dist
-from test_auto_sm_host import load_buffer
+from test_fixed_sm_host import load_buffer
 
 
 def parallel(functions):
@@ -69,9 +69,7 @@ class BootstrapTests(unittest.TestCase):
             positions = len(records) if positions is None else positions
             return len(records) // positions, positions
 
-        path = (
-            Path(__file__).resolve().parents[2] / "python/utils/nixl_bootstrap.py"
-        )
+        path = Path(__file__).resolve().parents[2] / "python/utils/nixl_bootstrap.py"
         spec = importlib.util.spec_from_file_location("bootstrap_host.bootstrap", path)
         assert spec is not None and spec.loader is not None
         self.module = importlib.util.module_from_spec(spec)
@@ -386,29 +384,36 @@ class BootstrapTests(unittest.TestCase):
         namespace["_C"].ElasticBuffer = Mock(wraps=native)
         for store in (None, ForbiddenBoundary()):
             with self.subTest(store=store):
-                buffer = Buffer(5, 3, 4, store=store, explicitly_destroy=True)
+                buffer = Buffer(
+                    5,
+                    3,
+                    4,
+                    num_experts_per_rank=1,
+                    num_max_tokens_per_rank=1,
+                    hidden=256,
+                    num_topk=1,
+                    store=store,
+                    explicitly_destroy=True,
+                )
                 self.assertIs(buffer.store, store)
                 self.assertEqual(buffer.world_rank, 5)
-                self.assertEqual(
-                    (buffer.scaleout_rank_idx, buffer.scaleup_rank_idx), (1, 1)
-                )
-                self.assertEqual(buffer._get_topology_masks(), (2, 2))
+                self.assertFalse(hasattr(buffer, "scaleout_rank_idx"))
+                self.assertFalse(hasattr(buffer, "scaleup_rank_idx"))
+                self.assertEqual(buffer._get_topology_masks(), (1, 1))
                 self.assertEqual(buffer.get_active_ranks(), [5])
                 self.assertIn(buffer.world_rank, buffer.get_active_ranks())
                 self.assertEqual(buffer.runtime.connected, set())
-                self.assertFalse(buffer.runtime.has_staged_topology())
                 self.assertFalse(buffer.runtime.staged_views)
-                self.assertEqual(buffer.runtime.commit_calls, 0)
+                self.assertEqual(buffer.runtime.activation_calls, 0)
                 self.assertEqual(
-                    buffer.num_bytes, namespace["_C"].min_elastic_buffer_bytes
+                    buffer.num_bytes,
+                    namespace["_C"].calculate_elastic_buffer_size.return_value,
                 )
                 self.assertEqual(
                     namespace["_C"].ElasticBuffer.call_args.args[0], buffer.num_bytes
                 )
-                with self.assertRaisesRegex(AssertionError, "num_experts_per_rank"):
-                    buffer.dispatch(None, None)
         self.assertEqual(namespace["_C"].ElasticBuffer.call_count, 2)
-        namespace["_C"].calculate_elastic_buffer_size.assert_not_called()
+        self.assertEqual(namespace["_C"].calculate_elastic_buffer_size.call_count, 2)
         self.assertEqual(cuda.synchronizations, 2)
         forbidden.assert_not_called()
 
@@ -469,7 +474,78 @@ class BootstrapTests(unittest.TestCase):
                     buffer.num_bytes,
                 )
 
-    def test_invalid_world_coordinates_fail_before_sizing_or_native_allocation(self):
+    def test_expert_capacity_is_required_and_positive_before_native_allocation(self):
+        Buffer, cuda, _ = load_buffer()
+        native = Buffer.__init__.__globals__["_C"]
+        native.ElasticBuffer = Mock()
+        with self.assertRaisesRegex(TypeError, "num_experts_per_rank"):
+            Buffer(0, 1, 1, 1, 256, num_topk=32)
+        for capacity in (0, -1, True, 1.0, None):
+            with self.subTest(capacity=capacity):
+                with self.assertRaisesRegex(
+                    ValueError, "num_experts_per_rank must be a positive integer"
+                ):
+                    Buffer(0, 1, 1, 1, 256, num_experts_per_rank=capacity, num_topk=32)
+        native.ElasticBuffer.assert_not_called()
+        native.calculate_elastic_buffer_size.assert_not_called()
+        self.assertEqual(cuda.synchronizations, 0)
+
+    def test_topk_capacity_is_required_and_validated_before_native_allocation(self):
+        Buffer, cuda, namespace = load_buffer()
+        native = namespace["_C"]
+        native.ElasticBuffer = Mock(wraps=native.ElasticBuffer)
+        settings = dict(
+            max_num_scaleout_ranks=1,
+            max_num_scaleup_ranks=1,
+            num_max_tokens_per_rank=1,
+            hidden=256,
+        )
+        for call in (
+            lambda **kw: Buffer(world_rank=0, num_experts_per_rank=4, **kw),
+            Buffer.get_buffer_size_hint,
+        ):
+            with self.assertRaisesRegex(TypeError, "num_topk"):
+                call(**settings)
+            for num_topk in (0, -1, 33, True, False, 1.0, "1", None):
+                with (
+                    self.subTest(num_topk=num_topk),
+                    self.assertRaisesRegex(
+                        ValueError, "num_topk must be an integer between 1 and 32"
+                    ),
+                ):
+                    call(num_topk=num_topk, **settings)
+        native.ElasticBuffer.assert_not_called()
+        native.calculate_elastic_buffer_size.assert_not_called()
+        self.assertEqual(cuda.synchronizations, 0)
+        for num_topk in (1, 32):
+            buffer = Buffer(
+                world_rank=0, num_experts_per_rank=4, num_topk=num_topk, **settings
+            )
+            self.assertEqual(
+                buffer.num_bytes,
+                Buffer.get_buffer_size_hint(num_topk=num_topk, **settings),
+            )
+            native.calculate_elastic_buffer_size.assert_called_with(
+                1, 1, 1, 256, num_topk, False, True
+            )
+
+    def test_workload_sizes_are_required_before_sizing_or_native_allocation(self):
+        Buffer, cuda, namespace = load_buffer()
+        native = namespace["_C"]
+        native.ElasticBuffer = Mock()
+        for missing in ("num_max_tokens_per_rank", "hidden"):
+            settings = dict(num_max_tokens_per_rank=1, hidden=256)
+            del settings[missing]
+            with (
+                self.subTest(missing=missing),
+                self.assertRaisesRegex(TypeError, missing),
+            ):
+                Buffer(0, 1, 1, num_experts_per_rank=1, num_topk=32, **settings)
+        native.ElasticBuffer.assert_not_called()
+        native.calculate_elastic_buffer_size.assert_not_called()
+        self.assertEqual(cuda.synchronizations, 0)
+
+    def test_invalid_rank_or_capacity_fails_before_sizing_or_native_allocation(self):
         Buffer, cuda, _ = load_buffer()
         native = Buffer.__init__.__globals__["_C"]
         native.ElasticBuffer = Mock()
@@ -488,19 +564,40 @@ class BootstrapTests(unittest.TestCase):
         ):
             with self.subTest(world_rank=world_rank, dimensions=(domains, positions)):
                 with self.assertRaisesRegex(ValueError, "declared maximum world"):
-                    Buffer(world_rank, domains, positions)
+                    Buffer(
+                        world_rank,
+                        domains,
+                        positions,
+                        1,
+                        256,
+                        num_experts_per_rank=1,
+                        num_topk=32,
+                    )
         native.ElasticBuffer.assert_not_called()
         native.calculate_elastic_buffer_size.assert_not_called()
         self.assertEqual(cuda.synchronizations, 0)
 
-    def make_wrapper(self, rank, agent_name=None):
-        Buffer, _, _ = load_buffer()
+    def make_wrapper(
+        self,
+        rank,
+        agent_name=None,
+        physical_domains=None,
+        max_domains=1,
+        max_positions=8,
+    ):
+        Buffer, _, _ = load_buffer(physical_domains)
         namespace = Buffer.__init__.__globals__
         namespace["exchange_records"] = self.module.exchange_records
-        buffer = Buffer.__new__(Buffer)
-        buffer.store, buffer.world_rank = self.store, rank
-        buffer.runtime = namespace["_C"].ElasticBuffer(
-            2097152, True, False, True, 300, 100, True, 1, 8, 0, rank, 64, "test", 4
+        buffer = Buffer(
+            rank,
+            max_domains,
+            max_positions,
+            1,
+            256,
+            num_experts_per_rank=4,
+            num_topk=32,
+            store=self.store,
+            explicitly_destroy=True,
         )
         buffer.runtime.get_local_agent_name = lambda: (
             f"rank-{rank}" if agent_name is None else agent_name
@@ -516,10 +613,10 @@ class BootstrapTests(unittest.TestCase):
         second = self.make_wrapper(5, second_name)
         parallel([lambda: first.connect_ranks([5]), lambda: second.connect_ranks([2])])
         first.runtime.connect_ranks.assert_called_once_with(
-            [5], [second_name], [(4096, 0, 5, 2097152)]
+            [5], [second_name], [(4096, 0, 5, 2097152)], [-1, -1, 0, -1, -1, 1, -1, -1]
         )
         second.runtime.connect_ranks.assert_called_once_with(
-            [2], [first_name], [(4096, 0, 2, 2097152)]
+            [2], [first_name], [(4096, 0, 2, 2097152)], [-1, -1, 0, -1, -1, 1, -1, -1]
         )
         self.assertEqual(self.store.num_keys(), 0)
 
@@ -557,22 +654,145 @@ class BootstrapTests(unittest.TestCase):
         buffer.runtime.connect_ranks.assert_not_called()
 
     def test_buffer_connect_mixed_peers_only_exchanges_with_new_peers(self):
-        first, joining = self.make_wrapper(2), self.make_wrapper(6)
-        first.runtime.connected.add(5)
+        first, existing, joining = (
+            self.make_wrapper(2),
+            self.make_wrapper(5),
+            self.make_wrapper(6),
+        )
+        parallel(
+            [lambda: first.connect_ranks([5]), lambda: existing.connect_ranks([2])]
+        )
+        for buffer in (first, existing):
+            buffer.set_active_ranks([2, 5])
+            buffer.runtime.connect_ranks.reset_mock()
         parallel(
             [
                 lambda: first.connect_ranks([5, 6, 5]),
-                lambda: joining.connect_ranks([2]),
+                lambda: existing.connect_ranks([2, 6]),
+                lambda: joining.connect_ranks([2, 5]),
             ]
         )
+        mapping = [-1, -1, 0, -1, -1, 1, 2, -1]
         first.runtime.connect_ranks.assert_called_once_with(
-            [6], ["rank-6"], [(4096, 0, 6, 2097152)]
+            [6], ["rank-6"], [(4096, 0, 6, 2097152)], mapping
+        )
+        existing.runtime.connect_ranks.assert_called_once_with(
+            [6], ["rank-6"], [(4096, 0, 6, 2097152)], mapping
         )
         joining.runtime.connect_ranks.assert_called_once_with(
-            [2], ["rank-2"], [(4096, 0, 2, 2097152)]
+            [2, 5],
+            ["rank-2", "rank-5"],
+            [(4096, 0, 2, 2097152), (4096, 0, 5, 2097152)],
+            mapping,
         )
         self.assertEqual(first.get_connected_ranks(), [5, 6])
-        self.assertEqual(joining.get_connected_ranks(), [2])
+        self.assertEqual(joining.get_connected_ranks(), [2, 5])
+        self.assertEqual(first.get_active_ranks(), [2, 5])
+        self.assertEqual(existing.get_active_ranks(), [2, 5])
+        self.assertEqual(joining.get_active_ranks(), [6])
+        for buffer in (first, existing, joining):
+            buffer.set_active_ranks([2, 5, 6])
+            self.assertEqual(buffer.get_active_ranks(), [2, 5, 6])
+            self.assertEqual(buffer.runtime.committed_mapping, {2: 0, 5: 1, 6: 2})
+        self.assertEqual(self.store.num_keys(), 0)
+
+    def test_retired_rank_can_rejoin_in_a_different_physical_domain(self):
+        physical = {0: 7, 1: 7}
+
+        def make(rank, name):
+            return self.make_wrapper(rank, name, physical, 2, 2)
+
+        first, departed = make(0, "survivor"), make(1, "departed")
+        parallel(
+            [lambda: first.connect_ranks([1]), lambda: departed.connect_ranks([0])]
+        )
+        for buffer in (first, departed):
+            buffer.set_active_ranks([0, 1])
+        first.disconnect_ranks([1])
+        self.assertEqual(first.get_active_ranks(), [0])
+        self.assertEqual(first._prepared_mapping, {0: 0, 1: 1})
+        self.assertNotIn(1, first._fabric_records)
+
+        physical[1] = 2
+        replacement = make(1, "replacement")
+        parallel(
+            [lambda: first.connect_ranks([1]), lambda: replacement.connect_ranks([0])]
+        )
+        for buffer in (first, replacement):
+            self.assertEqual(buffer.get_active_ranks(), [buffer.world_rank])
+            self.assertEqual(buffer._prepared_mapping, {0: 0, 1: 2})
+            buffer.set_active_ranks([0, 1])
+            self.assertEqual(buffer.get_active_ranks(), [0, 1])
+            self.assertEqual(buffer._get_mode(), "hybrid")
+        self.assertEqual(self.store.num_keys(), 0)
+
+    def test_inactive_connected_rank_preserves_mapping_when_a_peer_joins(self):
+        buffers = [self.make_wrapper(rank, max_positions=4) for rank in range(4)]
+        first, joining, inactive, last = buffers
+        parallel([lambda: inactive.connect_ranks([3]), lambda: last.connect_ranks([2])])
+        for buffer in (inactive, last):
+            buffer.set_active_ranks([2, 3])
+        parallel(
+            [
+                lambda: first.connect_ranks([2, 3]),
+                lambda: inactive.connect_ranks([0]),
+                lambda: last.connect_ranks([0]),
+            ]
+        )
+        for buffer in (first, inactive, last):
+            buffer.set_active_ranks([0, 3])
+        parallel(
+            [
+                lambda: first.connect_ranks([1]),
+                lambda: inactive.connect_ranks([1]),
+                lambda: last.connect_ranks([1]),
+                lambda: joining.connect_ranks([0, 2, 3]),
+            ]
+        )
+        mapping = {0: 2, 1: 3, 2: 0, 3: 1}
+        self.assertEqual(inactive.get_active_ranks(), [0, 3])
+        for buffer in buffers:
+            self.assertEqual(buffer._prepared_mapping, mapping)
+            buffer.set_active_ranks([0, 1, 2, 3])
+            self.assertEqual(buffer.runtime.committed_mapping, mapping)
+        self.assertEqual(self.store.num_keys(), 0)
+
+    def test_indirect_evidence_does_not_keep_a_retired_peer_alive(self):
+        physical = {0: 7, 1: 7, 2: 7}
+
+        def make(rank, name):
+            return self.make_wrapper(rank, name, physical, 2, 3)
+
+        first, departed, joining = make(0, "zero"), make(1, "old"), make(2, "two")
+        parallel(
+            [lambda: first.connect_ranks([1]), lambda: departed.connect_ranks([0])]
+        )
+        for buffer in (first, departed):
+            buffer.set_active_ranks([0, 1])
+        # Prepare rank 2 while [0, 1] still runs; rank 1 will leave, so 2 never connects to it.
+        parallel([lambda: first.connect_ranks([2]), lambda: joining.connect_ranks([0])])
+        self.assertEqual(first.get_active_ranks(), [0, 1])
+        self.assertEqual(joining.get_connected_ranks(), [0])
+        self.assertIn(1, joining._fabric_records)
+        for buffer in (first, joining):
+            buffer.set_active_ranks([0, 2])
+        first.disconnect_ranks([1])
+
+        physical[1] = 8
+        replacement = make(1, "replacement")
+        parallel(
+            [
+                lambda: first.connect_ranks([1]),
+                lambda: joining.connect_ranks([1]),
+                lambda: replacement.connect_ranks([0, 2]),
+            ]
+        )
+        for buffer in (first, joining, replacement):
+            self.assertEqual(buffer._prepared_mapping, {0: 0, 1: 3, 2: 2})
+            self.assertEqual(buffer._fabric_records[1]["fabric"]["clique_id"], 8)
+        self.assertEqual(first.get_active_ranks(), [0, 2])
+        self.assertEqual(joining.get_active_ranks(), [0, 2])
+        self.assertEqual(replacement.get_active_ranks(), [1])
         self.assertEqual(self.store.num_keys(), 0)
 
 

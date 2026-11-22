@@ -86,6 +86,7 @@ static void launch_combine(void* x,
                            const int& num_topk,
                            const int64_t& num_timeout_cycles,
                            const int& num_max_scaleup_ranks,
+                           const int& num_launch_sms,
                            const int& num_channels_per_sm,
                            const int& num_smem_bytes,
                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
@@ -121,7 +122,7 @@ static void launch_combine(void* x,
         .num_combined_tokens = num_combined_tokens,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
         // NOTES: make cluster dim 2 to overlap with clustered computation kernels
-        .launch_args = jit::LaunchArgs(topology::get_num_launch_sms(), num_threads, num_smem_bytes, 2, true)
+        .launch_args = jit::LaunchArgs(num_launch_sms, num_threads, num_smem_bytes, 2, true)
     };
     const auto code = CombineRuntime::generate(args);
     const auto runtime = jit::compiler->build("adaptive_combine", code);
@@ -133,7 +134,7 @@ public:
     struct Args {
         // Templated arguments
         bool use_expanded_layout, allow_multiple_reduction;
-        int num_channels_per_sm;
+        int num_launch_sms, num_channels_per_sm;
         int num_max_scaleup_ranks;
         int hidden;
         int num_experts_per_rank, num_topk;
@@ -159,10 +160,10 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
-                           args.launch_args.grid_dim.first,
+                           args.launch_args.grid_dim.first, args.num_launch_sms,
                            args.launch_args.num_threads / 32,
                            args.num_channels_per_sm,
                            args.num_max_scaleup_ranks,
@@ -192,7 +193,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            void* buffer,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
-                                           const int& num_sms, const int& num_smem_bytes,
+                                           const int& num_sms, const int& num_launch_sms, const int& num_smem_bytes,
                                            const int& num_max_scaleup_ranks,
                                            const int& num_channels_per_sm,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
@@ -207,7 +208,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
     const CombineReduceEpilogueRuntime::Args args = {
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
-        .num_channels_per_sm = num_channels_per_sm,
+        .num_launch_sms = num_launch_sms, .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .hidden = hidden,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,

@@ -38,6 +38,11 @@ def load_helpers():
         )
     ]
     nodes += [node for node in module.body if getattr(node, "name", None) in names]
+    nodes += [
+        node
+        for node in ast.parse(SOURCE.with_name("buffer_setup.py").read_text()).body
+        if getattr(node, "name", None) in {"rank_mapping", "rank_coordinates"}
+    ]
     testing_source = SOURCE.parents[2] / "python/utils/testing.py"
     nodes += [
         node
@@ -166,7 +171,8 @@ class ReportingHostTests(unittest.TestCase):
     def test_return_payload_counts_follow_reduction_mode(self):
         buffer = SimpleNamespace(
             num_experts_per_rank=2,
-            scaleout_rank_idx=1,
+            world_rank=5,
+            runtime=SimpleNamespace(get_rank_mapping=lambda: list(range(16))),
             max_num_scaleup_ranks=4,
             allow_multiple_reduction=True,
         )
@@ -225,7 +231,7 @@ class ReportingHostTests(unittest.TestCase):
         calls = dict(events=0, kernels=0)
         buffer = SimpleNamespace(
             world_rank=0,
-            scaleout_rank_idx=0,
+            runtime=SimpleNamespace(get_rank_mapping=lambda: list(range(4))),
             num_experts_per_rank=2,
             max_num_scaleup_ranks=2,
             allow_multiple_reduction=True,

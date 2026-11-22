@@ -2,11 +2,8 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-import functools
 import os
 import random
-import re
-import subprocess
 from typing import Tuple
 
 import torch
@@ -14,9 +11,6 @@ import torch.distributed as dist
 
 _local_rank = None
 _global_seed = 0
-
-# Default NIC name for RDMA operations, configurable via environment variable
-_DEFAULT_NIC_NAME = os.getenv("NIXL_EP_NIC_NAME", "mlx5_0")
 
 
 def init_seed(global_seed: int) -> None:
@@ -113,68 +107,3 @@ def check_torch_deterministic() -> None:
         torch.are_deterministic_algorithms_enabled()
         and torch.utils.deterministic.fill_uninitialized_memory
     )
-
-
-@functools.lru_cache()
-def get_nvlink_gbs(factor: float = 0.9) -> float:
-    """
-    Get the total NVLink bandwidth in GB/s, cached.
-
-    Arguments:
-        factor: the bandwidth efficiency factor.
-
-    Returns:
-        gbs: the total NVLink bandwidth in GB/s.
-
-    Raises:
-        RuntimeError: if `nvidia-smi` is not installed, fails, or lists no NVLink link; the callers divide by this value.
-    """
-    # noinspection PyBroadException
-    try:
-        result = subprocess.run(
-            ["nvidia-smi", "nvlink", "-s"], capture_output=True, text=True, check=True
-        )
-        output = result.stdout
-        pattern = r"GPU \d+:.*?(?=^GPU \d+:|^$)"
-        match = re.search(pattern, output, re.MULTILINE | re.DOTALL)
-        assert match
-
-        gpu_block = match.group(0)
-        link_pattern = r"Link \d+:\s*([\d\.]+) GB/s"
-        link_matches = re.findall(link_pattern, gpu_block)
-        assert link_matches
-        return sum(float(bw) for bw in link_matches) * factor
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to get NVLink connection speed ({e}): pass `nvlink_gbs` explicitly"
-        ) from e
-
-
-@functools.lru_cache()
-def get_rdma_gbs(nic_name: str = _DEFAULT_NIC_NAME) -> float:
-    """
-    Get the RDMA bandwidth in GB/s, cached.
-
-    Arguments:
-        nic_name: the NIC device name.
-
-    Returns:
-        gbs: the RDMA bandwidth in GB/s.
-
-    Raises:
-        RuntimeError: if `ibstat` is not installed, fails, or does not list the adapter; the callers divide by this value.
-    """
-    # noinspection PyBroadException
-    try:
-        result = subprocess.run(["ibstat"], capture_output=True, text=True, check=True)
-        output = result.stdout
-
-        pattern = rf"CA '{nic_name}'.*?Port \d+:\s*.*?Rate:\s*(\d+)"
-        match = re.search(pattern, output, re.DOTALL)
-        assert match
-        rate = int(match.group(1))
-        return rate / 8
-    except Exception as e:
-        raise RuntimeError(
-            f"Failed to get RDMA connection speed ({e}): pass `rdma_gbs` explicitly"
-        ) from e

@@ -66,20 +66,26 @@ class StableExpertIdsTests(unittest.TestCase):
         load_functions(
             SOURCE.with_name("test_adaptive_modes.py"), {"combine_recipe"}, namespace
         )
+        load_functions(
+            SOURCE.with_name("buffer_setup.py"),
+            {"rank_mapping", "rank_coordinates", "topology_experts"},
+            namespace,
+        )
         load_functions(SOURCE, {"extent_of", "Case"}, namespace)
+        self.mapping = list(range(8))
         self.buffer = SimpleNamespace(
             max_num_scaleout_ranks=2,
             max_num_scaleup_ranks=4,
             num_experts_per_rank=2,
             world_rank=4,
-            num_launch_sms=4,
+            runtime=SimpleNamespace(get_rank_mapping=lambda: self.mapping),
             allow_multiple_reduction=True,
-            _get_topology=lambda: ("hybrid", 4),
+            _get_mode=lambda: "hybrid",
         )
         self.case = namespace["Case"](
             self.buffer,
             SimpleNamespace(
-                num_tokens=16, hidden=8, num_topk=4, num_experts=16, num_sms=4, seed=1
+                num_tokens=16, hidden=8, num_topk=4, num_experts=16, seed=1
             ),
         )
 
@@ -121,8 +127,35 @@ class StableExpertIdsTests(unittest.TestCase):
         ]
         self.assertEqual(source.tolist(), expected_source)
         self.assertEqual(local.tolist(), [[0, 1, -1, -1]] * len(expected_source))
-        self.assertTrue(torch.equal(payload, self.case.payload(source)))
+        payload_ids = torch.tensor(
+            [
+                rank * 16 + token
+                for rank in phase
+                for token in range(1, self.case.num_tokens_of(rank), 2)
+            ]
+        )
+        self.assertTrue(torch.equal(payload, self.case.payload(payload_ids)))
         self.assertEqual(weights.tolist(), [[1, 1, 1, 1]] * len(expected_source))
+
+    def test_permuted_owners_use_discovered_coordinates(self):
+        self.mapping[:] = [0, 4, 1, 5, 2, 6, 3, 7]
+        phase = [0, 2, 4, 6]
+        self.assertEqual(self.case.extent(phase), (1, 4))
+        self.assertEqual(self.case.flat_idx(4, phase), 2)
+        self.assertEqual(self.case.payload_indices(4).tolist(), list(range(64, 76)))
+        routing = torch.tensor([[8, 12, 0, -1]]).repeat(12, 1)
+        values = (
+            torch.tensor([256, 1, -256, 0], dtype=torch.bfloat16)
+            .view(1, 4, 1)
+            .repeat(12, 1, 8)
+        )
+        self.case.pre_combine_data = lambda source: values.clone()
+        self.assertTrue(
+            torch.equal(
+                self.case.combine_reference(phase, routing),
+                torch.ones((12, 8), dtype=torch.bfloat16),
+            )
+        )
 
     def test_combine_filters_inactive_ids_and_uses_physical_domains(self):
         # Owners 4 and 6 share physical domain 1 but straddle an extent stride of three.
@@ -138,7 +171,7 @@ class StableExpertIdsTests(unittest.TestCase):
         self.assertTrue(
             torch.equal(self.case.combine_reference(phase, routing), expected_hybrid)
         )
-        self.buffer._get_topology = lambda: ("direct", 4)
+        self.buffer._get_mode = lambda: "direct"
         expected_direct = torch.full((12, 8), 256, dtype=torch.bfloat16)
         self.assertTrue(
             torch.equal(

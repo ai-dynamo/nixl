@@ -42,7 +42,7 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 
 // The transport of the adaptive EP kernels. Every rank registers ONE symmetric region (workspace, then the token
 // buffer) with NIXL, all with the identical layout, so one byte offset names the same word on every rank; a peer is
-// its world rank (`d * max_num_scaleup_ranks + k`). A peer mapped into our address space (UCX's CUDA IPC lane,
+// addressed by its caller-assigned world rank. A peer mapped into our address space (UCX's CUDA IPC lane,
 // `p2p_ptrs[world_rank] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; same-position peers in
 // other domains get RDMA. Kernels route through these endpoints only. The fixed context address lets graphs replay across commits.
 namespace nixl_ep_v2::elastic::nixl {

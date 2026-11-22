@@ -160,15 +160,12 @@ def test_loop(local_rank, num_local_ranks, args):
             store,
             max_num_scaleout_ranks=max_so,
             max_num_scaleup_ranks=max_su,
-            scaleout_rank_idx=rank // max_su,
-            scaleup_rank_idx=rank % max_su,
+            world_ranks=[rank],
         )
         stats = {}
         if not independent:
             stats.update(connect(target, prefix, store))
-            buffer.set_active_ranks(
-                target, num_active_sms=args.num_sms or buffer.num_launch_sms
-            )
+            buffer.set_active_ranks(target)
         round_idx = [0]
 
         def capture_barrier():
@@ -283,14 +280,19 @@ def test_loop(local_rank, num_local_ranks, args):
         torch.cuda.synchronize()
         barrier(store, f"{key}/drained", rank, participants)
         start = time.monotonic()
-        buffer.set_active_ranks(
-            target, num_active_sms=args.num_sms or buffer.num_launch_sms
-        )
         if new_size < old_size:
+            if rank not in target:
+                # Departing ranks adopt the surviving world's descriptor before cleanup.
+                buffer.set_active_ranks(target)
             peers = buffer.get_connected_ranks()
+            # Survivors shrink membership and retire peers in this single activation.
             buffer.disconnect_ranks(
                 [peer for peer in peers if rank not in target or peer not in target]
             )
+        else:
+            buffer.set_active_ranks(target)
+        assert buffer.get_active_ranks() == target
+        assert buffer._get_mode() == ("direct" if new_size <= max_su else "hybrid")
         torch.cuda.synchronize()
         stats["activation_ms"] = (time.monotonic() - start) * 1e3
         barrier(store, f"{key}/activated", rank, participants)

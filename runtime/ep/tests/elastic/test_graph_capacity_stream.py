@@ -15,12 +15,14 @@ from pathlib import Path
 
 import torch
 import torch.distributed as dist
+from buffer_setup import rank_coordinates
 from test_adaptive_elastic import (
     Case,
     GraphCase,
     add_common_arguments,
     init_test_environment,
     make_buffer,
+    run_eager,
 )
 
 from nixl.runtime.ep.utils.nixl_bootstrap import NixlBootstrap
@@ -50,28 +52,42 @@ def run(local_rank, num_local_ranks, args):
         store,
         max_num_scaleout_ranks=max_so,
         max_num_scaleup_ranks=max_su,
-        scaleout_rank_idx=rank // max_su,
-        scaleup_rank_idx=rank % max_su,
+        world_ranks=[rank],
     )
     assert buffer.max_num_scaleout_ranks >= 2 and buffer.max_num_scaleup_ranks >= 2
     full = list(range(num_ranks))
-    off_rail = [
-        peer
-        for peer in full
-        if peer // max_su != rank // max_su and peer % max_su != rank % max_su
-    ]
-    # Logical off-rail peers alone stage an all-null remote view.
-    buffer.connect_ranks(off_rail, key_prefix="graph-capacity-stream/peers")
-    assert buffer.get_connected_ranks() == off_rail
-    buffer.set_active_ranks([rank])
-    buffer.disconnect_ranks(off_rail)
-    cohort.barrier("off-rail-disconnected")
     buffer.connect_ranks(
         [peer for peer in full if peer != rank],
         key_prefix="graph-capacity-stream/peers",
     )
     buffer.set_active_ranks(full)
-    first_domain = list(range(buffer.max_num_scaleup_ranks))
+
+    # Retain only indirect peers: no same-domain or same-position endpoint remains.
+    # Activating that view must preserve the local pointer for singleton communication.
+    domain, position = rank_coordinates(buffer)
+    indirect = [
+        peer
+        for peer in full
+        if rank_coordinates(buffer, peer)[0] != domain
+        and rank_coordinates(buffer, peer)[1] != position
+    ]
+    buffer.barrier(with_cpu_sync=True)
+    cohort.barrier("full-world-drained")
+    buffer.set_active_ranks([rank])
+    buffer.disconnect_ranks(sorted(set(full) - set(indirect) - {rank}))
+    assert buffer.get_connected_ranks() == indirect
+    run_eager(Case(buffer, args), 0, [rank], "indirect-only view")
+    buffer.barrier(with_cpu_sync=True)
+    cohort.barrier("singletons-drained")
+    buffer.disconnect_ranks(indirect)
+    assert buffer.get_connected_ranks() == []
+    cohort.barrier("indirect-only-disconnected")
+    buffer.connect_ranks(
+        [peer for peer in full if peer != rank],
+        key_prefix="graph-capacity-stream/reconnected",
+    )
+    buffer.set_active_ranks(full)
+    first_domain = [peer for peer in full if rank_coordinates(buffer, peer)[0] == 0]
     captured_at = {peer: full for peer in full}
 
     def drained_barrier():
@@ -106,12 +122,8 @@ def run(local_rank, num_local_ranks, args):
             if buffer.world_rank in buffer.get_active_ranks():
                 buffer.barrier(with_cpu_sync=True)
             drained_barrier()
-            buffer._stage_topology(
-                active_ranks=phase,
-                num_active_sms=args.num_sms or buffer.num_launch_sms,
-            )
             with torch.cuda.stream(commit_stream):
-                buffer._commit_topology()
+                buffer.set_active_ranks(phase)
             if rank in phase:
                 for graph in (graphs[0], graphs[1], graphs[0]):
                     # The commit must order the upload before communication;

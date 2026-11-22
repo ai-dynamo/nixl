@@ -31,7 +31,13 @@ import os
 
 import torch
 import torch.distributed as dist
-from buffer_setup import create_group_buffer, get_logical_domain_size
+from buffer_setup import (
+    create_group_buffer,
+    get_logical_domain_size,
+    rank_coordinates,
+    rank_mapping,
+    topology_experts,
+)
 from test_ep import (
     add_test_dispatch_combine_arguments,
     check_expanded_slot_mapping,
@@ -47,7 +53,7 @@ from nixl.runtime.ep.utils.refs import generate_pre_combine_data, ordered_accumu
 
 
 class ModeTestBuffer(nixl_ep_v2.ElasticBuffer):
-    """Test-only overrides; topology updates retain the production staging, validation and commit rules."""
+    """Test-only overrides; topology updates retain production validation and activation."""
 
     @staticmethod
     def _mode_of(scaleout_mask):
@@ -62,24 +68,16 @@ class ModeTestBuffer(nixl_ep_v2.ElasticBuffer):
             else "hybrid"
         )
 
-    def stage_topology_forced(self, mode, num_active_sms=0, active_ranks=None):
-        """Stage an explicit mode; a later ordinary stage derives the mode again."""
-        self._stage(mode=mode, num_active_sms=num_active_sms, active_ranks=active_ranks)
-
-    def set_topology_forced(self, mode, num_active_sms=0):
-        """Force the committed world's mode without overwriting a pending topology."""
-        assert (
-            not self.runtime.has_staged_topology()
-        ), "Commit the staged world before forcing the committed mode"
-        self.stage_topology_forced(mode, num_active_sms)
-        self._commit_topology()
+    def set_topology_forced(self, mode, active_ranks=None):
+        """Apply an explicit mode; a later ordinary update derives the mode again."""
+        self._update_topology(mode=mode, active_ranks=active_ranks)
 
 
 def combine_recipe(buffer: nixl_ep_v2.ElasticBuffer):
     # Without `allow_multiple_reduction` the combine input is already reduced within the rank, as in `test_ep.py`
     return (
         True,
-        buffer.allow_multiple_reduction and buffer._get_topology()[0] == "hybrid",
+        buffer.allow_multiple_reduction and buffer._get_mode() == "hybrid",
     )
 
 
@@ -90,13 +88,10 @@ def make_graph_case(
     expert_alignment: int = 1,
 ):
     num_max_tokens_per_rank, hidden = args.num_tokens, args.hidden
-    num_tokens = max(1, args.num_tokens - dist.get_rank())
     num_topk = args.num_topk
     capture_ranks = sorted(buffer.get_active_ranks())
+    num_tokens = max(1, args.num_tokens - capture_ranks.index(buffer.world_rank))
     num_experts = len(capture_ranks) * buffer.num_experts_per_rank
-    num_sms = (
-        buffer.get_theoretical_num_sms(num_topk) if args.num_sms == 0 else args.num_sms
-    )
 
     # Fixed addresses; world-retention tests update routing in place between replays.
     scores = get_unbalanced_scores(
@@ -167,7 +162,6 @@ def make_graph_case(
         x=x,
         topk_idx=topk_idx,
         topk_weights=topk_weights,
-        num_sms=num_sms,
         num_max_tokens_per_rank=num_max_tokens_per_rank,
         expert_alignment=expert_alignment,
         do_handle_copy=True,
@@ -205,7 +199,10 @@ def make_graph_case(
             x.unsqueeze(1).expand(-1, num_topk, -1).clone()
             if do_expand
             else generate_pre_combine_data(
-                (buffer.scaleout_rank_idx * num_scaleup_ranks + buffer.scaleup_rank_idx)
+                (
+                    rank_coordinates(buffer)[0] * num_scaleup_ranks
+                    + rank_coordinates(buffer)[1]
+                )
                 * num_max_tokens_per_rank
                 + torch.arange(num_tokens, device="cuda"),
                 num_max_tokens_per_rank,
@@ -223,7 +220,7 @@ def make_graph_case(
         reduce_local, reduce_scaleup = combine_recipe(buffer)
         return ref_combine(
             ref_y,
-            live_idx,
+            topology_experts(buffer, live_idx),
             buffer.max_num_scaleout_ranks,
             buffer.max_num_scaleup_ranks,
             buffer.max_num_scaleout_ranks
@@ -294,9 +291,18 @@ def make_graph_case(
             src_global_idx % num_max_tokens_per_rank,
         )
         _, num_scaleup_ranks = buffer._get_topology_extent()
-        src_world_rank = (
+        src_slot = (
             src_rank // num_scaleup_ranks
         ) * buffer.max_num_scaleup_ranks + src_rank % num_scaleup_ranks
+        inverse = torch.full(
+            (buffer.max_num_scaleout_ranks * buffer.max_num_scaleup_ranks,),
+            -1,
+            dtype=torch.int64,
+            device="cuda",
+        )
+        for world, slot in rank_mapping(buffer).items():
+            inverse[slot] = world
+        src_world_rank = inverse[src_slot]
         expected_x = payload(src_world_rank * num_max_tokens_per_rank + src_token)
         if do_expand:
             slots = handle.recv_src_metadata[:num_recv, 2:]
@@ -322,7 +328,7 @@ def make_graph_case(
             if do_expand:
                 expected_local_idx = torch.full_like(slots, -1)
             for source in buffer.get_active_ranks():
-                domain, position = divmod(source, buffer.max_num_scaleup_ranks)
+                domain, position = rank_coordinates(buffer, source)
                 src_idx = routing(source, routing_round)
                 mine = src_idx // slots_per_rank == owner
                 local_idx = src_idx[mine] % slots_per_rank
@@ -356,12 +362,12 @@ def make_graph_case(
                     expert_alignment,
                 )
         dist_print(
-            f" > [{tag}] mode={buffer._get_topology()[0]} bitwise match with the reference",
+            f" > [{tag}] mode={buffer._get_mode()} bitwise match with the reference",
             once_in_node=True,
         )
         return num_recv
 
-    return forward, check, num_sms, prepare
+    return forward, check, prepare
 
 
 # The barriers `capture` runs (before the warm-ups, before the capture, after it), for idle ranks that mirror them
@@ -393,7 +399,7 @@ def run_graph_retention(
     first_mode: str,
     second_mode: str,
 ):
-    forward, check, _, _ = make_graph_case(buffer, args)
+    forward, check, _ = make_graph_case(buffer, args)
 
     buffer.set_topology_forced(first_mode)
     graph, outputs = capture(forward)
@@ -433,7 +439,7 @@ def run_world_retention(
     half_positions = [
         rank
         for rank in capture_ranks
-        if rank % buffer.max_num_scaleup_ranks < num_scaleup_ranks // 2
+        if rank_coordinates(buffer, rank)[1] < num_scaleup_ranks // 2
     ]
     if num_scaleout_ranks == 1:
         sub_worlds = [(half_positions, "direct"), (half_positions, "hybrid")]
@@ -441,31 +447,21 @@ def run_world_retention(
         last_domain = [
             rank
             for rank in capture_ranks
-            if rank // buffer.max_num_scaleup_ranks == num_scaleout_ranks - 1
+            if rank_coordinates(buffer, rank)[0] == num_scaleout_ranks - 1
         ]
         sub_worlds = [(half_positions, "hybrid"), (last_domain, "direct")]
-    sub_worlds = [
-        (ranks, mode)
-        for ranks, mode in sub_worlds
-        if len(ranks) >= nixl_ep_v2._C.min_num_active_ranks
-    ]
-    num_active_sms = buffer._get_topology()[1]
-    forward, check, _, prepare = make_graph_case(
-        buffer, args, do_expand, expert_alignment
-    )
+    sub_worlds = [(ranks, mode) for ranks, mode in sub_worlds if ranks]
+    forward, check, prepare = make_graph_case(buffer, args, do_expand, expert_alignment)
     prepare(0)
 
     def commit_world(mode: str, active_ranks):
         buffer.barrier(with_cpu_sync=True)
         dist.barrier()
-        buffer.stage_topology_forced(
-            mode, num_active_sms=num_active_sms, active_ranks=active_ranks
-        )
-        buffer._commit_topology()
+        buffer.set_topology_forced(mode, active_ranks=active_ranks)
         torch.cuda.synchronize()
         dist.barrier()
         assert sorted(buffer.get_active_ranks()) == sorted(active_ranks)
-        assert buffer._get_topology()[0] == mode
+        assert buffer._get_mode() == mode
 
     def replay_in_world(tag: str, active_ranks):
         extent = buffer._get_topology_extent()
@@ -502,7 +498,7 @@ def run_world_retention(
                 dist.barrier()
             dist.barrier()
 
-    buffer.set_topology_forced(capture_mode, num_active_sms)
+    buffer.set_topology_forced(capture_mode)
     graph, outputs = capture(forward)
     replay_in_world(f"full world {capture_ranks}, {capture_mode}", capture_ranks)
 
@@ -523,20 +519,17 @@ def run_world_retention(
 
 def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
     # Tensors stored for the declared maximum world and the whole launch grid, extent shapes reported, the exact count in its slot
-    forward, _, num_sms, _ = make_graph_case(buffer, args)
+    forward, _, _ = make_graph_case(buffer, args)
     _, handle, _ = forward()
     torch.cuda.synchronize()
     max_so, max_su = buffer.max_num_scaleout_ranks, buffer.max_num_scaleup_ranks
     active_so, active_su = buffer._get_topology_extent()
-    num_active_sms = handle.num_sms
-    # `dispatch(num_sms=...)` committed it through `set_num_active_sms`: even, at most the launch grid
-    assert num_active_sms == min(align(num_sms, 2), buffer.num_launch_sms)
+    assert not hasattr(handle, "num_sms")
     num_channels = handle.token_metadata_at_forward.shape[0]
-    channels_per_sm = num_channels // num_active_sms
-    num_max_channels = buffer.num_launch_sms * channels_per_sm
-    max_linked_list_len = (
-        max_so * (args.num_tokens + num_max_channels) + num_max_channels
-    )
+    assert num_channels % buffer.num_launch_sms == 0
+    channels_per_sm = num_channels // buffer.num_launch_sms
+    tokens_per_channel = (args.num_tokens + num_channels - 1) // num_channels
+    max_linked_list_len = num_channels * (max_so * tokens_per_channel + 1)
 
     def capacity(t: torch.Tensor) -> int:
         return t.untyped_storage().nbytes() // t.element_size()
@@ -545,10 +538,10 @@ def check_handle_sizing(buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespa
     assert (
         handle.num_recv_tokens == args.num_tokens * max_so * max_su
     ), "worst case of the maximum world"
-    assert capacity(handle.token_metadata_at_forward) >= max_linked_list_len * (
+    assert capacity(handle.token_metadata_at_forward) == max_linked_list_len * (
         2 + 2 * args.num_topk
     )
-    assert capacity(handle.channel_linked_list) >= max_linked_list_len * max_su
+    assert capacity(handle.channel_linked_list) == max_linked_list_len * max_su
     assert (
         capacity(handle.psum_num_recv_tokens_per_expert)
         == buffer.num_experts_per_rank + 1
@@ -578,8 +571,10 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         buffer_type=ModeTestBuffer,
         topology=(cohort_so, cohort_su),
         num_experts_per_rank=args.num_experts // max_ranks,
+        num_launch_sms=args.num_sms,
         num_max_tokens_per_rank=args.num_tokens,
         hidden=args.hidden,
+        num_topk=args.num_topk,
         allow_multiple_reduction=bool(args.allow_multiple_reduction),
         prefer_overlap_with_compute=bool(args.prefer_overlap_with_compute),
         explicitly_destroy=True,
@@ -590,9 +585,9 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     )
     num_scaleout_ranks, _ = buffer._get_topology_extent()
     one_domain = num_scaleout_ranks == 1
-    mode, num_active_sms = buffer._get_topology()
+    mode = buffer._get_mode()
     dist_print(
-        f"Adaptive kernels: launch grid {buffer.num_launch_sms}, active {num_active_sms}, initial mode {mode}, "
+        f"Adaptive kernels: launch grid {buffer.num_launch_sms}, initial mode {mode}, "
         f"world {buffer._get_topology_extent()} of max ({buffer.max_num_scaleout_ranks}, {buffer.max_num_scaleup_ranks})",
         once_in_node=True,
     )
@@ -606,7 +601,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     # Eager correctness in every legal mode (first case of the regular test), forced: direct needs one NVLink domain
     for mode in ("hybrid", "direct") if one_domain else ("hybrid",):
-        buffer.set_topology_forced(mode, num_active_sms)
+        buffer.set_topology_forced(mode)
         torch.cuda.synchronize()
         dist.barrier()
         dist_print(f"==== Eager correctness, mode={mode} ====", once_in_node=True)
@@ -635,7 +630,7 @@ if __name__ == "__main__":
         description="Adaptive EP kernels: mode switching and CUDA-graph retention"
     )
     parser.add_argument("--num-processes", type=int, default=4)
-    parser.add_argument("--num-sms", type=int, default=0)
+    parser.add_argument("--num-sms", type=int, default=24)
     parser.add_argument("--num-gpu-timeout-secs", type=int, default=100)
     parser.add_argument("--num-cpu-timeout-secs", type=int, default=100)
     parser.add_argument("--num-tokens", type=int, default=1024)

@@ -8,8 +8,8 @@ job is a set of independent STEPS: a step is one process cohort (`torch.multipro
 node, or a subset), launched when its ranks first appear in the plan and exiting for good when they leave. Steps meet
 through an external `torch.distributed.TCPStore` (peer discovery via reciprocal
 `connect_ranks(store=...)`, phase barriers via counters, all under `--run-tag`); NIXL's manager exchanges transport metadata.
-World ranks follow from the step's
-coordinates (`--scaleout-idx`, `--position-offset`), so a later step may re-use the world ranks of one that exited.
+World ranks use the step's test fixture labels (`--scaleout-idx`, `--position-offset`);
+physical topology is discovered independently. A later step may re-use the world ranks of one that exited.
 
 Per phase k, every process alive at its start arrives at `phase/k/arrive`; a LEAVER makes itself a one-rank world,
 drops every connection, destroys its buffer and exits without waiting for anyone; a STAYER or JOINER connects the
@@ -21,7 +21,7 @@ and phase records the timeline of its join, stay or leave.
 Launch: a TCPStore server runs for the whole job outside the steps (`--store-host` / `--store-port`, defaults
 `STORE_HOST` / `STORE_PORT`, then 127.0.0.1:8400); a step is one invocation with `WORLD_SIZE` and `RANK` unset, started
 by a launcher once phase k-1 is done (the counter `{run_tag}phase/{k-1}/done` at the size of phase k-1). Every step gets
-the same plan, declared maximum world and `--num-sms` (0 = the fixed launch grid, kept for every phase and capture).
+the same plan, declared maximum world and `--num-sms` (the constructor block count, fixed for every phase and capture).
 Plans sharing one server use distinct `--run-tag`s, and a failed run is never
 retried under its tag because its phase counters persist.
     PLAN='[[0,1,2,3],[0,1,2,3,4,5,6,7],[0,1,2,3],[0,1,2,3,4,5,6,7],[4,5,6,7],[0,1,2,3,4,5,6,7]]'
@@ -37,6 +37,7 @@ from typing import Dict, List, Optional
 
 import torch
 import torch.distributed as dist
+from buffer_setup import rank_coordinates, rank_mapping
 from test_adaptive_elastic import (
     Case,
     GraphCase,
@@ -84,7 +85,7 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     pc = time.perf_counter
     t0 = pc()
     # This step's own cohort (one invocation, `WORLD_SIZE` unset or 1): no process group, no rendezvous port
-    rank_idx, num_ranks = init_test_environment(local_rank, num_local_ranks, args.seed)
+    _, num_ranks = init_test_environment(local_rank, num_local_ranks, args.seed)
     assert (
         num_ranks == num_local_ranks
     ), "A step is one invocation: launch it with WORLD_SIZE unset (or 1)"
@@ -101,15 +102,16 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     buffer = make_buffer(
         args,
-        rank_idx,
-        num_ranks,
+        0,
+        1,
         store,
-        key_prefix=peer_prefix,
-        num_group_scaleup_ranks=num_ranks,
         max_num_scaleout_ranks=args.max_scaleout_ranks,
         max_num_scaleup_ranks=args.max_scaleup_ranks,
-        scaleout_rank_idx=args.scaleout_idx,
-        scaleup_rank_idx=args.position_offset + local_rank,
+        world_ranks=[
+            args.scaleout_idx * args.max_scaleup_ranks
+            + args.position_offset
+            + local_rank
+        ],
     )
     t_buffer = pc()
     me = buffer.world_rank
@@ -128,12 +130,12 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         init_ms=(t_init - t0) * 1e3,
         buffer_ms=(t_buffer - t_init) * 1e3,
     )
-    mode = buffer._get_topology()[0]
+    mode = buffer._get_mode()
     step_ids = (
         buffer.get_active_ranks()
-    )  # setup connected and activated only this step's cohort
+    )  # Local construction leaves each joiner independently active.
     assert mode == expected_mode(
-        step_ids, max_su
+        step_ids, max_su, rank_mapping(buffer)
     ), f"setup derived {mode} for {step_ids}"
     case = Case(buffer, args)
     validate_plan(case, plan)
@@ -143,7 +145,7 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             print(f"[step {step_ids} host {os.uname().nodename}] {msg}", flush=True)
 
     log(
-        f"joined at phase {start}: world rank {me} = ({buffer.scaleout_rank_idx}, {buffer.scaleup_rank_idx}) of "
+        f"joined at phase {start}: world rank {me}, internal coordinates {rank_coordinates(buffer)} of "
         f"{max_so}x{max_su}, connected {buffer.get_connected_ranks()}, plan {plan}"
     )
     graph: Optional[GraphCase] = None
@@ -152,7 +154,6 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         phase, prev = list(plan[k]), (list(plan[k - 1]) if k > 0 else [])
         joiners = sorted(set(phase) - set(prev))
         leavers = sorted(set(prev) - set(phase))
-        want_mode = expected_mode(phase, max_su)
         role = "join" if me in joiners else ("leave" if me not in phase else "stay")
         ta = pc()
         buffer.barrier(with_cpu_sync=True)
@@ -208,7 +209,8 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         ) and buffer.get_active_ranks() == sorted(
             phase
         ), f"active ranks {buffer.get_active_ranks()} != phase {phase}"
-        phase_mode = buffer._get_topology()[0]
+        phase_mode = buffer._get_mode()
+        want_mode = expected_mode(phase, max_su, rank_mapping(buffer))
         assert (
             phase_mode == want_mode
         ), f"mode {phase_mode} on {phase}, expected {want_mode}"
@@ -249,7 +251,7 @@ def step_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
             f"live={len(phase)} t_entry={t_entry:.3f} t_first_kernel={t_first_kernel:.3f} "
             f'init_ms={startup["init_ms"]:.0f} buffer_ms={startup["buffer_ms"]:.0f} '
             f"arrive_wait_ms={(tb - ta) * 1e3:.1f} num_connect={len(to_connect)} connect_ms={(tc - tb) * 1e3:.1f} "
-            f"connected_wait_ms={(td - tc) * 1e3:.1f} stage_commit_ms={(te - td) * 1e3:.2f} commit_dev_ms={ev0.elapsed_time(ev1):.3f} "
+            f"connected_wait_ms={(td - tc) * 1e3:.1f} activate_ms={(te - td) * 1e3:.2f} activate_dev_ms={ev0.elapsed_time(ev1):.3f} "
             f"num_disconnect={len(gone)} disconnect_commit_ms={(tf - te) * 1e3:.2f} live_wait_ms={(tg - tf) * 1e3:.1f} "
             f"capture_ms={(th - tg) * 1e3:.0f} eager_ms={(ti - th) * 1e3:.0f} replay_ms={(tj - ti) * 1e3:.1f}",
             flush=True,

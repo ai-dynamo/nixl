@@ -58,10 +58,11 @@ struct NIXLAgentState {
 static const std::string kHelloPrefix = "nixl_ep_v2_hello:";
 static constexpr int kNumMaxUCXDeviceChannels = 64;  // UCX's worker address carries at most 64 device channels (`ucx_num_device_channels`)
 
-// Kernel edges stay within a domain or join the same position across domains; world-rank identity uses the fixed maximum width.
+// Kernel edges stay within a domain or join the same internal position across domains.
 static bool needs_endpoint(const NIXLEPContext& ctx, const int& wr) {
     const int n = ctx.max_num_scaleup_ranks;
-    return wr / n == ctx.world_rank / n or wr % n == ctx.world_rank % n;
+    const auto& slots = ctx.get_world_to_slot();
+    return slots[wr] / n == slots[ctx.world_rank] / n or slots[wr] % n == slots[ctx.world_rank] % n;
 }
 
 // Cleanup must preserve an exception already unwinding, and still attempt the remaining releases
@@ -138,7 +139,9 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
                              const int& max_num_scaleup_ranks, const int64_t& num_region_bytes, const int& num_channels):
     world_rank(world_rank), num_world_ranks(num_world_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks),
     num_region_bytes(num_region_bytes), peers(num_world_ranks), connected(num_world_ranks, 0),
+    world_to_slot(num_world_ranks, -1), endpoint_connected(num_world_ranks, 0),
     connect_epoch(num_world_ranks, 0), known_agent_names(num_world_ranks) {
+    world_to_slot[world_rank] = 0;
     if (num_channels < 1 or num_channels > kNumMaxUCXDeviceChannels)
         throw EPException("NIXL", __FILE__, __LINE__, "UCX connects at most " + std::to_string(kNumMaxUCXDeviceChannels) + " device channels per peer, got " + std::to_string(num_channels) + ": set NIXL_EP_NIXL_NUM_CHANNELS between 1 and " + std::to_string(kNumMaxUCXDeviceChannels));
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device_id));
@@ -253,7 +256,7 @@ void NIXLEPContext::finalize() {
     if (state != nullptr and state->agent != nullptr) {
         release_staged_views();
         release_active_views();
-        for (const int wr: get_connected_ranks()) if (needs_endpoint(*this, wr))
+        for (int wr = 0; wr < num_world_ranks; ++ wr) if (endpoint_connected[wr])
             invalidate_remote_md(*state->agent, known_agent_names[wr]);
     }
     state.reset();
@@ -274,13 +277,23 @@ NIXLPeerInfo NIXLEPContext::get_local_peer_info() const {
 }
 
 void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
-                                  const std::vector<NIXLPeerInfo>& peer_infos) {
+                                  const std::vector<NIXLPeerInfo>& peer_infos, const std::vector<int>& next_world_to_slot) {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
     EP_HOST_ASSERT(world_ranks.size() == remote_agent_names.size() and world_ranks.size() == peer_infos.size());
     if (world_ranks.empty())
         return;
 
-    // Validate every peer before loading metadata or changing the peer registry.
+    // Validate the mapping and every peer before loading metadata or changing the peer registry.
+    EP_HOST_ASSERT(next_world_to_slot.size() == static_cast<size_t>(num_world_ranks) and
+                   "Topology mapping must cover the declared maximum world");
+    std::unordered_set<int> assigned_slots;
+    for (int wr = 0; wr < num_world_ranks; ++ wr) {
+        const int slot = next_world_to_slot[wr];
+        if (slot < -1 or slot >= num_world_ranks or (slot >= 0 and not assigned_slots.insert(slot).second))
+            refuse(world_rank, wr, "Topology mapping must assign distinct slots within the declared maximum world");
+        if ((wr == world_rank or connected[wr]) and slot < 0)
+            refuse(world_rank, wr, "Topology mapping omits this rank or a connected peer");
+    }
     std::unordered_set<int> seen;
     for (size_t i = 0; i < world_ranks.size(); ++ i) {
         const int wr = world_ranks[i];
@@ -288,17 +301,17 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& world_ranks, const std
             refuse(world_rank, wr, "Invalid peer world rank");
         if (connected[wr] or not seen.insert(wr).second)
             refuse(world_rank, wr, "Peer already connected");
+        if (next_world_to_slot[wr] < 0)
+            refuse(world_rank, wr, "Topology mapping omits a requested peer");
         if (peer_infos[i].world_rank != wr or peer_infos[i].region_base == 0)
             refuse(world_rank, wr, "Peer info does not match the world rank");
         if (peer_infos[i].num_region_bytes < static_cast<uint64_t>(num_region_bytes))
             refuse(world_rank, wr, "Peer region is too small");
         if (remote_agent_names[i].empty())
             refuse(world_rank, wr, "Peer agent name is empty");
-        // A pending disconnect of the world rank would invalidate the metadata reloaded here at the next commit
-        if (std::find(pending_disconnects.begin(), pending_disconnects.end(), wr) != pending_disconnects.end())
-            refuse(world_rank, wr, "Commit the pending disconnect before reconnecting the same rank");
     }
     mutate_transport_or_abort(world_rank, "peer connection", [&] {
+        world_to_slot = next_world_to_slot;
         connect_validated_ranks(world_ranks, remote_agent_names, peer_infos);
     });
 }
@@ -311,21 +324,25 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         NIXL_CHECK(state->agent->sendLocalMD());
         state->metadata_published = true;
     }
-    // Load endpoint metadata first; the peer registry still includes peers reached through an intermediate rank.
-    std::vector<int> endpoint_ranks;
+    // Keep every peer's identity: a later prepared mapping can make a previously indirect peer an endpoint.
     for (size_t i = 0; i < world_ranks.size(); ++ i) {
         const int wr = world_ranks[i];
-        if (not needs_endpoint(*this, wr))
-            continue;
-        endpoint_ranks.push_back(wr);
         const auto& name = remote_agent_names[i];
-        NIXL_CHECK(state->agent->fetchRemoteMD(name));
         // A different agent behind the world rank is a new process (a leaver's exited, a fresh one joined): its epochs start from
         // zero, so ours restart (the per-peer barrier words restart at every connect, see `ElasticBuffer::connect_ranks`)
         if (known_agent_names[wr] != name) {
             connect_epoch[wr] = 0;
             known_agent_names[wr] = name;
         }
+        peers[wr] = peer_infos[i];
+        connected[wr] = 1;
+    }
+    std::vector<int> endpoint_ranks;
+    for (int wr = 0; wr < num_world_ranks; ++ wr) {
+        if (not connected[wr] or endpoint_connected[wr] or not needs_endpoint(*this, wr))
+            continue;
+        endpoint_ranks.push_back(wr);
+        NIXL_CHECK(state->agent->fetchRemoteMD(known_agent_names[wr]));
     }
 
     nixl_xfer_dlist_t empty_descs(VRAM_SEG);
@@ -391,12 +408,9 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         }
     }
 
-    // Record peers and let NIXL/UCX prepare their mappings with the staged memory views.
-    for (size_t i = 0; i < world_ranks.size(); ++ i) {
-        const int wr = world_ranks[i];
-        peers[wr] = peer_infos[i];
-        connected[wr] = 1;
-    }
+    // Retain existing endpoints while old graphs still use the active memory view.
+    for (const int wr: endpoint_ranks)
+        endpoint_connected[wr] = 1;
     stage_views();
 }
 
@@ -419,7 +433,7 @@ void NIXLEPContext::disconnect_ranks(const std::vector<int>& world_ranks) {
         connected[wr] = 0;
         peers[wr] = NIXLPeerInfo{};
         pending_disconnects.push_back(wr);
-        if (needs_endpoint(*this, wr))
+        if (endpoint_connected[wr])
             state->pending_hellos.erase(known_agent_names[wr]);
     }
     mutate_transport_or_abort(world_rank, "memory-view preparation", [&] { stage_views(); });
@@ -445,7 +459,7 @@ void NIXLEPContext::stage_views() {
     nixl_remote_dlist_t remote_descs(VRAM_SEG);
     bool any_endpoint = false;
     for (int r = 0; r < num_world_ranks; ++ r) {
-        const bool has_endpoint = connected[r] and needs_endpoint(*this, r);
+        const bool has_endpoint = connected[r] and endpoint_connected[r];
         any_endpoint |= has_endpoint;
         remote_descs.addDesc(has_endpoint ?
             nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(num_region_bytes), static_cast<uint64_t>(peers[r].device_id), known_agent_names[r]) :
@@ -477,10 +491,6 @@ void NIXLEPContext::activate_staged_views() {
     ctx_host.remote_mvh = state->active_remote;
 }
 
-bool NIXLEPContext::has_staged_views() const {
-    return state != nullptr and state->has_staged;
-}
-
 void NIXLEPContext::commit(cudaStream_t stream) {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
     if (not state->has_staged)
@@ -496,15 +506,15 @@ void NIXLEPContext::commit(cudaStream_t stream) {
     std::vector<void*> probed(num_world_ranks, nullptr);
     std::vector<int> has_endpoint(num_world_ranks);
     for (int wr = 0; wr < num_world_ranks; ++ wr)
-        has_endpoint[wr] = connected[wr] and needs_endpoint(*this, wr);
+        has_endpoint[wr] = connected[wr] and endpoint_connected[wr];
     CUDA_RUNTIME_CHECK(cudaMemcpyAsync(connected_device.get(), has_endpoint.data(), num_world_ranks * sizeof(int), cudaMemcpyHostToDevice, stream));
     CUDA_RUNTIME_CHECK(cache_peer_pointers(probe, connected_device.get(), stream));
     CUDA_RUNTIME_CHECK(cudaMemcpyAsync(probed.data(), p2p_ptrs_probe_device.get(), num_world_ranks * sizeof(void*), cudaMemcpyDeviceToHost, stream));
     CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
 
-    // Require CUDA IPC pointers within each declared domain and RDMA lanes between domains.
+    // Require CUDA IPC pointers within each discovered domain and RDMA lanes between domains.
     // Refuse unsupported mappings with the active views untouched (the staged views stay staged).
-    const auto domain_of = [&](const int& wr) { return wr / max_num_scaleup_ranks; };
+    const auto domain_of = [&](const int& wr) { return world_to_slot[wr] / max_num_scaleup_ranks; };
     for (int wr = 0; wr < num_world_ranks; ++ wr) {
         const bool same_domain = domain_of(wr) == domain_of(world_rank);
         const bool has_nvlink_ptr = probed[wr] != nullptr;
@@ -514,9 +524,8 @@ void NIXLEPContext::commit(cudaStream_t stream) {
                << ": UCX must provide a CUDA IPC device lane for it (keep cuda_ipc in UCX_TLS or leave UCX_TLS "
                   "unset; for an NVLink domain spanning several hosts, UCX_CUDA_IPC_ENABLE_MNNVL=yes with the IMEX "
                   "service running). The previous views stay active";
-            else ss << "nixlGetPtr returned an NVLink pointer from rank " << world_rank << " to rail peer " << wr << ": the declared "
-                  "NVLink domains split one CUDA IPC clique, which the scale-out path (RDMA writes and completion atomics) does not "
-                  "support; declare the whole clique as one domain, or set UCX_CUDA_IPC_ENABLE_MNNVL=n when no domain spans hosts. The previous views stay active";
+            else ss << "nixlGetPtr returned a direct pointer from rank " << world_rank << " to different-domain peer " << wr
+                    << ": the scale-out path requires RDMA between discovered NVLink domains; check physical discovery and UCX CUDA IPC/fabric configuration. The previous views stay active";
             throw EPException("NIXL", __FILE__, __LINE__, ss.str());
         }
     }
@@ -531,9 +540,10 @@ void NIXLEPContext::commit(cudaStream_t stream) {
         CUDA_RUNTIME_CHECK(cudaStreamSynchronize(stream));
 
         // Peers that left: no view references their metadata any more
-        for (const int wr: pending_disconnects) if (needs_endpoint(*this, wr)) {
+        for (const int wr: pending_disconnects) if (endpoint_connected[wr]) {
             const auto status = invalidate_remote_md(*state->agent, known_agent_names[wr]);
             EP_HOST_ASSERT((status == NIXL_SUCCESS or status == NIXL_ERR_NOT_FOUND) and "invalidateRemoteMD failed");
+            endpoint_connected[wr] = 0;
         }
         pending_disconnects.clear();
     });

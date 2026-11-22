@@ -6,7 +6,7 @@
 import unittest
 from types import SimpleNamespace
 
-from test_auto_sm_host import load_buffer
+from test_fixed_sm_host import load_buffer
 
 
 class Tensor:
@@ -40,6 +40,7 @@ class NVFP4HostTests(unittest.TestCase):
             hidden=128,
             num_topk=2,
             num_experts_per_rank=4,
+            num_launch_sms=2,
             max_num_scaleout_ranks=1,
             max_num_scaleup_ranks=4,
             store=object(),
@@ -75,7 +76,7 @@ class NVFP4HostTests(unittest.TestCase):
         self.topk = SimpleNamespace(shape=(2, 2))
 
     def send(self, scales):
-        return self.buffer.dispatch((self.codes, scales), self.topk, num_sms=2)[0]
+        return self.buffer.dispatch((self.codes, scales), self.topk)[0]
 
     def test_scale_bytes_are_packed_and_returned_without_copy_or_cast(self):
         for dtype in ("uint8", "float8"):

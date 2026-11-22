@@ -55,7 +55,7 @@ public:
     // Identity, fixed for the life of the buffer
     int world_rank;
     int num_world_ranks;
-    int max_num_scaleup_ranks;          // The domain size n: world ranks `[d * n, (d + 1) * n)` form NVLink domain d
+    int max_num_scaleup_ranks;          // Stride of the internal domain/position slots, independent of world-rank numbering
     int device_id;
 
     // The region: `[workspace][buffer]`, `num_region_bytes` long (the allocation may be a little larger)
@@ -76,18 +76,20 @@ public:
     // Register peers, wire required endpoints and stage new views; world ranks distinct, not ours, not connected; every peer calls this with us too.
     // Validate the whole peer list before loading metadata; later failures abort because peer state may have changed.
     void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
-                       const std::vector<NIXLPeerInfo>& peer_infos);
+                       const std::vector<NIXLPeerInfo>& peer_infos, const std::vector<int>& world_to_slot);
 
-    // Forget peers and stage new views; their metadata is invalidated at the next commit. Invalid requests leave state
-    // unchanged; a memory-view preparation failure aborts the process (recovery is unsupported)
+    // Prepared host mapping; only Buffer's drained activation publishes its device copy.
+    const std::vector<int>& get_world_to_slot() const { return world_to_slot; }
+
+    // Retire peers and stage views; Buffer commits before the public disconnect returns.
+    // Invalid requests leave state unchanged; view-preparation failures abort.
     void disconnect_ranks(const std::vector<int>& world_ranks);
 
     bool is_connected(const int& wr) const;
     std::vector<int> get_connected_ranks() const;
-    bool has_staged_views() const;
 
     // Make the staged views live (device sync, probe, refuse or swap, upload); never under capture or while a transport kernel may run
-    // A connected same-domain peer without an NVLink pointer, or a rail peer with one: throw, with the active views, the device context and the p2p table untouched
+    // A connected same-domain peer without a direct pointer, or a different-domain peer with one: throw, with the active views, the device context and the p2p table untouched
     void commit(cudaStream_t stream);
 
     // The fixed device address of the context the kernels read
@@ -115,9 +117,11 @@ private:
     // Logical peer registry: endpoints are needed only within our domain or at our position in another domain.
     std::vector<NIXLPeerInfo> peers;           // `[num_world_ranks]`, valid iff `connected`
     std::vector<int> connected;                // `[num_world_ranks]`, 0/1
+    std::vector<int> world_to_slot;            // Prepared internal slot per world rank; -1 for unassigned ranks
+    std::vector<int> endpoint_connected;       // Wired endpoints retained until peer retirement, even if a later mapping does not need them
     std::vector<int> connect_epoch;            // `[num_world_ranks]`: endpoint connection epoch (hello tag)
-    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: endpoint peer's last agent; retained across disconnects to restart epochs for a new process
-    std::vector<int> pending_disconnects;      // Disconnected since the last commit, which invalidates their agents' metadata (a reconnect must wait for it)
+    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: every logical peer's last agent; retained across disconnects to restart epochs for a new process
+    std::vector<int> pending_disconnects;      // Retired peers awaiting metadata cleanup within the public disconnect call
 
     // Device tables
     NIXLDeviceContext ctx_host{};

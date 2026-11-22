@@ -45,7 +45,14 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
 
     do_pressure_test = args.do_pressure_test
     for i in range(int(1e9) if do_pressure_test else 1):
-        buffer = create_group_buffer(group, explicitly_destroy=True)
+        buffer = create_group_buffer(
+            group,
+            num_experts_per_rank=1,
+            num_max_tokens_per_rank=1,
+            hidden=256,
+            num_topk=1,
+            explicitly_destroy=True,
+        )
 
         # Test barrier
         test_barrier(buffer, args)

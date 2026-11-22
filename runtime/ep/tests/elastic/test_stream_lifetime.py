@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
-"""Check eager output lifetimes across overlapping compute and communication.
+"""Check caller-stream restoration and output lifetimes across overlapping communication.
 
 Run on two GPUs in one NVLink domain:
     python tests/elastic/test_stream_lifetime.py
@@ -37,9 +37,10 @@ def run(rank, port):
         num_max_tokens_per_rank=tokens,
         hidden=hidden,
         num_topk=1,
+        num_launch_sms=4,
         explicitly_destroy=True,
     )
-    assert buffer._get_topology()[0] == "direct"
+    assert buffer._get_mode() == "direct"
     compute = torch.cuda.current_stream()
     communication = buffer.get_comm_stream()
     assert compute != communication
@@ -57,7 +58,6 @@ def run(rank, port):
             data,
             routes,
             topk_weights=weights,
-            num_sms=4,
             previous_event=ready,
             async_with_compute_stream=ready is not None,
             allocate_on_comm_stream=True,
@@ -85,6 +85,76 @@ def run(rank, port):
         assert torch.equal(output, data)
         del received, indices, received_weights, handle
         del dispatch_event, output, combine_event
+
+    def check_capacity_refusal(operation):
+        caller_stream = torch.cuda.current_stream()
+        try:
+            operation()
+        except RuntimeError as error:
+            assert "num_buffer_bytes" in str(error), str(error)
+        else:
+            raise AssertionError("Expected a pre-launch buffer-capacity refusal")
+        assert (
+            torch.cuda.current_stream() == caller_stream
+        ), "Caller stream changed after refusal"
+
+    refusal_stream = torch.cuda.Stream()
+    refusal_stream.wait_stream(compute)
+    with torch.cuda.stream(refusal_stream):
+        check_capacity_refusal(
+            lambda: buffer.dispatch(
+                first_input,
+                routes,
+                num_max_tokens_per_rank=tokens * 16,
+                allocate_on_comm_stream=True,
+                do_cpu_sync=False,
+            )
+        )
+        received, indices, received_weights, handle, dispatch_event = dispatch(first_input)
+        # Keep the valid dispatch handle; wider combine rows exceed this buffer's capacity.
+        oversized = torch.empty(
+            (received.shape[0], hidden * 4), dtype=received.dtype, device=received.device
+        )
+        check_capacity_refusal(lambda: combine(oversized, handle))
+        output, combine_event = combine(received, handle)
+    compute.wait_stream(refusal_stream)
+    torch.cuda.synchronize()
+    assert torch.equal(output, first_input), "Valid EP pair after capacity refusals"
+    del received, indices, received_weights, handle, oversized
+    del dispatch_event, output, combine_event
+
+    # Refused dispatch still queues prefix initialization on the communication stream.
+    torch.cuda.empty_cache()
+
+    def refuse_compute_allocation():
+        buffer.dispatch(
+            first_input,
+            routes,
+            num_max_tokens_per_rank=tokens * 16,
+            allocate_on_comm_stream=False,
+            do_cpu_sync=False,
+        )
+
+    # Warm allocation bins and the exact fill kernel before the overlap window.
+    check_capacity_refusal(refuse_compute_allocation)
+    warmed = [torch.full((128,), 37, dtype=torch.int32, device="cuda") for _ in range(128)]
+    del warmed
+    torch.cuda.synchronize()
+    delay_done = torch.cuda.Event(enable_timing=True)
+    with torch.cuda.stream(communication):
+        torch.cuda._sleep(500_000_000)
+        delay_done.record(communication)
+    check_capacity_refusal(refuse_compute_allocation)
+    reused = [torch.full((128,), 37, dtype=torch.int32, device="cuda") for _ in range(128)]
+    allocated = torch.cuda.Event(enable_timing=True)
+    allocated.record(compute)
+    torch.cuda.synchronize()
+    overlap_ms = allocated.elapsed_time(delay_done)
+    assert overlap_ms > 0, f"Refusal test window did not overlap ({overlap_ms=})"
+    assert all(torch.all(tensor == 37).item() for tensor in reused), "Premature prefix storage reuse"
+    del reused
+    if rank == 0:
+        print("PASS: caller stream and storage survive pre-launch capacity refusals", flush=True)
 
     def check_output(kind):
         torch.cuda.synchronize()

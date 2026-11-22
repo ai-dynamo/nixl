@@ -2,8 +2,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-"""NVLink-domain evidence for a discovery cohort: fail-closed for a declared domain size, inferred from pairwise
-evidence otherwise. No CUDA/NVML initialization at import time; GPUs are resolved in NVML by UUID."""
+"""Discover NVLink domains from fabric enrollment or pairwise P2P evidence, resolving GPUs by UUID."""
 
 import ctypes
 import uuid
@@ -30,11 +29,9 @@ def _fabric_info(pynvml, handle):
         return None
     info = info_type()
     try:
-        status = query(handle, ctypes.byref(info))
+        query(handle, ctypes.byref(info))
     except unavailable:
         return None
-    if status != 0:
-        raise ValueError(f"nvmlDeviceGetGpuFabricInfoV failed with status {status}")
     return info
 
 
@@ -115,39 +112,22 @@ def inspect_fabric_device():
         pynvml.nvmlShutdown()
 
 
-def validate_fabric_records(records, requested_scaleup=None):
-    """Validate declared logical domains (contiguous blocks of ``requested_scaleup`` ranks, pairwise NVLink-linked;
-    a block smaller than its CUDA IPC clique passes here and is refused at activation, since the scale-out
-    path needs RDMA to every rail peer) or infer uniform, rank-contiguous physical domains. Returns
-    ``(num_scaleout_ranks, num_scaleup_ranks)``.
-    """
+def _fabric_links(records):
     if not records:
-        raise ValueError("Empty cohort")
-    if requested_scaleup is not None and (
-        type(requested_scaleup) is not int
-        or requested_scaleup <= 0
-        or len(records) % requested_scaleup
-    ):
-        raise ValueError(
-            "Requested scale-up size must be positive and divide the cohort size"
-        )
+        raise ValueError("No GPU records supplied for topology discovery")
     identities = set()
-    for rank, record in enumerate(records):
+    for rank, record in records.items():
         if record.get("error"):
-            raise ValueError(
-                f"Failed fabric evidence at cohort rank {rank}: {record!r}"
-            )
+            raise ValueError(f"Failed fabric evidence at rank {rank}: {record!r}")
         identity = record["gpu_uuid"]
         if identity in identities:
-            raise ValueError(f"Duplicate GPU identity at cohort rank {rank}")
+            raise ValueError(f"Duplicate GPU identity at rank {rank}")
         identities.add(identity)
         if record["fabric"] is not None:
             try:
                 validate_fabric_record(record["fabric"])
             except ValueError as e:
-                raise ValueError(
-                    f"Fabric evidence at cohort rank {rank}: {e}"
-                ) from None
+                raise ValueError(f"Fabric evidence at rank {rank}: {e}") from None
 
     def linked(a, b):
         left, right = records[a], records[b]
@@ -164,11 +144,51 @@ def validate_fabric_records(records, requested_scaleup=None):
         forward = right["gpu_uuid"] in left["nvlink_peers"]
         reverse = left["gpu_uuid"] in right["nvlink_peers"]
         if forward != reverse:
-            raise ValueError(
-                f"Asymmetric NVLink evidence between cohort ranks {a} and {b}"
-            )
+            raise ValueError(f"Asymmetric NVLink evidence between ranks {a} and {b}")
         return forward and reverse
 
+    return linked
+
+
+def _physical_domains(records, linked):
+    ranks = sorted(records)
+    adjacency = {rank: {rank} for rank in ranks}
+    for index, i in enumerate(ranks):
+        for j in ranks[:index]:
+            if linked(i, j):
+                adjacency[i].add(j)
+                adjacency[j].add(i)
+    unseen, domains = set(ranks), []
+    while unseen:
+        first = min(unseen)
+        domain = adjacency[first]
+        if any(adjacency[i] != domain for i in domain):
+            raise ValueError(
+                f"Ranks {sorted(domain)} lack complete pairwise NVLink evidence"
+            )
+        ordered = sorted(domain)
+        unseen.difference_update(domain)
+        domains.append(ordered)
+    return domains
+
+
+def group_fabric_records(records):
+    """Group world-rank-keyed GPU records into physical NVLink cliques."""
+    return _physical_domains(records, _fabric_links(records))
+
+
+def validate_fabric_records(records, requested_scaleup=None):
+    """Validate declared contiguous domains or infer uniform, rank-contiguous domains for group-based tests."""
+    if requested_scaleup is not None and (
+        type(requested_scaleup) is not int
+        or requested_scaleup <= 0
+        or len(records) % requested_scaleup
+    ):
+        raise ValueError(
+            "Requested scale-up size must be positive and divide the cohort size"
+        )
+    records = dict(enumerate(records))
+    linked = _fabric_links(records)
     if requested_scaleup is not None:
         for first in range(0, len(records), requested_scaleup):
             for i in range(first, first + requested_scaleup):
@@ -180,27 +200,12 @@ def validate_fabric_records(records, requested_scaleup=None):
                         )
         return len(records) // requested_scaleup, requested_scaleup
 
-    adjacency = [{i} for i in range(len(records))]
-    for i in range(len(records)):
-        for j in range(i):
-            if linked(i, j):
-                adjacency[i].add(j)
-                adjacency[j].add(i)
-    unseen, domains = set(range(len(records))), []
-    while unseen:
-        first = min(unseen)
-        domain = adjacency[first]
-        if any(adjacency[i] != domain for i in domain):
+    domains = _physical_domains(records, linked)
+    for domain in domains:
+        if domain != list(range(domain[0], domain[0] + len(domain))):
             raise ValueError(
-                f"Ranks {sorted(domain)} lack complete pairwise NVLink evidence"
+                f"NVLink domain {domain} is not contiguous in cohort rank order"
             )
-        ordered = sorted(domain)
-        if ordered != list(range(first, first + len(domain))):
-            raise ValueError(
-                f"NVLink domain {ordered} is not contiguous in cohort rank order"
-            )
-        unseen.difference_update(domain)
-        domains.append(ordered)
     sizes = {len(domain) for domain in domains}
     if len(sizes) != 1:
         raise ValueError(

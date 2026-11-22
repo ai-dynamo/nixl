@@ -15,7 +15,7 @@
 
 namespace nixl_ep_v2::elastic::adaptive {
 
-// Combine on a fixed grid; `EPTopology` supplies rank decomposition and the active block count.
+// Combine on a fixed grid; `EPTopology` supplies the rank decomposition.
 // Elastic on the NIXL transport: masked positions have no linked list and get no tails, masked domains are not sent to (see `topology.cuh`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumLaunchSMs,
@@ -53,9 +53,6 @@ adaptive_combine_impl(nv_bfloat16* x,
     // Topology: uniform per block, read once
     const auto topo = topology::load(topology_ptr);
 
-    // Surplus blocks of the fixed grid release their SM at once
-    if (sm_idx >= topo.num_active_sms)
-        return;
     topo.check_launch();
 
     // The transport context comes from the topology descriptor (`EPTopology`)
@@ -64,7 +61,7 @@ adaptive_combine_impl(nv_bfloat16* x,
 
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
-    const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
+    constexpr int num_channels = kNumChannelsPerSM * kNumLaunchSMs;
     const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
     const int num_tokens_in_linked_list = num_scaleout_ranks * num_max_tokens_per_channel + 1;
 
@@ -120,11 +117,11 @@ adaptive_combine_impl(nv_bfloat16* x,
     const int channel_in_sm_idx = warp_idx % kNumChannelsPerSM;
     const int channel_idx = sm_idx * kNumChannelsPerSM + channel_in_sm_idx;
 
-    // Transport handle. Each warp is a channel, spread over the active blocks and the context's channel count (`comm::get_channel_idx`)
-    const auto transport = nixl::NIXLTransport(ctx, comm::get_channel_idx<kNumChannelsPerSM>(sm_idx, channel_in_sm_idx, ctx.num_channels, topo.num_active_sms));
+    // Transport handle. Each warp is a channel, spread over the fixed launch grid and the context's channel count (`comm::get_channel_idx`)
+    const auto transport = nixl::NIXLTransport(ctx, comm::get_channel_idx<kNumLaunchSMs, kNumChannelsPerSM>(sm_idx, channel_in_sm_idx, ctx.num_channels));
 
     // Global parallel barriers for scale-out subteam and scale-up subteam
-    // The hybrid entry synchronizes active blocks; direct mode skips that block synchronization.
+    // The hybrid entry synchronizes all blocks before the peer barrier; direct mode skips that initial synchronization.
     const bool is_direct = topo.mode == topology::kModeDirect;
     const bool use_incremental_combine = combine_policy::use_incremental(topo, num_combined_tokens);
     if (is_direct) {
@@ -184,10 +181,10 @@ adaptive_combine_impl(nv_bfloat16* x,
 
         // Rotate the warp index by rank so that peers spread their writes.
         const auto rotated_warp_idx = (warp_idx + scaleup_rank_idx) % kNumWarps;
-        const auto global_warp_idx = rotated_warp_idx * topo.num_active_sms + sm_idx;
+        const auto global_warp_idx = rotated_warp_idx * kNumLaunchSMs + sm_idx;
 
         // Do TMA writes into the remote buffers: static partition over the active warps
-        const int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, topo.num_active_sms * kNumWarps);
+        const int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, kNumLaunchSMs * kNumWarps);
         const int token_start_idx = num_tokens_per_warp * global_warp_idx;
         const int token_end_idx = min(token_start_idx + num_tokens_per_warp, num_reduced_tokens);
         for (int i = token_start_idx; i < token_end_idx; ++ i) {

@@ -2,7 +2,7 @@
 
 NIXL EP provides BF16/FP8/NVFP4 dispatch and BF16 combine using a fixed
 launch grid. Direct and hybrid modes share one kernel family; kernels read
-the mode and active block count from a device topology descriptor. The
+the mode and membership from a device topology descriptor. The
 NIXL/UCX transport supports planned membership changes between
 completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
@@ -17,8 +17,8 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
   device channels), including CUDA IPC support.
 - RDMA development headers on JIT hosts, including `infiniband/mlx5dv.h`
   from rdma-core or OFED, for UCX's GPU RDMA device implementation.
-- `nvidia-ml-py>=13.580.65` (installed with the package).
 - NVLink within scale-up domains and RDMA between domains.
+- `nvidia-ml-py>=13.580.65` for NVLink domain discovery during peer connection.
 
 ### Installation
 
@@ -65,7 +65,7 @@ BF16 combine requires `hidden` divisible by 256, including pairs that use
 FP8 or NVFP4 dispatch.
 
 With NIXL's metadata backend configured as described below, a process group `group`
-containing two NVLink domains of eight GPUs in domain-contiguous rank order,
+containing two NVLink domains of eight GPUs,
 a shared `torch.distributed.Store` named `store`, and CUDA tensors `x` (BF16,
 `[tokens, hidden]`), `topk_idx` (`nixl.runtime.ep.topk_idx_t`, `[tokens, topk]`) and
 optional `topk_weights` (float32, the same shape):
@@ -109,36 +109,18 @@ FP8 scale-factor inputs.
 
 ## Topology and graph replay
 
-The main dispatch/combine launch grid defaults to 24 blocks.
-`NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS` selects an even grid size from 2 through 64
-before construction. Each launch reads the active block count from the
-topology descriptor; surplus blocks return. Keep that count unchanged
-throughout a dispatch/combine pair, including its epilogues. Topology
-changes are collective, between completed pairs, with updates and replay
-ordered on the same stream or through explicit event dependencies.
-
-`dispatch(num_sms=0)` remembers its top-k for automatic
-SM selection. Subsequent `set_active_ranks` calls with
-the default `num_active_sms=0` recompute the estimate for the proposed
-membership using cached bandwidth information. Commit publishes the new
-topology and count together. An explicit dispatch or topology SM count
-pins manual selection until a successful `dispatch(num_sms=0)` enables
-automatic selection again. Before the first automatic dispatch, topology
-updates retain the existing count.
-
-The selection policy belongs to the buffer: its most recent successful
-dispatch selects automatic or manual mode for all graphs using it.
-Participants must agree on that policy and its estimator inputs; joining
-ranks establish their policy through their normal dispatch warm-up/capture.
-Captured non-deterministic dispatch/combine graphs use the updated active count
-without recapture. Their backing allocations cover the full launch grid;
+Constructor `num_launch_sms` fixes the main dispatch/combine block count for
+this buffer (default 24; even, from 2 through 64, matching across peers).
+All blocks participate; the count does not change with membership or dispatch
+inputs. The topology descriptor selects the active ranks and communication
+mode, so captured graphs can reuse the fixed grid through shrink/expansion.
+Topology changes are collective, between completed pairs, with updates and
+replay ordered on the same stream or through explicit event dependencies.
 Python handle fields and tensor shapes still describe capture-time metadata.
-The estimator runs on the host during topology updates, never during graph
-replay; no profiling or correctness checks are added to communication.
 
 Dispatch/combine support a single active GPU. The calling rank must be active,
 checked before launch and again inside the kernels for graph replay.
-`num_experts_per_rank` fixes the physical routing
+The required positive `num_experts_per_rank` fixes the physical routing
 slot capacity per GPU at construction; peers, including joiners, must agree on it.
 Choose it for the largest per-GPU expert placement across all intended
 topologies, including shrink, rather than just the initial placement.
@@ -155,19 +137,20 @@ physical slots and supplies the corresponding routing weights.
 For S = `num_experts_per_rank` slots per GPU, the public expert ID is
 `world_rank * S + local_expert_idx`, where `0 <= local_expert_idx < S`.
 IDs range from zero through `max_num_scaleout_ranks * max_num_scaleup_ranks * S - 1`.
-Slot `e` belongs to world rank `e // S`, with coordinates
-`divmod(e // S, max_num_scaleup_ranks)`. IDs stay fixed across membership and
+Slot `e` belongs to world rank `e // S`. Caller-assigned rank IDs do not encode
+physical topology. IDs stay fixed across membership and
 extent changes, including graph replay; holes are not packed away. `-1` means
 no selection, and selections owned by inactive ranks are dropped. The caller
 does not renumber IDs solely because an extent changes, but still owns logical
 expert placement and routing weights. Internal source metadata continues to
-use committed-extent rank encoding. The SM traffic estimate uses active-rank
-counts times S, excluding holes.
+use committed-extent rank encoding.
 
 `connect_ranks` prepares peer views; `set_active_ranks` validates and activates
-the requested membership and prepared views. After excluding departing peers
-from the active world, `disconnect_ranks` retires them and activates the
-remaining peer views before returning. An empty disconnect does nothing.
+the requested membership and prepared views. `disconnect_ranks` excludes departing
+peers from an active caller's membership and retires their connections in one update;
+the remaining ranks must still form a product of domains and positions. An inactive
+caller only retires connections, preserving its membership descriptor.
+An empty disconnect does nothing.
 Size the buffer for its maximum world at construction. Active ranks form a
 product of active domains and positions within those domains. New-peer
 connections may run while the committed graph replays. Activation and peer
@@ -190,6 +173,8 @@ have read it and native preparation finishes. Already-connected peers are ignore
 if no new peers remain, the call does nothing and needs no Store. New peers must request each
 other in the same exchange. World IDs must be unique within the Store, and
 all participants must finish an exchange before reusing its keys.
+It also exchanges GPU discovery records and agrees on private domain/position mappings.
+Established mappings are preserved, and prepared mappings become live only on activation.
 
 NIXL's metadata manager publishes and fetches transport metadata. Configure its
 backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT=host:port`
@@ -200,9 +185,9 @@ active graph. Publications remain available to future joiners until buffer
 destruction. The manager starts its backend connection asynchronously during
 construction without waiting for peers.
 
-Invalid inputs and incompatible mappings are refused before activation.
-Failures after transport mutation terminate the process; restart it instead
-of attempting recovery.
+Invalid inputs and mapping refusals before peer retirement preserve active views.
+Failures after peer retirement or view activation terminate the process; restart
+it instead of attempting recovery.
 
 ## API changes from upstream V2
 
@@ -216,25 +201,26 @@ of attempting recovery.
 - Construction takes a stable `world_rank` and both maximum world dimensions;
   it creates only that rank's local buffer. Connect peers explicitly, then activate
   the intended world with `set_active_ranks`.
-- Constructor keyword `num_experts_per_rank` fixes physical routing slots
-  per GPU; it must be positive for dispatch/combine (zero permits a
-  barrier-only buffer). `num_experts` is removed from `dispatch`,
-  `get_theoretical_num_sms`, `EPHandle`, and native dispatch/combine; slot
+- Required positive constructor argument `num_experts_per_rank` fixes physical routing slots
+  per GPU. `num_experts` is removed from `dispatch`,
+  `EPHandle`, and native dispatch/combine; slot
   IDs span the declared maximum world. The cached `dispatch(handle=...)` path is
   removed, along with `allow_hybrid_mode`, the buffer's `group` and alignment
   exports.
 - Constructor `num_bytes` is removed. Allocation is calculated from the workload
-  settings and maximum world dimensions; barrier-only buffers are sized internally.
+  settings and maximum world dimensions; positive `num_max_tokens_per_rank` and
+  `hidden` are required constructor arguments.
   `get_buffer_size_hint` uses explicit maxima for local memory planning, and `buffer.num_bytes`
   reports the communication allocation excluding workspace.
+- Constructor and size-hint `num_topk` are required integers from 1 through 32 for buffer sizing;
+  pass `32` to reserve maximum top-k capacity. Dispatch uses the width of `topk_idx`.
 - `combine` takes no top-k weights and returns `(combined_x, event)`.
   Upstream used the optional weight return for routing-weight gradients in
   dispatch backward; this fork omits that path. It is independent of cached
   dispatch, which upstream used for combine backward.
-- `combine(num_sms=...)` is removed: dispatch and combine use the topology
-  descriptor's active block count throughout each pair, so combine has no
-  independent SM setting. Set the count through dispatch or topology updates
-  between completed pairs. Communicator, QP and service-level arguments are removed.
+- Dispatch and combine have no `num_sms` argument. Constructor `num_launch_sms`
+  fixes the block count for the buffer's lifetime. There is no separate active
+  SM count or automatic estimator. Communicator, QP and service-level arguments are removed.
 - Constructor and size-hint `use_fp8_dispatch=True` reserve smaller FP8
   dispatch capacity; peers must use matching capacity settings. These buffers
   accept FP8/NVFP4 and reject BF16 dispatch. Default BF16-capacity buffers
@@ -242,10 +228,8 @@ of attempting recovery.
 - Active and connected world-rank queries replace static domain
   attributes/accessors; topology helpers are internal. `get_physical_domain_size` and the
   `barrier(sequential=)` argument are removed.
-- `get_theoretical_num_sms` drops the zero-only `num_scaleout_topk` argument;
-  its second positional argument is now `rdma_gbs`. It returns the raw estimate,
-  before the launch-grid limit. `EPHandle.deterministic_sort` uses the handle's
-  channel list instead of accepting a separate one. The constant-true private
+- `get_theoretical_num_sms` is removed. `EPHandle.deterministic_sort` uses the
+  handle's channel list instead of accepting a separate one. The constant-true private
   `_C.is_sm90_compiled` query is removed.
 
 ## NVFP4 dispatch

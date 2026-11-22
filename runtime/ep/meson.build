@@ -214,6 +214,7 @@ py.install_sources(
     'python/utils/math.py',
     'python/utils/nixl_bootstrap.py',
     'python/utils/nixl_fabric.py',
+    'python/utils/nixl_topology.py',
     'python/utils/profiling.py',
     'python/utils/refs.py',
     'python/utils/semantic.py',

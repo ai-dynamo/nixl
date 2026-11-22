@@ -25,8 +25,6 @@ struct WorkspaceLayout {
     __forceinline__ __device__ __host__
     explicit WorkspaceLayout(void* workspace): workspace(workspace) {}
 
-    // Arrival counter and round number of the active-block grid barrier (two words, padded to a line)
-    static constexpr int64_t kNumActiveGridBarrierBytes = 128;
     // Notify reduction workspace: rank and expert counts
     static constexpr int64_t kNumNotifyReductionBytes = (topology::kNumMaxRanksCap + kNumMaxExperts) * sizeof(int64_t);
     // Scale-up rank and expert send/recv counts: `kNumMaxRanksCap` rank words then `kNumMaxExperts` expert words, each way
@@ -49,7 +47,7 @@ struct WorkspaceLayout {
     static int64_t get_num_bytes() {
         return kNumNotifyReductionBytes + kNumScaleupCountBytes + kNumScaleupAtomicCounterBytes +
                kNumScaleoutRankCountBytes + kNumScaleoutExpertCountBytes + kNumChannelScaleupTailBytes +
-               kNumActiveGridBarrierBytes + kNumPeerBarrierBytes + 2 * kNumReadyAtomicBytes + sizeof(profile::Header);
+               kNumPeerBarrierBytes + 2 * kNumReadyAtomicBytes + sizeof(profile::Header);
     }
 
     __forceinline__ __device__ __host__ int64_t* get_notify_reduction_workspace_ptr() const {
@@ -109,15 +107,9 @@ struct WorkspaceLayout {
         return base_ptr + (channel_idx * topology::kNumMaxScaleupRanksCap + scaleup_rank_idx);
     }
 
-    // `[0]` arrivals, `[1]` round number; both start at zero (the workspace is zero-initialised)
-    __forceinline__ __device__ __host__ unsigned* get_active_grid_barrier_ptr() const {
-        return math::advance_ptr<unsigned>(
-            get_channel_scaleup_tail_ptr(0, 0), kNumChannelScaleupTailBytes);
-    }
-
     // Each connected pair counts arrivals monotonically; reconnect restarts both words.
     __forceinline__ __device__ __host__ int64_t* get_peer_barrier_signal_ptr(const int& world_rank) const {
-        return math::advance_ptr<int64_t>(get_active_grid_barrier_ptr(), kNumActiveGridBarrierBytes) + world_rank;
+        return math::advance_ptr<int64_t>(get_channel_scaleup_tail_ptr(0, 0), kNumChannelScaleupTailBytes) + world_rank;
     }
 
     __forceinline__ __device__ __host__ int64_t* get_peer_barrier_expected_ptr(const int& world_rank) const {

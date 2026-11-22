@@ -14,9 +14,6 @@
 
 namespace nixl_ep_v2::elastic::adaptive {
 
-// Channels of the launched grid (<= kNumMaxChannels)
-static int get_num_launch_channels() { return topology::get_num_launch_sms() * kNumMaxChannelsPerSM; }
-
 class DispatchRuntime final : public jit::LaunchRuntime<DispatchRuntime> {
 public:
     struct Args {
@@ -138,6 +135,7 @@ static void launch_dispatch(void* x, void* sf,
                             void* mapped_host_workspace,
                             const topology::EPTopology* topology,
                             const int& num_max_scaleout_ranks, const int& num_max_scaleup_ranks,
+                            const int& num_launch_sms,
                             const int& num_channels_per_sm,
                             const int& num_smem_bytes,
                             const int64_t& num_timeout_cycles,
@@ -168,7 +166,7 @@ static void launch_dispatch(void* x, void* sf,
         .topology = topology,
         .num_max_tokens_per_rank = num_max_tokens_per_rank,
         // NOTES: make cluster dim 2 to overlap with clustered computation kernels
-        .launch_args = jit::LaunchArgs(topology::get_num_launch_sms(), num_threads, num_smem_bytes, 2, true)};
+        .launch_args = jit::LaunchArgs(num_launch_sms, num_threads, num_smem_bytes, 2, true)};
     const auto code = DispatchRuntime::generate(args);
     const auto runtime = jit::compiler->build("adaptive_dispatch", code);
     DispatchRuntime::launch(runtime, args, stream);
@@ -179,7 +177,7 @@ public:
     struct Args {
         // Templated arguments
         bool do_expand, do_zero_padding;
-        int num_channels_per_sm;
+        int num_launch_sms, num_channels_per_sm;
         int num_warps;
         int num_max_scaleup_ranks;
         int num_hidden_bytes, num_sf_packs;
@@ -209,11 +207,11 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.do_expand, args.do_zero_padding,
-                           args.launch_args.grid_dim.first, args.num_channels_per_sm, args.num_warps,
+                           args.launch_args.grid_dim.first, args.num_launch_sms, args.num_channels_per_sm, args.num_warps,
                            args.num_max_scaleup_ranks,
                            args.num_hidden_bytes, args.num_sf_packs,
                            args.num_experts_per_rank, args.num_topk, args.expert_alignment);
@@ -248,7 +246,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           const int& num_sf_packs, const int& recv_sf_token_stride, const int& recv_sf_hidden_stride,
                                           const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
                                           const topology::EPTopology* topology,
-                                          const int& num_sms, const int& num_smem_bytes,
+                                          const int& num_sms, const int& num_launch_sms, const int& num_smem_bytes,
                                           const int& num_channels_per_sm,
                                           const bool& do_expand, const bool& do_zero_padding,
                                           const at::cuda::CUDAStream& stream) {
@@ -262,7 +260,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
     // Generate, build and launch
     const DispatchCopyEpilogueRuntime::Args args = {
         .do_expand = do_expand, .do_zero_padding = do_zero_padding,
-        .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
+        .num_launch_sms = num_launch_sms, .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,

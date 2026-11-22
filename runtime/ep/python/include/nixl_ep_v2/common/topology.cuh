@@ -4,19 +4,15 @@
 
 #pragma once
 
-#include <cstdlib>
-
 #include <nixl_ep_v2/common/exception.cuh>
 #include <nixl_ep_v2/common/nixl_transport.cuh>
 #include <nixl_ep_v2/common/ptx.cuh>
 
 namespace nixl_ep_v2::elastic::topology {
 
-// The adaptive EP kernels are launched with a FIXED grid so that a captured CUDA graph survives a change of
-// topology. Blocks with `blockIdx.x >= num_active_sms` exit at once.
-// Clusters have two blocks. Use 24 as the baseline launch capacity; the active block count is selected at runtime.
-constexpr int kNumLaunchSMs = 24;
-// Hard cap used for buffer sizing (the launch grid may be raised up to this with NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS)
+// Each buffer fixes the adaptive launch grid at construction so that a captured CUDA graph survives a change of
+// topology. Every launched block participates. Clusters have two blocks.
+// Hard cap used for buffer sizing; per-buffer launch counts are even and cannot exceed it.
 constexpr int kNumMaxLaunchSMs = 64;
 
 // Hard caps of the rank decomposition: the workspace control words are sized by them (the transport tables by the
@@ -28,7 +24,6 @@ constexpr int kNumMaxScaleupRanksCap = 128;
 constexpr int kNumScaleupMaskWords = kNumMaxScaleupRanksCap / 64;
 constexpr int kNumMaxRanksCap = kNumMaxScaleoutRanksCap * kNumMaxScaleupRanksCap;   // The caps' product: the world-rank-indexed workspace rows
 static_assert(kNumMaxScaleupRanksCap % 64 == 0, "The position mask is whole 64-bit words");
-constexpr int kMinNumActiveRanks = 1;
 
 // The active positions of a domain (bit k across the words): a plain array, so the topology descriptor (`EPTopology`) stays a POD
 struct ScaleupMask {
@@ -56,7 +51,7 @@ struct ScaleupMask {
         return count;
     }
 
-    // Highest active position + 1 (0 when empty): the extent of the active positions (host, when a topology is staged)
+    // Highest active position + 1 (0 when empty).
     __host__ int extent() const {
         for (int i = kNumScaleupMaskWords - 1; i >= 0; -- i)
             if (words[i] != 0)
@@ -64,27 +59,6 @@ struct ScaleupMask {
         return 0;
     }
 };
-
-// World rank inside a declared maximum world of `max_num_scaleup_ranks` positions per domain (the transport tables' index)
-__device__ __host__ __forceinline__ constexpr int world_rank(const int& scaleout_rank_idx, const int& scaleup_rank_idx,
-                                                             const int& max_num_scaleup_ranks) {
-    return scaleout_rank_idx * max_num_scaleup_ranks + scaleup_rank_idx;
-}
-
-#ifndef __CUDA_ARCH__
-// Host: the launch grid actually used, `kNumLaunchSMs` unless `NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS` overrides it (even,
-// <= kNumMaxLaunchSMs). An A/B knob: the grid is a template argument of the kernels, so changing it recompiles.
-inline int get_num_launch_sms() {
-    static int value = [] {
-        const char* env = std::getenv("NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS");
-        int v = env != nullptr and env[0] != '\0' ? std::atoi(env) : kNumLaunchSMs;
-        if (not (2 <= v and v <= kNumMaxLaunchSMs and v % 2 == 0))
-            throw EPExceptionWithLineInfo("Assertion", std::string("NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS=") + env + ": an even number between 2 and " + std::to_string(kNumMaxLaunchSMs) + " is required");
-        return v;
-    }();
-    return value;
-}
-#endif
 
 // Kernel mode, decided by the host from the world's NVLink domains (never a user input)
 enum Mode : int {
@@ -103,8 +77,9 @@ struct alignas(128) EPTopology {
     Mode mode;
     int num_scaleout_ranks, num_scaleup_ranks;
     int scaleout_rank_idx, scaleup_rank_idx;
-    // Number of blocks that do work in this launch (<= the launched grid, even)
-    int num_active_sms;
+    int num_world_ranks;
+    const int* world_to_slot;
+    const int* slot_to_world;
     // Active domains (bit d) and active positions (bit k, `kNumScaleupMaskWords` words)
     uint32_t scaleout_mask;
     ScaleupMask scaleup_mask;
@@ -116,7 +91,7 @@ struct alignas(128) EPTopology {
     }
 
     // The range check is `ScaleupMask::test`'s: bits at or beyond the extent `num_scaleup_ranks` are zero by construction
-    // (`stage_topology` takes the extent from the mask)
+    // (the host derives the extent from the mask)
     __device__ __host__ __forceinline__ bool is_scaleup_active(const int& idx) const {
         return scaleup_mask.test(idx);
     }
@@ -162,13 +137,27 @@ __device__ __forceinline__ bool is_rank_active(const EPTopology& topo, const int
     return topo.is_scaleout_active(rank_idx / topo.num_scaleup_ranks) and is_scaleup_active<kNumMaxScaleupRanks>(topo, rank_idx % topo.num_scaleup_ranks);
 }
 
+// Public rank IDs are independent of the internal domain/position layout.
+__device__ __host__ __forceinline__ int rank_slot(const EPTopology& topo, const int& world_rank) {
+    if (world_rank < 0 or world_rank >= topo.num_world_ranks)
+        return -1;
+#ifdef __CUDA_ARCH__
+    return __ldg(topo.world_to_slot + world_rank);
+#else
+    return topo.world_to_slot[world_rank];
+#endif
+}
+
 // Public expert IDs use world ranks; internal counters and token metadata use the current extent.
 template <int kNumMaxScaleupRanks, int kNumExpertsPerRank>
 __device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, const int& expert_idx) {
     if (expert_idx < 0)
         return -1;
     const int owner = expert_idx / kNumExpertsPerRank;
-    const int domain = owner / kNumMaxScaleupRanks, position = owner % kNumMaxScaleupRanks;
+    const int slot = rank_slot(topo, owner);
+    if (slot < 0)
+        return -1;
+    const int domain = slot / kNumMaxScaleupRanks, position = slot % kNumMaxScaleupRanks;
     // Check before changing strides: an inactive position must not alias a rank in another domain.
     if (not topo.is_scaleout_active(domain) or not is_scaleup_active<kNumMaxScaleupRanks>(topo, position))
         return -1;
@@ -178,12 +167,12 @@ __device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, co
 // World ranks of our peers (`world_rank`): the scale-up peer at position `k` of our domain, the rail peer in domain `d`
 template <int kNumMaxScaleupRanks>
 __device__ __host__ __forceinline__ int scaleup_peer(const EPTopology& topo, const int& k) {
-    return world_rank(topo.scaleout_rank_idx, k, kNumMaxScaleupRanks);
+    return topo.slot_to_world[topo.scaleout_rank_idx * kNumMaxScaleupRanks + k];
 }
 
 template <int kNumMaxScaleupRanks>
 __device__ __host__ __forceinline__ int scaleout_peer(const EPTopology& topo, const int& d) {
-    return world_rank(d, topo.scaleup_rank_idx, kNumMaxScaleupRanks);
+    return topo.slot_to_world[d * kNumMaxScaleupRanks + topo.scaleup_rank_idx];
 }
 
 // The kernels read the topology descriptor (`EPTopology`) once per block, field by field through the read-only
@@ -196,7 +185,9 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
     topo.num_scaleup_ranks = __ldg(&ptr->num_scaleup_ranks);
     topo.scaleout_rank_idx = __ldg(&ptr->scaleout_rank_idx);
     topo.scaleup_rank_idx = __ldg(&ptr->scaleup_rank_idx);
-    topo.num_active_sms = __ldg(&ptr->num_active_sms);
+    topo.num_world_ranks = __ldg(&ptr->num_world_ranks);
+    topo.world_to_slot = ptx::ldg_ptr(&ptr->world_to_slot);
+    topo.slot_to_world = ptx::ldg_ptr(&ptr->slot_to_world);
     topo.scaleout_mask = __ldg(&ptr->scaleout_mask);
     #pragma unroll
     for (int i = 0; i < kNumScaleupMaskWords; ++ i)

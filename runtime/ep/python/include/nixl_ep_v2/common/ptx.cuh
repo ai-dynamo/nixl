@@ -252,29 +252,6 @@ __forceinline__ __device__ void st_release_sys(void* ptr, dtype_t value) {
     }
 }
 
-// GPU-scope loads, stores and atomics on one 32-bit word (the active-block grid barrier). The "memory" clobber
-// keeps the compiler from moving other memory accesses across them, which is the point of the ordering
-__forceinline__ __device__ unsigned ld_acquire_gpu(const unsigned* ptr) {
-    unsigned value;
-    asm volatile("ld.acquire.gpu.global.u32 %0, [%1];" : "=r"(value) : "l"(ptr) : "memory");
-    return value;
-}
-
-__forceinline__ __device__ void st_relaxed_gpu(unsigned* ptr, const unsigned& value) {
-    asm volatile("st.relaxed.gpu.global.u32 [%0], %1;" :: "l"(ptr), "r"(value) : "memory");
-}
-
-__forceinline__ __device__ void st_release_gpu(unsigned* ptr, const unsigned& value) {
-    asm volatile("st.release.gpu.global.u32 [%0], %1;" :: "l"(ptr), "r"(value) : "memory");
-}
-
-// Returns the value before the add
-__forceinline__ __device__ unsigned atom_add_acq_rel_gpu(unsigned* ptr, const unsigned& value) {
-    unsigned old;
-    asm volatile("atom.acq_rel.gpu.global.add.u32 %0, [%1], %2;" : "=r"(old) : "l"(ptr), "r"(value) : "memory");
-    return old;
-}
-
 // Adjust registers
 template <int kNumRegs>
 __device__ __forceinline__ void warpgroup_reg_alloc(){

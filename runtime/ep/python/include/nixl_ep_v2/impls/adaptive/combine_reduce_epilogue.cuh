@@ -18,7 +18,7 @@ namespace nixl_ep_v2::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
-          int kNumSMs, int kNumWarps, int kNumChannelsPerSM,
+          int kNumSMs, int kNumLaunchSMs, int kNumWarps, int kNumChannelsPerSM,
           int kNumMaxScaleupRanks,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
@@ -40,7 +40,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
 #endif
     EP_PROFILE_STAMP(profile_workspace, CombineReduceEntry);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
-    const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
+    constexpr int num_channels = kNumChannelsPerSM * kNumLaunchSMs;
     const int num_experts_per_rank = kNumExpertsPerRank;
     const int num_tokens_in_scaleup_layout = get_num_tokens_in_layout(kAllowMultipleReduction, num_scaleup_ranks, kNumTopk);
 
@@ -100,9 +100,10 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         if (lane_idx < kNumTopk) {
             const int dst_expert_idx = static_cast<int>(combined_topk_idx[token_idx * kNumTopk + lane_idx]);
             owner = dst_expert_idx >= 0 ? dst_expert_idx / num_experts_per_rank : -1;
-            const int owner_domain = owner / kNumMaxScaleupRanks, owner_position = owner % kNumMaxScaleupRanks;
+            const int owner_slot = topology::rank_slot(topo, owner);
+            const int owner_domain = owner_slot / kNumMaxScaleupRanks, owner_position = owner_slot % kNumMaxScaleupRanks;
             // A selection of a masked rank's expert was dropped at dispatch: no row to reduce, weight zero
-            if (owner >= 0 and not topo.is_active(owner_domain, owner_position))
+            if (owner >= 0 and (owner_slot < 0 or not topo.is_active(owner_domain, owner_position)))
                 owner = -1;
             stored_dst_rank_idx = owner >= 0 ? (is_direct ? owner_position : owner_domain) : -1;
         }
