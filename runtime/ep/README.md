@@ -267,20 +267,15 @@ validated.
 
 ## Tests
 
-Run tests from `runtime/ep` after installing the package.
-The existing tests are `tests/elastic/test_ep.py` and
-`tests/elastic/test_barrier.py`. Their launcher uses
-`python/utils/envs.py:init_dist`; configure it for your cluster before
-running distributed tests. Run either script with `--help` for its options.
-All GPU tests require the metadata backend configuration above. For tests that
-serve a TCPStore on `MASTER_ADDR` / `MASTER_PORT`, set this before launching:
+Run `tests/elastic/test_elastic_ep.py` from `runtime/ep` after installing the
+package. Launch one invocation per node with node-level `WORLD_SIZE` and `RANK`;
+`--num-processes` selects the GPUs per node. Run with `--help` for workload,
+format and timing options. The test requires the metadata backend configuration
+above. Set its TCPStore endpoint before launching:
 
 ```bash
 export NIXL_TCPSTORE_ENDPOINT="${MASTER_ADDR:-127.0.0.1}:${MASTER_PORT:-8361}"
 ```
-
-For tests launched with `--store-host` / `--store-port`, use that external server's
-address instead. The metadata server must stay alive until all buffers are destroyed.
 
 `tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
@@ -290,14 +285,9 @@ not per-NIC bandwidth measurements. `--dtype {bf16,fp8,nvfp4}` selects the
 dispatch format for checked and timed pairs, with matching buffer capacity.
 Payload values and scales are checked byte for byte; combine stays BF16.
 
-`tests/elastic/test_elastic_warmup.py` prepares fresh joining buffers while
-survivors replay, checks the first replay after each switch and serves
-through departure cleanup. It reports completion gaps during preparation,
-cutover and retirement. `--max-completion-gap-ms 1000` applies a one-second
-acceptance bound; the default reports gaps without enforcing a bound.
-Joiners warm up and capture independently before connecting. Their first
-replay after expansion is checked. `tests/elastic/test_runtime_tokens.py`
-checks BF16 payloads and JIT reuse across token capacities.
+Each phase checks eager execution and retained CUDA graphs with both original
+and changed routing. Processes remain alive throughout the membership plan;
+the active topology determines direct or hybrid execution.
 
 ## Phase profiling
 
