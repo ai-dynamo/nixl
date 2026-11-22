@@ -1,7 +1,7 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
-"""CPU checks of the elastic oracle's fixed expert ownership and extent-ranked sources."""
+"""CPU checks of the elastic oracle's fixed expert ownership and replay inputs."""
 
 import ast
 import math
@@ -27,6 +27,10 @@ def load_functions(path, names, namespace):
         node
         for node in ast.parse(path.read_text()).body
         if getattr(node, "name", None) in names
+        or (
+            isinstance(node, ast.Assign)
+            and any(getattr(target, "id", None) in names for target in node.targets)
+        )
     ]
     exec(
         compile(
@@ -69,7 +73,10 @@ class StableExpertIdsTests(unittest.TestCase):
             {"rank_mapping", "rank_coordinates", "topology_experts"},
             namespace,
         )
-        load_functions(SOURCE, {"extent_of", "Case"}, namespace)
+        load_functions(
+            SOURCE, {"extent_of", "Case", "GraphCase", "NUM_CAPTURE_BARRIERS"}, namespace
+        )
+        self.namespace = namespace
         self.mapping = list(range(8))
         self.buffer = SimpleNamespace(
             max_num_scaleout_ranks=2,
@@ -86,6 +93,47 @@ class StableExpertIdsTests(unittest.TestCase):
                 num_tokens=16, hidden=8, num_topk=4, num_experts=16, seed=1
             ),
         )
+
+    def test_replay_restores_captured_routes_and_poisons_output(self):
+        graph_type = self.namespace["GraphCase"]
+        graph = graph_type.__new__(graph_type)
+        capture_phase, phase = [0, 4], [0, 2, 4]
+        reroute_seed = graph_type.REROUTE_ROUTING_PHASE + 1
+        captured = (torch.tensor([[8, 0]]), torch.tensor([[0.25, 0.75]]))
+        rerouted = (torch.tensor([[10, 4]]), torch.tensor([[0.8, 0.2]]))
+        routes = {
+            (graph_type.CAPTURE_ROUTING_PHASE, tuple(capture_phase)): captured,
+            (reroute_seed, tuple(phase)): rerouted,
+        }
+        graph.case = SimpleNamespace(
+            buffer=self.buffer,
+            routing=lambda seed, rank, world: routes[seed, tuple(world)],
+        )
+        graph.capture_phase_of = {4: capture_phase}
+        graph.topk_idx, graph.topk_weights = (torch.zeros_like(t) for t in captured)
+        addresses = (graph.topk_idx.data_ptr(), graph.topk_weights.data_ptr())
+        graph.outputs, graph.stats = torch.ones((1, 8)), torch.ones(2)
+        seen = []
+
+        def replay():
+            self.assertTrue(torch.isnan(graph.outputs).all().item())
+            self.assertEqual(graph.stats.tolist(), [0, 0])
+            seen.append((graph.topk_idx.clone(), graph.topk_weights.clone()))
+            graph.outputs.fill_(3)
+            graph.stats.fill_(4)
+
+        graph.graph = SimpleNamespace(replay=replay)
+        graph.check = lambda phase, tag, routing_phase_idx=None: routing_phase_idx
+        self.namespace["torch"].cuda = SimpleNamespace(synchronize=lambda: None)
+        for seed in (None, reroute_seed, None):
+            self.assertEqual(graph.replay_and_check(phase, "host", seed), seed)
+            self.assertEqual(
+                (graph.topk_idx.data_ptr(), graph.topk_weights.data_ptr()), addresses
+            )
+        self.assertEqual(len(seen), 3)
+        for actual, expected in zip(seen, (captured, rerouted, captured)):
+            for received, supplied in zip(actual, expected):
+                self.assertTrue(torch.equal(received, supplied))
 
     def test_position_shrink_and_nonzero_domain_preserve_expert_owner(self):
         routing = torch.tensor([[8, 9, -1, 4], [4, 5, -1, -1], [10, 11, 0, 1]])
