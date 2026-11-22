@@ -164,7 +164,7 @@ public:
     bool auto_complete_tasks = false;
 
     // Notification handle
-    doca_notification_handle_t notification_handle = 100;
+    doca_notification_handle_t notification_handle = {};
 
     // Reset all state. Acquires the mock lock so callers don't have to;
     // since the lock is recursive this is safe to call from a context that
@@ -216,7 +216,7 @@ public:
         pe_progress_return = 0;
         pe_progress_stall_calls = 0;
         auto_complete_tasks = false;
-        notification_handle = 100;
+        notification_handle = {};
     }
 
 private:

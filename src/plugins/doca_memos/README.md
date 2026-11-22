@@ -52,6 +52,7 @@ The DOCA_MEMOS plugin enables high-performance key-value operations (store, retr
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `num_tasks` | Maximum number of concurrent tasks in the DOCA task pool (clamped to `doca_kv_io_cap_get_max_tasks()`) | `8192` |
+| `chunk_size` | Chunk bytes; zero selects automatic discovery. Nonzero overrides are capped by discovered limits. | `0` |
 | `nguid` | 32-character hex NVMe namespace NGUID passed to `doca_kv_dev_create_attr_set_nguid()` | all zeros |
 | `convert_key_to_128bit` | When `true`, non-empty `OBJ_SEG` `metaInfo` strings are converted to a 16-byte unkeyed Blake2b digest instead of being parsed as hex | `false` |
 

@@ -253,6 +253,7 @@ private:
     uint32_t numTasks_ = kDefaultNumTasks;
     uint32_t maxValueLen_ = 0;
     uint16_t maxKeyLen_ = 0;
+    uint32_t chunkSize_ = 0; // Auto-discover unless chunk_size is supplied.
     std::string nguid_ = kDefaultNguid;
     bool convertKeyTo128bit_ = false;
 
