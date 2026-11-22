@@ -160,7 +160,8 @@ steps:
         "--account=${SLURM_ACCOUNT}",
         "--gres=${SLURM_GRES}",
         "--mem=${SLURM_MEM}",
-        "--mincpus=${SLURM_MINCPUS}"
+        "--mincpus=${SLURM_MINCPUS}",
+        "--exclude=gb-nvl-053-compute05,gb-nvl-057-compute06,gb-nvl-059-compute03,gb-nvl-059-compute04"
       ]
 
   - name: Sync Container Image
@@ -175,6 +176,37 @@ steps:
     args:
       jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
       testScript: "hostname; nvidia-smi -L || echo no-gpu-visible; df -h /"
+      headNode: "${SLURM_HEAD_NODE}"
+      headUser: "${SLURM_HEAD_USER}"
+      dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
+      credentialsId: "${SSH_CREDENTIALS_ID}"
+      containerName: "nixl-ci-${BUILD_NUMBER}"
+
+  - name: TEMP Debug deviceGpu HPCINFRA-5116
+    containerSelector: "{name: 'build_helper_dl'}"
+    timeout: 30
+    parallel: false
+    shell: action
+    module: slurmCI
+    run: run
+    args:
+      jobIdFile: "${JOB_ID_FILE_ROOT}/job_id_${BUILD_NUMBER}.txt"
+      testScript: >-
+        gcc -O2 -Wall -o /tmp/wc_check .ci/debug/wc_uar_check.c -ldl;
+        gcc -O2 -Wall -shared -fPIC -DIB_FIRST_SHIM -o /tmp/ib_first.so .ci/debug/wc_uar_check.c -ldl;
+        cd ${NIXL_INSTALL_DIR};
+        export LD_LIBRARY_PATH=${NIXL_INSTALL_DIR}/lib:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu:${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins:/usr/local/lib:$LD_LIBRARY_PATH;
+        export NIXL_PLUGIN_DIR=${NIXL_INSTALL_DIR}/lib/aarch64-linux-gnu/plugins;
+        unset UCX_NET_DEVICES;
+        hostname; uptime -s; echo CUDA_VISIBLE_DEVICES=$CUDA_VISIBLE_DEVICES;
+        echo ===== wc_check; eval "$(/tmp/wc_check)"; echo WC_FAIL_DEV=$WC_FAIL_DEV WC_OK_DEV=$WC_OK_DEV;
+        echo ===== baseline; ./bin/gtest --gtest_filter=deviceGpu/test.*/UCX;
+        for d in $WC_OK_DEV $WC_FAIL_DEV; do
+        echo ===== first NIC $d;
+        LD_PRELOAD=/tmp/ib_first.so IB_FIRST_DEV=$d UCX_IB_GDA_RETAIN_INACTIVE_CTX=y UCX_LOG_LEVEL=debug ./bin/ucx_info -d 2>&1 | grep -e "gda transport" -e "GDAKI not supported" -e "Transport: rc_gda" | head -n 4;
+        LD_PRELOAD=/tmp/ib_first.so IB_FIRST_DEV=$d ./bin/gtest --gtest_filter=deviceGpu/test.*/UCX;
+        done;
+        false
       headNode: "${SLURM_HEAD_NODE}"
       headUser: "${SLURM_HEAD_USER}"
       dockerImage: "${registry_host}#${ARTIFACTORY_PATH}/pr/${arch}/nixl-ci-dl-gpu-test:${BUILD_NUMBER}"
