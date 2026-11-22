@@ -61,3 +61,18 @@ repos:
       - id: mixed-line-ending
       - id: requirements-txt-fixer
       - id: trailing-whitespace
+
+  - repo: https://github.com/adrienverge/yamllint
+    rev: v1.35.1
+    hooks:
+      - id: yamllint
+        files: ^\.ci/path-filters\.yaml$
+        args: ["-d", "{extends: default, rules: {document-start: disable, line-length: {max: 120}}}"]
+
+  - repo: local
+    hooks:
+      - id: check-path-filters
+        name: check-path-filters
+        entry: python .ci/scripts/check_path_filters.py
+        language: python
+        additional_dependencies: [pyyaml==6.0.2]

@@ -20,7 +20,9 @@
 namespace mocks {
 
 MockBackendEngine::MockBackendEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(
+          init_params,
+          GMockBackendEngine::GetFromParams(init_params->customParams)->capabilities()),
       gmock_backend_engine(GMockBackendEngine::GetFromParams(init_params->customParams)),
       sharedState(1) {
     gmock_backend_engine->observeTraceSink(init_params->traceSink);

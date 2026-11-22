@@ -128,6 +128,9 @@ protected:
             params["num_workers"] = std::to_string(getNumWorkers());
             params["num_threads"] = std::to_string(getNumThreads());
             params["split_batch_size"] = "32";
+        } else if (getBackendName() == "MOONCAKE") {
+            params["num_threads"] = std::to_string(getNumThreads());
+            params["split_batch_size"] = "256";
         }
 
         params["engine_config"] = GetParam().engineConfig;
@@ -160,11 +163,15 @@ protected:
 
         if (getBackendName() == "MOONCAKE") {
             // TCP loopback on host memory: CI hosts may expose RDMA devices the
-            // test cannot use, and CI builds Mooncake without GPU support.
+            // test cannot use, and build.sh builds Mooncake without GPU support.
             env.addVar("MC_FORCE_TCP", "1");
             env.addVar("NIXL_MOONCAKE_IP_ADDR", "127.0.0.1");
             m_gpu_device = false;
         }
+
+        // MOONCAKE ignores num_threads, with a warning, on engines without
+        // getBatchTransferStatus().
+        const LogIgnoreGuard lig("ignoring num_threads=");
 
         // Create two agents
         for (size_t i = 0; i < 2; i++) {
@@ -686,13 +693,6 @@ TEST_P(TestTransfer, ManyDescriptorsPayload) {
                 return status != NIXL_IN_PROG;
             }));
             ASSERT_EQ(NIXL_SUCCESS, status);
-            if ((op == NIXL_WRITE) && (getBackendName() == "MOONCAKE")) {
-                // Mooncake v0.3.10.post1, the CI pin, reports a TCP WRITE complete
-                // before the target has applied it (fixed in kvcache-ai/Mooncake#2850,
-                // v0.3.12). Wait for the bytes, or they can land on the next post.
-                // TODO: drop this wait once CI uses Mooncake >= v0.3.12.
-                wait_until_true([&]() { return findPayloadMismatch(dst, seed) == dst.size(); });
-            }
             checkPayloads(dst, seed);
         }
         EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
@@ -818,6 +818,7 @@ NIXL_INSTANTIATE_TEST(ucx_threadpool, TestTransfer, "UCX", true, 6, 4, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestTransfer, "UCX", false, 6, 4, "");
 #ifdef HAVE_MOONCAKE
 NIXL_INSTANTIATE_TEST(mooncake, TestTransfer, "MOONCAKE", false, 1, 0, "");
+NIXL_INSTANTIATE_TEST(mooncake_threadpool, TestTransfer, "MOONCAKE", false, 1, 4, "");
 #endif
 
 #ifdef HAVE_UCX_SGL_API

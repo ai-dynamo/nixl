@@ -62,14 +62,6 @@ bool operator!=(const nixlBasicDesc &lhs, const nixlBasicDesc &rhs) {
     return !(lhs==rhs);
 }
 
-bool nixlBasicDesc::overlaps (const nixlBasicDesc &query) const {
-    if (devId != query.devId)
-        return false;
-    if ((addr + len <= query.addr) || (query.addr + query.len <= addr))
-        return false;
-    return true;
-}
-
 nixl_blob_t nixlBasicDesc::serialize() const {
     return std::string(reinterpret_cast<const char*>(this),
                        sizeof(nixlBasicDesc));
@@ -408,6 +400,8 @@ nixlSecDescList::addSortedDescs(std::vector<nixlSectionDesc> batch) {
                    std::make_move_iterator(batch.end()));
         return;
     }
+        return;
+    }
 
     // Merge the batch into the existing vector in-place in reverse order to reduce copies
     const size_t old_size = vec.size();
@@ -472,8 +466,8 @@ nixlSecDescList::remDescs(std::vector<size_t> indices, order ord) {
     }
 
     size_t ri = 0;
-    size_t write = 0;
-    for (size_t read = 0; read < descs.size(); ++read) {
+    size_t write = std::min(indices.front(), descs.size());
+    for (size_t read = write; read < descs.size(); ++read) {
         if (ri < indices.size() && read == indices[ri]) {
             ++ri;
         } else {
@@ -508,6 +502,14 @@ nixlSecDescList::getCoveringIndex(const nixlBasicDesc &query) const {
         if (prev_itr->covers(query)) return static_cast<int>(prev_itr - this->descs.begin());
     }
     return -1;
+}
+
+bool
+nixlSecDescList::overlapsAny(const nixlBasicDesc &query) const noexcept {
+    const nixlBasicDesc adjusted = normalizeQuery(query);
+    const auto itr = std::lower_bound(descs.begin(), descs.end(), adjusted);
+    return (itr != descs.end() && itr->overlaps(adjusted)) ||
+        (itr != descs.begin() && std::prev(itr)->overlaps(adjusted));
 }
 
 void
