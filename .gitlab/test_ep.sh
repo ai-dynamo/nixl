@@ -52,9 +52,9 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
-# Run the --disable-ll-nvlink (RDMA) elastic tests only when every port on the node's
-# ConnectX adapters is active and there are at least four active ports (BlueField
-# front-end ports and smi devices don't count).
+# Run the --disable-ll-nvlink (RDMA) elastic tests only when the node has ConnectX
+# ports and every one of them is active (BlueField front-end ports and smi devices
+# don't count).
 rdma_supported() {
     local dev port total=0 down=""
     for dev in /sys/class/infiniband/*; do
@@ -68,11 +68,11 @@ rdma_supported() {
         esac
         for port in "$dev"/ports/*; do
             total=$((total + 1))
-            grep -q ACTIVE "$port/state" 2>/dev/null || down+=" ${dev##*/}:${port##*/}"
+            [ "$(cat "$port/state" 2>/dev/null)" = "4: ACTIVE" ] || down+=" ${dev##*/}:${port##*/}"
         done
     done
     echo "RDMA check on $(hostname): ${total} ConnectX port(s), not active:${down:- none}"
-    [ "$total" -ge 4 ] && [ -z "$down" ]
+    [ "$total" -gt 0 ] && [ -z "$down" ]
 }
 
 echo "==== Show system info ===="
