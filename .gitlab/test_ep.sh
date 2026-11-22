@@ -52,25 +52,27 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
-# Run the --disable-ll-nvlink (RDMA) elastic tests only when UCX pairs each of the
-# four GPUs with an rc_gda NIC, over at least four distinct NICs.
+# Run the --disable-ll-nvlink (RDMA) elastic tests only when every port on the node's
+# ConnectX adapters is active and there are at least four active ports (BlueField
+# front-end ports and smi devices don't count).
 rdma_supported() {
-    local ucx_info="${INSTALL_DIR}/bin/ucx_info" out gpus nics
-    # A fresh process has no active CUDA context, and UCX then hides rc_gda.
-    if ! out=$(env -u UCX_TLS -u UCX_NET_DEVICES UCX_IB_GDA_RETAIN_INACTIVE_CTX=yes \
-            timeout 120 "$ucx_info" -d 2>/dev/null); then
-        echo "RDMA check on $(hostname): ${ucx_info} -d failed"
-        return 2
-    fi
-    read -r gpus nics < <(awk '
-        function flush() { if (dev != "") { split(dev, d, "-"); if (!g[d[1]]++) ng++; if (!n[d[2]]++) nn++ } dev = "" }
-        /^# +Transport:/               { flush(); rc = ($NF == "rc_gda") }
-        rc && /^# +Device:/            { flush(); dev = $NF }
-        /< failed to open interface >/ { dev = "" }
-        END                            { flush(); print ng + 0, nn + 0 }
-    ' <<<"$out")
-    echo "RDMA check on $(hostname): rc_gda on ${gpus} GPU(s) via ${nics} distinct NIC(s), need 4 and 4"
-    [ "$gpus" -ge 4 ] && [ "$nics" -ge 4 ]
+    local dev port total=0 down=""
+    for dev in /sys/class/infiniband/*; do
+        case "${dev##*/}" in smi*) continue ;; esac
+        # Keep only NVIDIA (PCI vendor 0x15b3) ConnectX-7/8/9/10 adapters (PCI device
+        # 0x1021/0x1023/0x1025/0x1027); all of their ports must be active.
+        [ "$(cat "$dev/device/vendor" 2>/dev/null)" = 0x15b3 ] || continue
+        case "$(cat "$dev/device/device" 2>/dev/null)" in
+            0x1021|0x1023|0x1025|0x1027) ;;
+            *) continue ;;
+        esac
+        for port in "$dev"/ports/*; do
+            total=$((total + 1))
+            grep -q ACTIVE "$port/state" 2>/dev/null || down+=" ${dev##*/}:${port##*/}"
+        done
+    done
+    echo "RDMA check on $(hostname): ${total} ConnectX port(s), not active:${down:- none}"
+    [ "$total" -ge 4 ] && [ -z "$down" ]
 }
 
 echo "==== Show system info ===="
@@ -79,13 +81,16 @@ nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
-rdma_rc=0
-(set +x; rdma_supported) || rdma_rc=$?
-case $rdma_rc in
-    0) RDMA_SUPPORTED=true ;;
-    1) RDMA_SUPPORTED=false ;;
-    *) exit 1 ;;
-esac
+# NIXL_EP_REQUIRE_RDMA=true (set by jobs whose nodes must support RDMA) turns a failed
+# RDMA check into a job failure instead of skipping the RDMA tests.
+if (set +x; rdma_supported); then
+    RDMA_SUPPORTED=true
+elif [ "${NIXL_EP_REQUIRE_RDMA:-false}" = true ]; then
+    echo "ERROR: RDMA is required (NIXL_EP_REQUIRE_RDMA=true) but not supported on $(hostname)" >&2
+    exit 1
+else
+    RDMA_SUPPORTED=false
+fi
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
