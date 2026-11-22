@@ -118,7 +118,7 @@ private:
     std::vector<NIXLPeerInfo> peers;           // `[num_world_ranks]`, valid iff `connected`
     std::vector<int> connected;                // `[num_world_ranks]`, 0/1
     std::vector<int> world_to_slot;            // Prepared internal slot per world rank; -1 for unassigned ranks
-    std::vector<int> endpoint_connected;       // Wired endpoints retained until peer retirement, even if a later mapping does not need them
+    std::vector<int> endpoint_connected;       // Wired endpoints retained until peer retirement
     std::vector<int> connect_epoch;            // `[num_world_ranks]`: endpoint connection epoch (hello tag)
     std::vector<std::string> known_agent_names; // `[num_world_ranks]`: every logical peer's last agent; retained across disconnects to restart epochs for a new process
     std::vector<int> pending_disconnects;      // Retired peers awaiting metadata cleanup within the public disconnect call

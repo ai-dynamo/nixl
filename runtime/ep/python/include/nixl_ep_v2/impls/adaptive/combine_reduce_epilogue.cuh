@@ -199,6 +199,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         __syncwarp();
     }
     EP_PROFILE_STAMP(profile_workspace, CombineReduceSubmitted);
+    ptx::tma_store_wait();
 }
 
 }  // namespace nixl_ep_v2::elastic::adaptive

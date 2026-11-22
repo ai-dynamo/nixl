@@ -92,10 +92,10 @@ def combine(
     - `y`: Input tokens to be combined, `[num_tokens, num_topk, hidden]`
     - `topk_idx`: `[num_tokens, num_topk]`
     - `reduce_in_local` and `reduce_in_scaleup`: Whether to do reduction within rank and within scale-up group.
-       - `(True, True)` -> Hybrid combine
-       - `(True, False)` -> Non-hybrid combine
-       - `(False, False)` -> Equivalent to `allow_multiple_reduction` is False
-       Pay attention that `reduce_in_scaleup` = `True` or `False` is NOT equivalent even if `num_scaleout_ranks == 1` due to `bias` handling.
+       - `(True, True)` -> Hybrid with `allow_multiple_reduction=True`.
+       - `(True, False)` -> Direct, or `allow_multiple_reduction=False`; rank-local reduction still applies.
+       - `(False, False)` -> Skip both grouped reductions.
+       Grouped reductions round to `y.dtype` before final accumulation; bias is added only at the final stage.
 
     Returns:
     - Combined result, `[num_tokens, hidden]`

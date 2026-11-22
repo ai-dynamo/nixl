@@ -70,6 +70,8 @@ public:
                             get_env<int>("NIXL_EP_JIT_CPP_STANDARD", 20));
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PTXAS_VERBOSE", 0))
             flags += " --ptxas-options=--verbose";
+        if (get_env("NIXL_EP_JIT_PTXAS_CHECK", 0))
+            flags += " --ptxas-options=--warn-on-local-memory-usage";
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_WITH_LINEINFO", 0))
             flags += " -Xcompiler -rdynamic -lineinfo";
         // NIXL's GPU API and UCX's device API for the kernels (`EP_NIXL_DEVICE_API` lets `nixl_transport.cuh` include them)
@@ -146,7 +148,7 @@ public:
         }
 
         // Publish the symbol with the CUBIN so cache loads do not need cuobjdump.
-        put(tmp_dir_path / "kernel.symbol", KernelRuntime::find_kernel_symbol(tmp_dir_path));
+        put(tmp_dir_path / "kernel.symbol", KernelRuntime::find_kernel_symbol(tmp_dir_path, cuobjdump_path));
 
         // Fsync before rename to ensure visibility on distributed filesystems
         fsync_dir(tmp_dir_path);

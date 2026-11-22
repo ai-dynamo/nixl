@@ -324,7 +324,7 @@ void NIXLEPContext::connect_validated_ranks(const std::vector<int>& world_ranks,
         NIXL_CHECK(state->agent->sendLocalMD());
         state->metadata_published = true;
     }
-    // Keep every peer's identity: a later prepared mapping can make a previously indirect peer an endpoint.
+    // Record every logical peer, including peers reached through an intermediate rank.
     for (size_t i = 0; i < world_ranks.size(); ++ i) {
         const int wr = world_ranks[i];
         const auto& name = remote_agent_names[i];

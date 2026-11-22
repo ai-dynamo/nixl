@@ -539,7 +539,6 @@ class ElasticBuffer:
             (
                 self.runtime.get_local_agent_name(),
                 self.runtime.get_local_peer_info(),
-                self._fabric_record,
                 snapshot,
                 known,
             ),
@@ -547,7 +546,7 @@ class ElasticBuffer:
             timeout_seconds=timeout_secs,
         ) as records:
             snapshots = [snapshot]
-            for _, _, _, peer_mapping, peer_records in records.values():
+            for _, _, peer_mapping, peer_records in records.values():
                 snapshots.append(peer_mapping)
                 for rank, evidence in peer_records.items():
                     if rank in known and known[rank] != evidence:
@@ -555,12 +554,6 @@ class ElasticBuffer:
                             "Conflicting GPU discovery records; retire the old peer before reconnecting"
                         )
                     known[rank] = evidence
-            for rank, (_, _, evidence, _, _) in records.items():
-                if rank in known and known[rank] != evidence:
-                    raise ValueError(
-                        "Conflicting GPU discovery records; retire the old peer before reconnecting"
-                    )
-                known[rank] = evidence
             mapping = build_rank_mapping(
                 known,
                 snapshots,
@@ -598,7 +591,7 @@ class ElasticBuffer:
                 disconnect_ranks=world_ranks,
             )
         else:
-            self._update_topology(mode=self._get_mode(), disconnect_ranks=world_ranks)
+            self._update_topology(disconnect_ranks=world_ranks)
         for rank in world_ranks:
             self._fabric_records.pop(rank, None)
 
@@ -611,12 +604,9 @@ class ElasticBuffer:
             active_ranks, self._prepared_mapping, self.max_num_scaleup_ranks
         )
 
-    _mode_of = staticmethod(mode_of)
-
     def _update_topology(
         self,
         *,
-        mode: Optional[str] = None,
         active_ranks: Optional[Sequence[int]] = None,
         disconnect_ranks: Sequence[int] = (),
     ) -> None:
@@ -625,15 +615,13 @@ class ElasticBuffer:
             if active_ranks is not None
             else self._get_topology_masks()
         )
-        if mode is None:
-            mode = self._mode_of(scaleout_mask)
         # The position mask crosses the extension as 64-bit words (a whole NVL72 domain needs more than 64 bits)
         words = [
             (scaleup_mask >> (64 * i)) & ((1 << 64) - 1)
             for i in range(max(1, (scaleup_mask.bit_length() + 63) // 64))
         ]
         self.runtime.update_topology_masks(
-            _mode_code(mode), scaleout_mask, words, disconnect_ranks
+            _mode_code(mode_of(scaleout_mask)), scaleout_mask, words, disconnect_ranks
         )
 
     def set_active_ranks(self, active_ranks: Sequence[int]) -> None:
@@ -651,11 +639,6 @@ class ElasticBuffer:
     def get_active_ranks(self) -> List[int]:
         """The world ranks of the committed active ranks, sorted."""
         return list(self.runtime.get_active_ranks())
-
-    def _get_topology_extent(self) -> Tuple[int, int]:
-        """Committed extents: highest active domain index + 1 and highest active position + 1."""
-        scaleout_mask, scaleup_mask = self._get_topology_masks()
-        return scaleout_mask.bit_length(), scaleup_mask.bit_length()
 
     def _get_mode(self) -> str:
         """The committed communication mode."""

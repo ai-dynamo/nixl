@@ -256,7 +256,7 @@ Column-major scale output is unsupported for NVFP4.
 Hybrid combine across multiple active domains automatically uses incremental
 completion for destinations with at most 16 original input tokens, letting
 the reduction epilogue wait for each token's contributions. Larger batches
-and single-domain hybrid mode use final channel completion; direct mode is
+use final channel completion; direct mode is
 unchanged. Selection uses actual input counts, independently
 for each rank, rather than buffer capacity. Traversal remains forward.
 

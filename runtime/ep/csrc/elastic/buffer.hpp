@@ -952,7 +952,7 @@ public:
         // Check metadata
         // For reduction mode, `num_reduced_tokens` means the number of unexpanded tokens
         const auto [num_reduced_tokens, num_topk_p2] = get_shape<2>(src_metadata);
-        EP_HOST_ASSERT(num_reduced_tokens == (use_expanded_layout ? num_reduced_tokens : num_tokens));
+        EP_HOST_ASSERT(use_expanded_layout or num_reduced_tokens == num_tokens);
         EP_HOST_ASSERT(num_topk_p2 == num_topk + 2);
         EP_HOST_ASSERT(src_metadata.is_cuda() and src_metadata.is_contiguous());
         EP_HOST_ASSERT(src_metadata.scalar_type() == torch::kInt);

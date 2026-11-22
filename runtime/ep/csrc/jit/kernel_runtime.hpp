@@ -10,15 +10,12 @@
 #include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/format.hpp"
-#include "../utils/lazy_init.hpp"
 #include "handle.hpp"
 
 namespace nixl_ep_v2::jit {
 
 class KernelRuntime final {
 public:
-    static std::filesystem::path cuda_home;
-
     LibraryHandle library;
     KernelHandle kernel;
 
@@ -35,9 +32,7 @@ public:
         kernel = load_kernel(cubin_path, symbol_name, &library);
     }
 
-    static std::string find_kernel_symbol(const std::filesystem::path& dir_path) {
-        EP_HOST_ASSERT(not cuda_home.empty());
-        const auto cuobjdump_path = cuda_home / "bin" / "cuobjdump";
+    static std::string find_kernel_symbol(const std::filesystem::path& dir_path, const std::filesystem::path& cuobjdump_path) {
         const auto cubin_path = dir_path / "kernel.cubin";
 
         // Find the only symbol
@@ -71,10 +66,6 @@ public:
         return symbol_names[0];
     }
 
-    static void prepare_init(const std::string& cuda_home_path_by_python) {
-        cuda_home = std::filesystem::absolute(cuda_home_path_by_python);
-    }
-
     static bool check_validity(const std::filesystem::path& dir_path) {
         if (not std::filesystem::exists(dir_path))
             return false;
@@ -94,7 +85,5 @@ public:
         unload_library(library);
     }
 };
-
-EP_DECLARE_STATIC_VAR_IN_CLASS(KernelRuntime, cuda_home);
 
 } // namespace nixl_ep_v2::jit

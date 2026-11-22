@@ -325,6 +325,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
         }
     }
     EP_PROFILE_STAMP(workspace, DispatchCopySubmitted);
+    ptx::tma_store_wait();
 }
 
 }  // namespace nixl_ep_v2::elastic::adaptive
