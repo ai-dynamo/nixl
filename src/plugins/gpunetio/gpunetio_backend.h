@@ -55,21 +55,6 @@ public:
     ~nixlDocaEngine();
 
     bool
-    supportsRemote() const {
-        return true;
-    }
-
-    bool
-    supportsLocal() const {
-        return false;
-    }
-
-    bool
-    supportsNotif() const {
-        return true;
-    }
-
-    bool
     supportsProgTh() const {
         return false;
     }
@@ -152,6 +137,8 @@ private:
     std::vector<struct nixlDocaRdmaQp> rdma_qp_v;
     int nstreams;
     uint32_t dataQpCount_ = 1;
+    bool writeStripeBytes_ = false;
+    size_t writeStripeMinBytes_ = 4 * 1024 * 1024;
 
     uint16_t local_port;
     int noSyncIters;
@@ -200,6 +187,7 @@ private:
         bool attachedStream = false;
         uint32_t devId;
         std::vector<uint32_t> positions;
+        std::vector<uint32_t> qpOwners;
         doca_gpu_dev_verbs_qp *qpData = nullptr;
         uintptr_t backendHandleGpu;
         size_t postedCount = 0;

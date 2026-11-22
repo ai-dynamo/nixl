@@ -51,6 +51,10 @@ if is_variable('gds_backend_interface') or is_variable(
     subdir('cuda_gds')
 endif
 
+if is_variable('ais_backend_interface')
+    subdir('ais')
+endif
+
 cc = meson.get_compiler('cpp')
 libtransfer_engine = cc.find_library('transfer_engine', required: false)
 disable_mooncake_backend = get_option('disable_mooncake_backend')
@@ -102,5 +106,23 @@ if enabled_plugins.get('OBJ')
         error('OBJ plugin tests requested but AWS SDK dependencies not found')
     elif aws_s3.found() and aws_s3_crt.found() and aws_core.found()
         subdir('object')
+    endif
+endif
+
+# DOCA_MEMOS tests mock the DOCA functions (doca_memos_mocks.cpp) but compile
+# against the real DOCA KV API headers, so they require doca-kv/doca-common to be
+# present. They also compile backend sources directly, so link dependencies used
+# by those sources must be available here too.
+if enabled_plugins.get('DOCA_MEMOS')
+    if (not doca_kv_dep.found() or not doca_common_dep.found() or not libb2_dep.found()) and is_explicit_enable
+        if not doca_kv_dep.found()
+            error('DOCA_MEMOS plugin tests requested but doca-kv dependency not found')
+        elif not doca_common_dep.found()
+            error('DOCA_MEMOS plugin tests requested but doca-common dependency not found')
+        else
+            error('DOCA_MEMOS plugin tests requested but libb2 dependency not found')
+        endif
+    elif doca_kv_dep.found() and doca_common_dep.found() and libb2_dep.found()
+        subdir('doca_memos')
     endif
 endif

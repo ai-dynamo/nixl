@@ -46,7 +46,16 @@ export NIXL_PLUGIN_DIR=${INSTALL_DIR}/lib/$ARCH-linux-gnu/plugins
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
-ibv_devinfo || true
+if $TEST_LIBFABRIC ; then
+    ibv_devinfo_out=$(ibv_devinfo 2>&1 || true)
+    echo "$ibv_devinfo_out"
+    if ! echo "$ibv_devinfo_out" | grep -q "hca_id:"; then
+        echo "ERROR: TEST_LIBFABRIC=true but ibv_devinfo found no RDMA/EFA devices" >&2
+        exit 1
+    fi
+else
+    ibv_devinfo || true
+fi
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
 
@@ -111,13 +120,11 @@ done
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test
-# TODO: Enable Mooncake test once data corruption issue is resolved
-# if $HAS_GPU ; then
-#     ./bin/mooncake_backend_test
-# fi
+# build.sh builds Mooncake without GPU support, so only the DRAM cases run.
+MC_FORCE_TCP=1 NIXL_MOONCAKE_IP_ADDR=127.0.0.1 ./bin/mooncake_backend_test --skip-vram
 
 # shellcheck disable=SC2154
-gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
+env -u UCX_NET_DEVICES gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
 ./bin/test_plugin
 
 # Redis unit tests

@@ -113,16 +113,18 @@ public:
 };
 
 nixlBackendEngine *
-createEngine(std::string name, bool p_thread) {
+createEngine(std::string name, bool p_thread, size_t num_threads = 0, size_t split_batch_size = 0) {
     nixlBackendEngine *mooncake;
     nixlBackendInitParams init;
     nixl_b_params_t custom_params;
 
+    custom_params["num_threads"] = std::to_string(num_threads);
+    custom_params["split_batch_size"] = std::to_string(split_batch_size);
     init.enableProgTh = p_thread;
     init.pthrDelay = 100;
     init.localAgent = name;
     init.customParams = &custom_params;
-    init.type = "Mooncake";
+    init.type = "MOONCAKE";
 
     mooncake = (nixlBackendEngine *)new nixlMooncakeEngine(&init);
     assert(!mooncake->getInitErr());
@@ -288,25 +290,6 @@ releaseValidationPtr(nixl_mem_t mem_type, void *addr) {
 }
 
 void
-allocateWrongGPUTest(nixlBackendEngine *mooncake, int dev_id) {
-    nixlBlobDesc desc;
-    nixlBackendMD *md;
-    void *buf;
-
-    desc.len = 4096;
-    allocateBuffer(VRAM_SEG, dev_id, desc.len, buf);
-
-    desc.devId = dev_id;
-    desc.addr = (uint64_t)buf;
-
-    int ret = mooncake->registerMem(desc, VRAM_SEG, md);
-
-    assert(ret == NIXL_ERR_NOT_SUPPORTED);
-
-    releaseBuffer(VRAM_SEG, dev_id, buf);
-}
-
-void
 allocateAndRegister(nixlBackendEngine *mooncake,
                     int dev_id,
                     nixl_mem_t mem_type,
@@ -397,7 +380,8 @@ performTransfer(nixlBackendEngine *mooncake1,
                 nixl_xfer_op_t op,
                 testHndlIterator &hiter,
                 bool progress,
-                bool use_notif) {
+                bool use_notif,
+                bool repost_in_flight = false) {
     int ret2;
     nixl_status_t ret3;
     void *chkptr1, *chkptr2;
@@ -428,6 +412,17 @@ performTransfer(nixlBackendEngine *mooncake1,
     ret3 = mooncake1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
     assert(ret3 == NIXL_SUCCESS || ret3 == NIXL_IN_PROG);
 
+    if (repost_in_flight && !use_notif && ret3 == NIXL_IN_PROG) {
+        // A repost is refused while the transfer is in flight. A fast host may
+        // finish it first; the repost is then a new transfer to wait for. Not
+        // done with a notification, which that repost would send a second time.
+        const nixl_status_t ret4 =
+            mooncake1->postXfer(op, req_src_descs, req_dst_descs, remote_agent, handle, &opt_args);
+        assert(ret4 == NIXL_ERR_REPOST_ACTIVE || ret4 == NIXL_SUCCESS || ret4 == NIXL_IN_PROG);
+        if (ret4 != NIXL_ERR_REPOST_ACTIVE) {
+            ret3 = ret4;
+        }
+    }
 
     if (ret3 == NIXL_SUCCESS) {
         cout << "\t\tWARNING: Tansfer request completed immediately - no testing non-inline path"
@@ -498,7 +493,7 @@ test_intra_agent_transfer(bool p_thread, nixlBackendEngine *mooncake, nixl_mem_t
 
     int iter = 10;
 
-    assert(mooncake->supportsLocal());
+    assert(mooncake->supportsCapability(nixl_backend_capability_t::LOCAL));
 
     // connection info is still a string
     std::string conn_info1;
@@ -674,7 +669,8 @@ test_inter_agent_transfer(bool p_thread,
                                 ops[i],
                                 hiter,
                                 !p_thread,
-                                use_notif);
+                                use_notif,
+                                reuse_hndl);
             }
         }
     }
@@ -696,7 +692,9 @@ test_inter_agent_transfer(bool p_thread,
 }
 
 int
-main() {
+main(int argc, char **argv) {
+    // VRAM transfers need a Transfer Engine built with GPU support.
+    [[maybe_unused]] const bool skip_vram = argc > 1 && std::string(argv[1]) == "--skip-vram";
     bool thread_on[2] = {false, true};
     nixlBackendEngine *mooncake[2][2] = {0};
 
@@ -714,6 +712,9 @@ main() {
     int n_vram_dev;
     if (cudaGetDeviceCount(&n_vram_dev) != cudaSuccess) {
         std::cout << "Call to cudaGetDeviceCount failed, assuming 0 devices";
+        n_vram_dev = 0;
+    }
+    if (skip_vram) {
         n_vram_dev = 0;
     }
 
@@ -781,13 +782,14 @@ main() {
 #endif
     }
 
-#ifdef HAVE_CUDA
-    if (n_vram_dev > 1) {
-        // Test if registering on a different GPU fails correctly
-        allocateWrongGPUTest(mooncake[0][0], 1);
-        std::cout << "Verified registration on wrong GPU fails correctly\n";
-    }
-#endif
+    // num_threads=4 and split_batch_size=16 split the 64 descriptors into 4 batches
+    // on engines with getBatchTransferStatus(); older engines don't split.
+    nixlBackendEngine *split[2] = {createEngine("Agent1", false, 4, 16),
+                                   createEngine("Agent2", false, 4, 16)};
+    test_inter_agent_transfer(false, false, split[0], DRAM_SEG, 0, split[1], DRAM_SEG, 0);
+    test_inter_agent_transfer(false, true, split[0], DRAM_SEG, 0, split[1], DRAM_SEG, 0);
+    releaseEngine(split[0]);
+    releaseEngine(split[1]);
 
     // Deallocate Mooncake engines
     for (int i = 0; i < 2; i++) {

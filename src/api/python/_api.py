@@ -69,13 +69,13 @@ class nixl_prepped_dlist_handle:
 
     def release(self):
         if not self._released:
-            self._agent.releasedDlistH(self._handle)
+            self._agent.agent.releasedDlistH(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releasedDlistH(self._handle)
+                self._agent.agent.releasedDlistH(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -88,10 +88,11 @@ class nixl_prepped_dlist_handle:
 
 class nixl_xfer_handle:
     """Opaque handle wrapper for a transfer request.
-    Use release() to explicitly free resources. If transfer was not complete, this will initiate
-    the abort process (if available) and will raise an exception.
-    __del__ calls release() and if it fails, it logs the failure and defers release by queuing
-    the handle in leaked xfer handles list, which will be re-released during agent destruction
+
+    Use release() explicitly. If a backend cannot release the transfer, it raises
+    nixlRepostActiveError and the handle remains valid. Keep the agents, buffers,
+    and registrations alive; poll a pending transfer and retry after completion.
+    Finalization makes a best-effort release attempt, not a completion guarantee.
 
     Args:
         agent: Owning nixl_agent used to perform release operations.
@@ -109,14 +110,21 @@ class nixl_xfer_handle:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
 
     def release(self):
+        """Release the request; on refusal retain it for explicit polling and retry.
+
+        Raises:
+            nixlRepostActiveError: The backend refused release. This may mean the
+                transfer is pending or the backend failed; retry is not guaranteed
+                to succeed. See nixl_agent.release_xfer_handle for lifetime rules.
+        """
         if not self._released:
-            self._agent.releaseXferReq(self._handle)
+            self._agent.agent.releaseXferReq(self._handle)
             self._released = True
 
     def __del__(self):
         if not self._released:
             try:
-                self._agent.releaseXferReq(self._handle)
+                self._agent.agent.releaseXferReq(self._handle)
             except Exception:
                 try:
                     logger.error(
@@ -160,6 +168,12 @@ class nixl_agent_config:
             configuration has its own default backend list.
         sync_mode: Thread synchronization mode to use for the agent.
             If None, sync_mode is set based on the enable_listen flag.
+        prog_thread_delay_us: Delay in microseconds between progress thread
+            iterations, for backends that run one. 0 polls continuously.
+            LIBFABRIC sleeps for exactly this long when no completions are
+            pending. UCX rounds the delay up to whole milliseconds for its
+            poll() timeout (so 50 and 250 both become 1ms) and wakes earlier
+            on pending events.
     """
 
     def __init__(
@@ -171,6 +185,7 @@ class nixl_agent_config:
         num_threads: int = 0,
         backends: Optional[list[str]] = None,
         sync_mode: Optional[nixl_thread_sync_t] = None,
+        prog_thread_delay_us: int = 0,
     ):
         """Initialize the configuration, creating a fresh default backend list."""
         # TODO: add backend init parameters
@@ -186,6 +201,12 @@ class nixl_agent_config:
             )
 
         self.sync_mode = sync_mode
+        if not isinstance(prog_thread_delay_us, int) or prog_thread_delay_us < 0:
+            raise ValueError(
+                "prog_thread_delay_us must be a non-negative int "
+                f"(got {prog_thread_delay_us!r})"
+            )
+        self.prog_thread_delay_us = prog_thread_delay_us
 
 
 class nixl_agent:
@@ -225,7 +246,7 @@ class nixl_agent:
         agent_config.useListenThread = nixl_conf.enable_listen
         agent_config.listenPort = nixl_conf.port
         agent_config.syncMode = (nixl_conf.sync_mode or default_sync_mode).value
-        agent_config.pthrDelay = 0
+        agent_config.pthrDelay = nixl_conf.prog_thread_delay_us
         agent_config.lthrDelay = 100000
         agent_config.captureTelemetry = nixl_conf.capture_telemetry
         self.agent = nixlBind.nixlAgent(agent_name, agent_config)
@@ -258,7 +279,7 @@ class nixl_agent:
                 # TODO: improve population of init from nixl_conf
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
-                    if bknd == "UCX" or bknd == "OBJ" or bknd == "LIBFABRIC":
+                    if bknd in ("UCX", "OBJ", "LIBFABRIC", "MOONCAKE"):
                         init["num_threads"] = str(nixl_conf.num_threads)
                     elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
@@ -544,7 +565,7 @@ class nixl_agent:
         else:
             descs = self.get_xfer_descs(xfer_list, mem_type)
             handle = self.agent.prepXferDlist(agent_name, descs, handle_list)
-        return nixl_prepped_dlist_handle(self.agent, handle)
+        return nixl_prepped_dlist_handle(self, handle)
 
     def estimate_xfer_cost(self, req_handle: nixl_xfer_handle) -> tuple[int, int, int]:
         """Estimate the cost of a transfer operation.
@@ -609,7 +630,7 @@ class nixl_agent:
             skip_desc_merge,
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def initialize_xfer(
         self,
@@ -648,7 +669,7 @@ class nixl_agent:
             op, local_descs, remote_descs, remote_agent, notif_msg, handle_list
         )
 
-        return nixl_xfer_handle(self.agent, handle)
+        return nixl_xfer_handle(self, handle)
 
     def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
         """Initiate a data transfer operation.
@@ -706,6 +727,25 @@ class nixl_agent:
         """
         return self.agent.getXferTelemetry(handle._handle)
 
+    def get_xfer_trace_info(
+        self, handle: nixl_xfer_handle
+    ) -> Optional[nixlBind.nixlXferTraceInfo]:
+        """Get the trace identity of a transfer request, as its trace records carry it.
+        The output object has the integer requestId (the NVTX payload and
+        nixl.xfer_request_id), the integer execution number of the latest accepted post
+        (0 before any), and that post's W3C traceparent string (the request's before any post).
+
+        Args:
+            handle: Handle to the transfer operation, from make_prepped_xfer or initialize_xfer.
+
+        Returns:
+            nixlXferTraceInfo object, or None if the request has no trace identity, such as
+            when no tracing backend was active at its creation, or if the handle was released.
+        """
+        if handle._released:
+            return None
+        return self.agent.getXferTraceInfo(handle._handle)
+
     def query_xfer_backend(self, handle: nixl_xfer_handle) -> str:
         """Query the backend that was chosen for a transfer operation.
 
@@ -724,12 +764,22 @@ class nixl_agent:
         )
 
     def release_xfer_handle(self, handle: nixl_xfer_handle):
-        """Releases a transfer handle, which internally frees the memory used for the handle.
-        If the transfer is active, NIXL will attempt to cancel it.
-        If it cannot be canceled, an error will be returned and the handle will not be freed.
+        """Release a transfer handle without canceling an active transfer.
+
+        On refusal, the handle remains valid. Keep the agents, buffers, and memory
+        registrations alive. Poll a pending transfer with check_xfer_state() and
+        retry after completion. A transfer still reported in progress, including
+        an in-flight notification, cannot be released. Backend failures may prevent release
+        indefinitely; agent destruction is not a completion barrier for
+        outstanding handles.
 
         Args:
             handle: Handle to the transfer operation from initialize_xfer or make_xfer.
+
+        Raises:
+            nixlRepostActiveError: The transfer is still active, or the backend
+                refused release. Only
+                successful release invalidates the handle.
         """
         handle.release()
 
@@ -911,15 +961,25 @@ class nixl_agent:
         agent_name = self.agent.loadRemoteMD(metadata)
         return agent_name
 
-    def remove_remote_agent(self, agent: str):
+    def remove_remote_agent(self, agent: str) -> bool:
         """Remove a remote agent. After this call, current agent cannot initiate
         transfers towards the remote agent specified in the call anymore.
         This call will also result in a disconnect between the two agents.
 
         Args:
             agent: Name of the remote agent.
+
+        Returns:
+            True if the remote agent was removed, False if no metadata was loaded
+            for it, for example because it was already removed or the peer
+            invalidated it.
+
+        Raises:
+            nixlInvalidParamError: If agent is this agent's own name.
+            nixlBackendError: If a backend fails to disconnect from the agent. Other
+                backend failures raise their matching nixl error.
         """
-        self.agent.invalidateRemoteMD(agent)
+        return self.agent.invalidateRemoteMD(agent) == nixlBind.NIXL_SUCCESS
 
     def send_local_metadata(self, ip_addr: str = "", port: int = DEFAULT_COMM_PORT):
         """Send all of your metadata to a peer or central metadata server.
@@ -1052,15 +1112,6 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 3:
-                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("3-tuple list needed for transfer")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
@@ -1071,6 +1122,21 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
+                new_descs = None
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 3:
+                new_descs = nixlBind.nixlXferDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("3-tuple list needed for transfer")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
@@ -1113,6 +1179,12 @@ class nixl_agent:
     ) -> nixlBind.nixlRemoteDList:
         if isinstance(descs, nixlBind.nixlRemoteDList):
             return descs
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type")
+                new_descs = None
         elif isinstance(descs[0], tuple):
             if (mem_type is not None) and (len(descs[0]) == 4):
                 new_descs = nixlBind.nixlRemoteDList(self.nixl_mems[mem_type], descs)
@@ -1170,15 +1242,6 @@ class nixl_agent:
             else:
                 logger.error("Please use a list of contiguous Tensors")
                 new_descs = None
-        elif isinstance(descs[0], tuple):
-            if mem_type is not None and len(descs[0]) == 4:
-                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
-            elif mem_type is None:
-                logger.error("Please specify a mem type if not using Tensors")
-                new_descs = None
-            else:
-                logger.error("4-tuple list needed for registration")
-                new_descs = None
         elif isinstance(descs, np.ndarray):
             if mem_type is not None and descs.ndim == 2 and descs.shape[1] == 3:
                 new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
@@ -1189,6 +1252,21 @@ class nixl_agent:
                 logger.error(
                     "Nx3 shape required for transfer descriptor list from numpy array"
                 )
+                new_descs = None
+        elif isinstance(descs, (list, tuple)) and len(descs) == 0:
+            if mem_type is not None:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type])
+            else:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+        elif isinstance(descs[0], tuple):
+            if mem_type is not None and len(descs[0]) == 4:
+                new_descs = nixlBind.nixlRegDList(self.nixl_mems[mem_type], descs)
+            elif mem_type is None:
+                logger.error("Please specify a mem type if not using Tensors")
+                new_descs = None
+            else:
+                logger.error("4-tuple list needed for registration")
                 new_descs = None
         elif _is_torch_tensor(descs[0]):  # List[torch.Tensor]:
             tensor_type = descs[0].device
