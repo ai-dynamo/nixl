@@ -1162,6 +1162,40 @@ namespace agent {
         }
     };
 
+    TEST_F(singleAgentSessionFixture, NotifCallbacksWarnAboutUnsupportedBackends) {
+        const auto consume = [](std::string_view, std::string_view) { return true; };
+        nixlNotifRegistration early, late;
+        // Registration before any backend is loaded is silent.
+        ASSERT_EQ(agent_->registerNotifCallback("early:", consume, early), NIXL_SUCCESS);
+        {
+            const gtest::LogMessageCounter warning("does not support notification callbacks");
+            nixl_b_params_t params;
+            nixlBackendH *backend = nullptr;
+            ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+            EXPECT_EQ(warning.count(), 1u);
+        }
+        EXPECT_EQ(agent_->getNotifCallbackSupport(), nixl_notif_callback_support_t::NONE);
+
+        const gtest::LogMessageCounter warning("no loaded backend supports it");
+        ASSERT_EQ(agent_->registerNotifCallback("late:", consume, late), NIXL_SUCCESS);
+        EXPECT_EQ(warning.count(), 1u);
+    }
+
+    TEST_F(singleAgentSessionFixture, NotifCallbackSupportFollowsBackendCapabilities) {
+        ON_CALL(agent_helper_->getGMockEngine(), capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::NOTIF_CALLBACK));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getNotifCallbackSupport(), nixl_notif_callback_support_t::ON_PROGRESS);
+
+        // A supporting backend is loaded, so registration does not warn.
+        nixlNotifRegistration token;
+        ASSERT_EQ(agent_->registerNotifCallback(
+                      "prefix:", [](std::string_view, std::string_view) { return true; }, token),
+                  NIXL_SUCCESS);
+    }
+
     TEST_F(singleAgentSessionFixture, ActiveReleaseRequiresDrain) {
         selfXferSetup setup;
         nixl_b_params_t params;

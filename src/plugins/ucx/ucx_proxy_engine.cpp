@@ -288,7 +288,7 @@ proxyInitParams(const nixlBackendInitParams &init_params,
 namespace nixl::ucx {
 proxyEngine::proxyEngine(const nixlBackendInitParams &init_params, const nixl::proxyConfig &config)
     // The temporary params outlive the base constructor, the only place they are read.
-    : nixlUcxEngine(proxyInitParams(init_params, config, nixl_b_params_t{})),
+    : nixlUcxEngine(proxyInitParams(init_params, config, nixl_b_params_t{}), 0, true),
       ops_(requireDeviceOps()),
       runtime_(nixl::proxyRuntime::create(std::make_unique<transport>(getSharedWorkers(), config),
                                           config,

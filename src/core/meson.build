@@ -82,6 +82,7 @@ endif
 # src/plugins/tracing, loaded on demand by nixlPluginManager.
 nixl_lib_sources = [
     'nixl_agent.cpp',
+    'notif_dispatcher.cpp',
     'nixl_enum_strings.cpp',
     'nixl_md_manager.cpp',
     'nixl_metadata_worker.cpp',

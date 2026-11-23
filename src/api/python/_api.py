@@ -144,6 +144,49 @@ class nixl_xfer_handle:
 nixl_backend_handle = int
 
 
+class nixl_notification_monitor(nixlBind.nixlNotificationMonitor):
+    """Wait on notifications that agents route to it by byte prefix.
+
+    Subscribe with nixl_agent.add_notif_monitor(). Construct with max_queued to
+    change the queue capacity, 4,096 by default. The native receive path never
+    runs Python, so the next wait after the first overflow logs one warning.
+    overflow_count() reports the total number of redirected notifications.
+    """
+
+    _overflow_reported = False
+
+    def __enter__(self) -> nixl_notification_monitor:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    def wait_any(self, timeout_ms: int = -1) -> list[tuple[str, str, bytes]]:
+        """Return all queued (local_agent, remote_agent, message) tuples.
+
+        Waits until at least one notification is queued. timeout_ms=0 drains
+        without blocking, -1 waits indefinitely, and a timeout returns an empty
+        list. Raises RuntimeError when the monitor is closed.
+        """
+        notifications, redirected = self._wait_any(timeout_ms)
+        if redirected and not self._overflow_reported:
+            self._overflow_reported = True
+            try:  # Best effort: a failing log handler must not lose the drained batch.
+                logger.warning(
+                    "Notification monitor queue was full; %d notifications went to "
+                    "get_new_notifs() instead",
+                    redirected,
+                )
+            except Exception:
+                pass
+        return notifications
+
+
+# The native enum itself, so its members and the module-level NIXL_NOTIF_CALLBACK_*
+# constants are the same values and compare equal.
+nixl_notif_callback_support_t = nixlBind.nixl_notif_callback_support_t
+
+
 class nixl_thread_sync_t(Enum):
     """Enumeration of supported thread synchronization modes."""
 
@@ -831,6 +874,38 @@ class nixl_agent:
 
     def release_mem_view(self, mvh: int) -> None:
         self.agent.releaseMemView(mvh)
+
+    def add_notif_monitor(
+        self, monitor: nixl_notification_monitor, prefix: bytes
+    ) -> None:
+        """Route notifications matching a byte prefix to the given monitor.
+
+        Requires NIXL_NOTIF_CALLBACK_BACKGROUND from get_notif_callback_support(),
+        and raises nixlNotSupportedError otherwise. Prefixes of an agent must be
+        disjoint, and b"" adds the default route for messages with no matching
+        prefix. A prefix that overlaps an existing one, or a second default, raises
+        nixlInvalidParamError; remove the existing subscription first.
+        Closing or dropping the monitor removes all its subscriptions.
+        """
+        self.agent.addNotifMonitor(monitor, self.name, prefix)
+
+    def remove_notif_monitor(
+        self, monitor: nixl_notification_monitor, prefix: bytes
+    ) -> bool:
+        """Remove this agent's subscription of the monitor to exactly this prefix.
+
+        Return False if the monitor has no such subscription. Already queued
+        notifications remain available on the monitor.
+        """
+        return self.agent.removeNotifMonitor(monitor, prefix)
+
+    def get_notif_callback_support(self) -> nixl_notif_callback_support_t:
+        """Return the best notification callback support among the loaded backends.
+
+        add_notif_monitor() requires NIXL_NOTIF_CALLBACK_BACKGROUND, where a backend
+        delivers notifications from its own threads.
+        """
+        return self.agent.getNotifCallbackSupport()
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.

@@ -31,6 +31,7 @@
 #include "agent_data.h"
 #include "nixl_md_manager.h"
 #include "plugin_manager.h"
+#include "notif_dispatcher.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
@@ -411,6 +412,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       // Each backend decides whether it runs a thread, and such a thread shares
       // agent state - so they also decide the effective sync mode.
       lock(effectiveSyncMode(config.syncMode, md_.usesThread())),
+      notifDispatcher_(std::make_shared<nixlNotifDispatcher>()),
       tracer_(makeAgentTracer(name)) {
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
@@ -438,6 +440,7 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 nixlAgentData::~nixlAgentData() {
+    notifDispatcher_->shutdown();
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
@@ -553,6 +556,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.notifSink = data->notifDispatcher_.get();
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
@@ -614,6 +618,14 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // First time creating this backend handle, so unique
         // The order of creation sets the preference order
         data->memToBackend[elm].push_back(backend.get());
+    }
+
+    if (backend->supportsNotif() &&
+        !backend->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK) &&
+        data->notifDispatcher_->hasRegistrations()) {
+        NIXL_WARN << "Backend '" << type << "' of agent '" << data->name_
+                  << "' does not support notification callbacks; its notifications are "
+                     "only available through getNotifs()";
     }
 
     if (backend->supportsRemote()) {
@@ -1630,6 +1642,53 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
     return NIXL_SUCCESS;
+}
+
+nixl_notif_callback_support_t
+nixlAgentData::notifCallbackSupport() const noexcept {
+    auto support = nixl_notif_callback_support_t::NONE;
+    // All loaded backends, since a local-only backend may also deliver notifications.
+    for (const auto &[type, engine] : backendEngines_) {
+        // Background progress only matters for a backend that invokes callbacks.
+        if (!engine->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK)) {
+            continue;
+        }
+        if (engine->supportsCapability(nixl_backend_capability_t::NOTIF_BACKGROUND_PROGRESS)) {
+            return nixl_notif_callback_support_t::BACKGROUND;
+        }
+        support = nixl_notif_callback_support_t::ON_PROGRESS;
+    }
+    return support;
+}
+
+nixl_status_t
+nixlAgent::registerNotifCallback(std::string_view prefix,
+                                 nixl_notif_callback_t callback,
+                                 nixlNotifRegistration &registration) {
+    const auto status = data->notifDispatcher_->add(prefix, std::move(callback), registration);
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    // Registration before any backend is loaded is allowed and stays silent.
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    if (!data->backendEngines_.empty() &&
+        data->notifCallbackSupport() == nixl_notif_callback_support_t::NONE) {
+        NIXL_WARN << "Agent '" << data->name_
+                  << "' registered a notification callback, but no loaded backend supports it";
+    }
+    return status;
+}
+
+nixl_status_t
+nixlAgent::deregisterNotifCallback(nixlNotifRegistration &registration) noexcept {
+    return data->notifDispatcher_->remove(registration);
+}
+
+nixl_notif_callback_support_t
+nixlAgent::getNotifCallbackSupport() const {
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    return data->notifCallbackSupport();
 }
 
 nixl_status_t

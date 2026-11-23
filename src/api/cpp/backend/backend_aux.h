@@ -20,12 +20,23 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include "common/nixl_log.h"
 #include "nixl_types.h"
 #include "nixl_descriptors.h"
 #include "common/nixl_time.h"
 
 class nixlBackendTraceSink;
+
+// Receive-only interface to the agent's notification callback registry.
+class nixlBackendNotifSink {
+public:
+    virtual ~nixlBackendNotifSink() = default;
+
+    // False means the plugin should queue the unchanged notification for getNotifs().
+    [[nodiscard]] virtual bool
+    dispatch(std::string_view remote_agent, std::string_view message) const noexcept = 0;
+};
 
 namespace nixl::trace {
 struct TraceContext;
@@ -69,6 +80,7 @@ class nixlBackendInitParams {
         nixl_thread_sync_t syncMode;
         bool enableTelemetry_ = false;
         nixlBackendTraceSink *traceSink = nullptr;
+        const nixlBackendNotifSink *notifSink = nullptr;
 };
 
 // Pure virtual class to have a common pointer type

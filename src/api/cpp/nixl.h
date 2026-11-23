@@ -24,6 +24,7 @@
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
+#include "nixl_notif.h"
 #include <chrono>
 #include <memory>
 #include <span>
@@ -469,6 +470,48 @@ class nixlAgent {
 
 
         /*** Notification Handling ***/
+
+        /**
+         * @brief Intercept received notifications on backends supporting notification callbacks.
+         *
+         * Prefixes are byte strings matched at the start of the notification. Nonempty
+         * prefixes cannot overlap. An empty prefix registers a default handler for messages
+         * with no matching prefix. Registration fails while an overlapping prefix, or another
+         * default, is registered; deregister it first to replace it.
+         * Unconsumed messages remain available through getNotifs().
+         * Registration is allowed before a backend is created and affects future backends.
+         * Registration and deregistration wait for running callbacks of this agent.
+         *
+         * @param  prefix        Notification prefix, copied by the agent
+         * @param  callback      Function that returns true when it consumes the notification
+         * @param  registration  Token that receives ownership of the registration. It must
+         *                       be empty or belong to a destroyed agent.
+         * @return NIXL_ERR_INVALID_PARAM for an overlapping prefix, an existing default, an
+         *         empty function, or a token already in use
+         */
+        [[nodiscard]] nixl_status_t
+        registerNotifCallback(std::string_view prefix,
+                              nixl_notif_callback_t callback,
+                              nixlNotifRegistration &registration);
+
+        /**
+         * @brief Remove the registration after any running callbacks of this agent finish.
+         *
+         * An empty token is a no-op. A token owned by a different live or destroyed agent
+         * returns NIXL_ERR_INVALID_PARAM and is left unchanged. Use token.reset() when the
+         * agent is unavailable.
+         */
+        [[nodiscard]] nixl_status_t
+        deregisterNotifCallback(nixlNotifRegistration &registration) noexcept;
+
+        /**
+         * @brief Best notification callback support among the loaded backends.
+         *
+         * BACKGROUND means callbacks can run without application calls. Notifications
+         * received through a backend without callback support still go to getNotifs().
+         */
+        [[nodiscard]] nixl_notif_callback_support_t
+        getNotifCallbackSupport() const;
 
         /**
          * @brief  Add entries to the input notifications list (can be non-empty), which is a map

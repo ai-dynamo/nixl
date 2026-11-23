@@ -30,6 +30,7 @@
 #include <memory>
 
 using backend_list_t = std::vector<nixlBackendEngine*>;
+class nixlNotifDispatcher;
 
 // Implements nixlMetadataContext, which is the whole surface a metadata backend
 // sees of the agent: serialization, cache load and invalidation, nothing else.
@@ -50,6 +51,11 @@ class nixlAgentData final : public nixlMetadataContext {
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
+
+        // Notification callback registry. Shared because registration tokens, which may
+        // outlive the agent, reference it weakly. Declared before backendEngines_, so it
+        // outlives the backends that use it as their notifSink.
+        const std::shared_ptr<nixlNotifDispatcher> notifDispatcher_;
 
         // Bookkeeping from backend type and memory type to backend engine
         backend_list_t                         notifEngines;
@@ -108,6 +114,9 @@ class nixlAgentData final : public nixlMetadataContext {
                     nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
+        // Caller holds the agent lock.
+        [[nodiscard]] nixl_notif_callback_support_t
+        notifCallbackSupport() const noexcept;
         void
         warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
                                       const nixl::trace::TraceContext &context) noexcept;

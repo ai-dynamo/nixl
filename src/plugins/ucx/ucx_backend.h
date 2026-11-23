@@ -257,7 +257,9 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
+    nixlUcxEngine(const nixlBackendInitParams &init_params,
+                  size_t num_dedicated_workers = 0,
+                  bool background_progress = false);
 
     notif_list_t notifList_;
 
@@ -324,6 +326,7 @@ private:
     mutable std::atomic<size_t> sharedWorkerIndex_;
     const bool sglEnabled_;
     nixlBackendTraceSink *const traceSink_;
+    const nixlBackendNotifSink *const notifSink_;
 
     // Map of agent name to saved nixlUcxConnection info
     std::unordered_map<std::string, ucx_connection_ptr_t> remoteConnMap;

@@ -155,6 +155,17 @@ enum class nixl_cost_t {
 };
 
 /**
+ * @enum nixl_notif_callback_support_t
+ * @brief How notification callbacks run, ordered from none to the best support of any
+ *        loaded backend. Notifications through other backends stay with getNotifs().
+ */
+enum class nixl_notif_callback_support_t {
+    NONE, // No loaded backend invokes notification callbacks
+    ON_PROGRESS, // Callbacks run only while the application drives progress, e.g. getNotifs()
+    BACKGROUND, // A backend invokes callbacks from its own progress threads
+};
+
+/**
  * @brief A typedef for std::optional<nixl_b_params_t> for querying memory results
  *        Validity of a nixl_query_resp_t can be checked by has_value() method,
  *        and if true, the dictionary can be accessed by value() method.

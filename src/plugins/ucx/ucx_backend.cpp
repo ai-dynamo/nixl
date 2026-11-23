@@ -95,15 +95,21 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
-    : nixlBackendEngine(&init_params,
-                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
-                            nixl_backend_capability_t::NOTIF |
-                            nixl_backend_capability_t::TRACE_CONTEXT),
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
+                             size_t num_dedicated_workers,
+                             bool background_progress)
+    : nixlBackendEngine(
+          &init_params,
+          nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+              nixl_backend_capability_t::NOTIF | nixl_backend_capability_t::TRACE_CONTEXT |
+              nixl_backend_capability_t::NOTIF_CALLBACK |
+              (background_progress ? nixl_backend_capability_t::NOTIF_BACKGROUND_PROGRESS :
+                                     nixl_backend_capability_t::NONE)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
-      traceSink_(init_params.traceSink) {
+      traceSink_(init_params.traceSink),
+      notifSink_(init_params.notifSink) {
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
 
@@ -811,7 +817,9 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                                         notif.traceExecution);
     }
 
-    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    if (!engine->notifSink_ || !engine->notifSink_->dispatch(notif.agent, notif.msg)) {
+        engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    }
     return UCS_OK;
 }
 
