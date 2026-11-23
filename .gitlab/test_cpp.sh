@@ -120,10 +120,8 @@ done
 ./bin/nixl_gusli_test -n 4 -s 16
 ./bin/ucx_backend_multi
 ./bin/serdes_test
-# TODO: Enable Mooncake test once data corruption issue is resolved
-# if $HAS_GPU ; then
-#     ./bin/mooncake_backend_test
-# fi
+# build.sh builds Mooncake without GPU support, so only the DRAM cases run.
+MC_FORCE_TCP=1 NIXL_MOONCAKE_IP_ADDR=127.0.0.1 ./bin/mooncake_backend_test --skip-vram
 
 # shellcheck disable=SC2154
 env -u UCX_NET_DEVICES gtest-parallel --workers=1 --serialize_test_cases ./bin/gtest -- --min-tcp-port="$min_gtest_port" --max-tcp-port="$max_gtest_port"
