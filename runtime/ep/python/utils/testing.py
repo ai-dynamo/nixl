@@ -142,41 +142,24 @@ def bench_kineto(
             torch.cuda.synchronize()
             profiler.step()
 
-    # Parse the profiling table
-    prof_lines = (
-        profiler.key_averages()
-        .table(sort_by="cuda_time_total", max_name_column_width=100)
-        .split("\n")
-    )
+    events = profiler.key_averages()
     kernel_names = (kernel_names,) if isinstance(kernel_names, str) else kernel_names
     assert all([isinstance(name, str) for name in kernel_names])
+
+    # Return average kernel durations in seconds; profiler times are in microseconds.
+    kernel_durations: list[float] = []
     for name in kernel_names:
+        matches = [event for event in events if name in event.key]
         assert (
-            sum([name in line for line in prof_lines]) <= 1
-        ), f"Errors of the kernel {name} in the profiling table: {prof_lines}"
+            len(matches) <= 1
+        ), f"Multiple profiler events match kernel {name}: {[event.key for event in matches]}"
+        total_time = sum(event.device_time_total for event in matches)
+        total_num = sum(event.count for event in matches)
+        kernel_durations.append(total_time / total_num / 1e6 if total_num > 0 else 0)
 
     # Save chrome traces
     if trace_path is not None:
         profiler.export_chrome_trace(trace_path)
-
-    # Return average kernel durations
-    units = {"ms": 1e3, "us": 1e6}
-    kernel_durations: list[float] = []
-    for name in kernel_names:
-        total_time = 0.0
-        total_num = 0
-        for line in prof_lines:
-            if name in line:
-                time_str = line.split()[-2]
-                num_str = line.split()[-1]
-                for unit, scale in units.items():
-                    if unit in time_str:
-                        total_time += (
-                            float(time_str.replace(unit, "")) / scale * int(num_str)
-                        )
-                        total_num += int(num_str)
-                        break
-        kernel_durations.append(total_time / total_num if total_num > 0 else 0)
 
     # Return execution durations
     return kernel_durations if is_tuple else kernel_durations[0]
