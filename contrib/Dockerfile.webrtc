@@ -1,0 +1,78 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+ARG BASE_IMAGE="ubuntu"
+ARG BASE_IMAGE_TAG="22.04"
+
+# Build WebRTC on Ubuntu 22.04 so the static library remains glibc compatible
+# with Ubuntu 22.04+ and AlmaLinux 8+ images.
+FROM ${BASE_IMAGE}:${BASE_IMAGE_TAG} AS builder
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# Install build dependencies required for webrtcbuilds and depot_tools
+
+RUN apt-get update -y && \
+    apt-get install -y ubuntu-keyring ca-certificates && \
+    apt-get update -y && \
+    apt-get -y install \
+    ninja-build \
+    libclang-dev \
+    cmake \
+    libgflags-dev \
+    libprotobuf-dev \
+    libaio-dev \
+    liburing-dev \
+    libcpprest-dev \
+    autotools-dev \
+    automake \
+    autoconf \
+    libtool \
+    libz-dev \
+    flex \
+    libgtest-dev \
+    build-essential \
+    python3-dev \
+    python-is-python3 \
+    clang \
+    hwloc \
+    libhwloc-dev \
+    npm \
+    pkg-config \
+    curl \
+    git \
+    lbzip2 \
+    lsb-release \
+    sudo \
+    tzdata \
+    unzip \
+    wget \
+    xz-utils \
+    && rm -rf /var/lib/apt/lists/*
+
+# Ensure sudo calls inside webrtcbuilds/install-build-deps.sh remain noninteractive
+# (sudo's default env_reset strips DEBIAN_FRONTEND, causing keyboard-configuration to hang).
+RUN echo 'debconf debconf/frontend select Noninteractive' | debconf-set-selections && \
+    echo 'Defaults env_keep += "DEBIAN_FRONTEND"' > /etc/sudoers.d/noninteractive && \
+    chmod 0440 /etc/sudoers.d/noninteractive
+
+WORKDIR /workspace
+
+COPY contrib/webrtc.patch /workspace/webrtc.patch
+
+# Build WebRTC
+ARG WEBRTCBUILDS_SHA256="7c3c008dcd90cc338fd3b408c740b9a547b75f2b5464b86dddc55a2f3d887f7e"
+RUN wget --tries=3 --waitretry=5 --no-verbose https://github.com/vsimon/webrtcbuilds/archive/4bc7a6b.zip -O webrtcbuilds.zip && \
+    echo "${WEBRTCBUILDS_SHA256}  webrtcbuilds.zip" | sha256sum -c - && \
+    unzip webrtcbuilds.zip
+RUN cd webrtcbuilds-4bc7a6b7006e2bbe514aac6570c2b85c331e08e9 && \
+    patch -p1 < ../webrtc.patch && \
+    ./build.sh -r bddd95b63fea8f1baa5461ec4dff23ba1ebac7f9 && \
+    mkdir -p /usr/local/webrtc/include && \
+    cp -r out/webrtc*/include/* /usr/local/webrtc/include/ && \
+    cp out/webrtc*/lib/Release/libwebrtc_full.a /usr/local/webrtc/libwebrtc.a && \
+    cp out/webrtc*/lib/Debug/libwebrtc_full.a /usr/local/webrtc/libwebrtc_debug.a && \
+    cd .. && rm -rf webrtcbuilds-4bc7a6b7006e2bbe514aac6570c2b85c331e08e9 webrtcbuilds.zip out
+
+FROM scratch
+COPY --from=builder /usr/local/webrtc /

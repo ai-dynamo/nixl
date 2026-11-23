@@ -885,6 +885,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
     NIXL_REGISTER_STATIC_PLUGIN(Backend, DOCA_MEMOS)
 #endif
 
+#ifdef STATIC_PLUGIN_TCPXO
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, TCPXO)
+#endif
+
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, BUFFER)
     NIXL_REGISTER_STATIC_PLUGIN(Telemetry, NOP)
 }
