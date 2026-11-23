@@ -176,6 +176,7 @@ NB_ARG_BOOL(reregister_mem, false, "Register and deregister memory on every iter
 NB_ARG_BOOL(prepared_xfer,
             false,
             "Use prepared transfer API (prepare+make), incompatible with reregister_mem");
+NB_ARG_BOOL(agent_per_thread, false, "Use one NIXL agent/backend per host MEMOS worker");
 NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
@@ -436,6 +437,7 @@ bool xferBenchConfig::storage_enable_direct = false;
 bool xferBenchConfig::reregister_mem = false;
 bool xferBenchConfig::prepared_xfer = false;
 int xferBenchConfig::pipeline_depth = 1;
+bool xferBenchConfig::agent_per_thread = false;
 size_t xferBenchConfig::memos_keys_per_thread = 0;
 bool xferBenchConfig::memos_reuse_local = false;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
@@ -701,6 +703,7 @@ xferBenchConfig::loadParams(void) {
     benchmark_group = NB_ARG(benchmark_group);
     runtime_type = NB_ARG(runtime_type);
     worker_type = NB_ARG(worker_type);
+    agent_per_thread = NB_ARG(agent_per_thread);
 
     // Only load NIXL-specific configurations if using NIXL worker
     if (worker_type == XFERBENCH_WORKER_NIXL) {
@@ -1008,6 +1011,20 @@ xferBenchConfig::loadParams(void) {
         }
     }
 
+    if (agent_per_thread &&
+        (worker_type != XFERBENCH_WORKER_NIXL || backend != XFERBENCH_BACKEND_DOCA_MEMOS ||
+         use_device_api || enable_vmm || initiator_seg_type != XFERBENCH_SEG_TYPE_DRAM ||
+         mode != XFERBENCH_MODE_SG || scheme != XFERBENCH_SCHEME_PAIRWISE ||
+         num_initiator_dev != 1 || num_target_dev != 1 ||
+         (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) || enable_pt ||
+         progress_threads != 0 || recreate_xfer || reregister_mem || check_consistency ||
+         !etcd_endpoints.empty())) {
+        std::cerr << "agent_per_thread requires expanded-key host MEMOS READ/WRITE, "
+                     "one device, SG/pairwise, manual progress and stable registrations"
+                  << std::endl;
+        return -1;
+    }
+
     // Validate runtime configuration
     if (!isStorageBackend()) {
         if (runtime_type == XFERBENCH_RT_ETCD) {
@@ -1031,6 +1048,9 @@ xferBenchConfig::loadParams(void) {
         memos_keys_per_thread =
             nixlbench::parseMemosKeyPoolSize(std::getenv("NIXLBENCH_MEMOS_KEYS_PER_THREAD"));
         memos_reuse_local = nixlbench::parseMemosReuseLocal(std::getenv("NIXLBENCH_REUSE_LOCAL"));
+        if (agent_per_thread && memos_keys_per_thread == 0) {
+            throw std::invalid_argument("agent_per_thread requires an expanded MEMOS key pool");
+        }
         if (memos_reuse_local && memos_keys_per_thread == 0) {
             throw std::invalid_argument("local buffer reuse requires a MEMOS key pool");
         }

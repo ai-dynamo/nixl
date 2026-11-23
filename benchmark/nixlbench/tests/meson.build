@@ -52,6 +52,15 @@ memos_reporting_tests = executable(
 )
 test('memos_reporting_tests', memos_reporting_tests, suite: 'nixlbench')
 
+# This target intentionally uses a mock API to check ownership without a device.
+memos_context_tests = executable(
+  'memos_context_tests',
+  'memos_context_test.cpp',
+  include_directories: [include_directories('mocks'), include_directories('../src')],
+  dependencies: dependency('threads'),
+)
+test('memos_context_tests', memos_context_tests, suite: 'nixlbench')
+
 gtest_dep = dependency('gtest',
                        main: true,
                        required: false)

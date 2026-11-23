@@ -26,6 +26,7 @@
  * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include "kernels/nixlbench_device_launch.cuh"
 #include <limits>
@@ -138,10 +139,31 @@ initCudaContext() {
     CHECK_CUDA_ERROR(cudaFree(nullptr), "Failed to create CUDA context");
 }
 #endif
+static nixl_b_params_t
+memosBackendParameters() {
+    nixl_b_params_t backend_params;
+    // Set DOCA_MEMOS backend parameters
+    backend_params["device_name"] = xferBenchConfig::doca_memos_device_name;
+    backend_params["num_tasks"] = std::to_string(xferBenchConfig::doca_memos_num_tasks);
+    if (!xferBenchConfig::doca_memos_nguid.empty()) {
+        backend_params["nguid"] = xferBenchConfig::doca_memos_nguid;
+    }
+
+    if (xferBenchConfig::plugin_parameters) {
+        for (const auto &[key, value] : *xferBenchConfig::plugin_parameters) {
+            backend_params[key] = value;
+        }
+    }
+    return backend_params;
+}
+
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
       default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
+    if (xferBenchConfig::agent_per_thread) {
+        return;
+    }
 
 #if HAVE_CUDA
     if ((xferBenchConfig::initiator_seg_type == "VRAM") ||
@@ -460,6 +482,7 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
 }
 
 xferBenchNixlWorker::~xferBenchNixlWorker() {
+    thread_contexts_.clear();
     remote_regs_.clear();
     remote_fds.clear();
     local_regs_.clear();
@@ -1126,12 +1149,88 @@ xferBenchNixlWorker::ensureFileHasConsistencyData(const GusliDeviceConfig &devic
     return true;
 }
 
+std::vector<std::vector<xferBenchIOV>>
+xferBenchNixlWorker::allocateThreadMemory(int num_threads) {
+    std::vector<std::vector<xferBenchIOV>> lists;
+    try {
+        auto status = nixlbench::createMemosContexts(
+            num_threads, name, memosBackendParameters(), thread_contexts_);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "DOCA_MEMOS: worker context initialization failed: "
+                      << nixlEnumStrings::statusStr(status) << std::endl;
+            return {};
+        }
+        const size_t buffer_size = xferBenchConfig::total_buffer_size / num_threads;
+        const size_t keys = xferBenchConfig::memos_keys_per_thread;
+        std::random_device entropy;
+        std::ofstream key_manifest("memos-keys.txt");
+        if (!key_manifest) {
+            throw std::runtime_error("cannot create MEMOS key manifest");
+        }
+        for (int tid = 0; tid < num_threads; ++tid) {
+            auto &context = *thread_contexts_[tid];
+            std::shared_ptr<nixlAlloc> allocation = nixlAlloc::make(buffer_size);
+            if (!allocation) {
+                thread_contexts_.clear();
+                remote_iovs.clear();
+                return {};
+            }
+            const xferBenchIOV iov(reinterpret_cast<uintptr_t>(allocation->addr()), buffer_size, 0);
+            std::vector<xferBenchIOV> local{iov};
+            // Keep the original allocation owner; cleanup must not allocate a wrapper.
+            status = context.registerMemory(iovListToNixlRegDlist(local, DRAM_SEG),
+                                            std::move(allocation));
+            if (status != NIXL_SUCCESS) {
+                throw std::runtime_error("local worker registration failed");
+            }
+            std::vector<xferBenchIOV> remote;
+            remote.reserve(keys);
+            for (size_t key = 0; key < keys; ++key) {
+                const auto object_key = nixlbench::makeMemosKey(entropy);
+                key_manifest << object_key << '\n';
+                if (!key_manifest) {
+                    throw std::runtime_error("cannot write MEMOS key manifest");
+                }
+                const auto descriptor =
+                    initBasicDescObj(buffer_size, static_cast<int>(tid * keys + key), object_key);
+                if (!descriptor) {
+                    throw std::runtime_error("remote worker descriptor initialization failed");
+                }
+                remote.push_back(*descriptor);
+            }
+            status = context.registerMemory(iovListToNixlRegDlist(remote, OBJ_SEG));
+            if (status != NIXL_SUCCESS) {
+                throw std::runtime_error("remote worker registration failed");
+            }
+            lists.push_back(std::move(local));
+            remote_iovs.push_back(std::move(remote));
+        }
+        key_manifest.close();
+        if (!key_manifest) {
+            throw std::runtime_error("cannot close MEMOS key manifest");
+        }
+        std::cout << "DOCA_MEMOS: Registered " << keys * num_threads << " keys across "
+                  << num_threads << " threads (random128 metaInfo=hex32; per-thread contexts)"
+                  << std::endl;
+    }
+    catch (const std::exception &error) {
+        std::cerr << "DOCA_MEMOS: " << error.what() << std::endl;
+        thread_contexts_.clear();
+        remote_iovs.clear();
+        return {};
+    }
+    return lists;
+}
+
 /** Allocate and register memory descriptors for each thread. */
 std::vector<std::vector<xferBenchIOV>>
 xferBenchNixlWorker::allocateMemory(int num_threads) {
     if (num_threads < 1) {
         std::cerr << "Invalid worker count for buffer allocation" << std::endl;
         return {};
+    }
+    if (xferBenchConfig::agent_per_thread) {
+        return allocateThreadMemory(num_threads);
     }
     std::vector<std::vector<xferBenchIOV>> iov_lists;
     size_t i, buffer_size, num_devices = 0;
@@ -1412,6 +1511,12 @@ xferBenchNixlWorker::allocateMemory(int num_threads) {
 
 void
 xferBenchNixlWorker::deallocateMemory(std::vector<std::vector<xferBenchIOV>> &iov_lists) {
+    if (xferBenchConfig::agent_per_thread) {
+        thread_contexts_.clear();
+        remote_iovs.clear();
+        iov_lists.clear();
+        return;
+    }
     if (xferBenchConfig::isObjStorageBackend()) {
         size_t num_objs = 0;
         for (const auto &region : remote_regs_) {
@@ -2286,13 +2391,22 @@ execTransfer(
     const int num_threads,
     xferBenchStats &stats,
     const std::atomic<int> *terminate_ptr = nullptr,
-    bool duration_mode = false) {
+    bool duration_mode = false,
+    const std::vector<std::unique_ptr<nixlbench::MemosWorkerContext>> *contexts = nullptr) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS &&
         (num_threads <= 0 || local_iovs.size() != static_cast<size_t>(num_threads) ||
          remote_iovs.size() != static_cast<size_t>(num_threads))) {
         std::cerr << "MEMOS per-worker descriptor lists do not match the requested worker count"
                   << std::endl;
         return -1;
+    }
+    const bool per_thread = contexts && !contexts->empty();
+    if (per_thread && contexts->size() != static_cast<size_t>(num_threads)) {
+        return -1;
+    }
+    std::vector<nixl_opt_args_t> context_options(per_thread ? num_threads : 0);
+    for (int tid = 0; per_thread && tid < num_threads; ++tid) {
+        context_options[tid].backends.push_back((*contexts)[tid]->backend());
     }
     std::atomic<int> ret{0};
     stats.clear();
@@ -2314,7 +2428,10 @@ execTransfer(
         const auto &remote_iov = remote_iovs[tid];
 
         // Setup transfer parameters
-        nixl_opt_args_t params;
+        nixl_opt_args_t shared_params;
+        auto &params = per_thread ? context_options[tid] : shared_params;
+        auto *worker_agent = per_thread ? (*contexts)[tid]->agent() : agent;
+        auto *worker_backend = per_thread ? (*contexts)[tid]->backend() : backend_engine;
         std::string target;
         bool setup_ready = true;
         try {
@@ -2325,7 +2442,8 @@ execTransfer(
             } else {
                 thread_stats.reserve(num_iter);
             }
-            target = xferBenchConfig::isStorageBackend() ? "initiator" : "target";
+            target = per_thread ? (*contexts)[tid]->name() :
+                                  (xferBenchConfig::isStorageBackend() ? "initiator" : "target");
             if (!xferBenchConfig::isStorageBackend()) {
                 params.notif = "0xBEEF";
             }
@@ -2337,8 +2455,8 @@ execTransfer(
         }
 
         int result = team_matches && (setup_ready || duration_mode) ?
-            execTransferLoop(agent,
-                             backend_engine,
+            execTransferLoop(worker_agent,
+                             worker_backend,
                              op,
                              target,
                              params,
@@ -2627,6 +2745,12 @@ xferBenchNixlWorker::transfer(size_t block_size,
     xferBenchStats stats;
     int ret = 0;
 
+    std::cout << "NIXL ownership: mode="
+              << (xferBenchConfig::agent_per_thread ? "per-thread" : "shared")
+              << " workers=" << workers
+              << " agents=" << (xferBenchConfig::agent_per_thread ? workers : 1)
+              << " backends=" << (xferBenchConfig::agent_per_thread ? workers : 1) << std::endl;
+
     // QUERY op_type: benchmark queryMem instead of read/write transfers
     if (xferBenchConfig::op_type == XFERBENCH_OP_QUERY) {
         if (!xferBenchConfig::isStorageBackend()) {
@@ -2648,7 +2772,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xferBenchConfig::num_threads,
                            prepop_stats,
                            nullptr,
-                           false);
+                           false,
+                           &thread_contexts_);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
                       << std::endl;
@@ -2721,7 +2846,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xferBenchConfig::num_threads,
                            prepop_stats,
                            nullptr,
-                           false);
+                           false,
+                           &thread_contexts_);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
                       << block_size << ")" << std::endl;
@@ -2744,7 +2870,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xferBenchConfig::num_threads,
                            verify_stats,
                            nullptr,
-                           false);
+                           false,
+                           &thread_contexts_);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
                          "pre-population (block_size="
@@ -2804,7 +2931,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xferBenchConfig::num_threads,
                            stats,
                            &terminate,
-                           true);
+                           true,
+                           &thread_contexts_);
         synchronize();
         return ret < 0 ? std::variant<xferBenchStats, int>(ret) :
                          std::variant<xferBenchStats, int>(stats);
@@ -2830,7 +2958,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                xferBenchConfig::num_threads,
                                stats,
                                &terminate,
-                               false);
+                               false,
+                               &thread_contexts_);
         }
         if (ret < 0) {
             return std::variant<xferBenchStats, int>(ret);
@@ -2860,7 +2989,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            xferBenchConfig::num_threads,
                            stats,
                            &terminate,
-                           false);
+                           false,
+                           &thread_contexts_);
     }
     if (ret < 0) {
         return std::variant<xferBenchStats, int>(ret);

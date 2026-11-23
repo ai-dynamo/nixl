@@ -1401,3 +1401,16 @@ team smaller than requested, preventing a partial key-pool check from being
 reported as complete. Deferred request cancellation retains the handle and
 buffers while driving progress until the backend accepts release. The point's
 external watchdog remains necessary for a permanently stalled backend.
+
+### Experimental agent ownership
+
+With the expanded DOCA_MEMOS key pool, `--agent_per_thread=true` creates one
+independent NIXL agent/backend and registration set per benchmark worker. It
+supports host DRAM READ/WRITE, SG/pairwise, one device, manual progress, and stable
+registrations only. The default remains a shared agent. Each context retains
+RW synchronization and the configured per-backend task count: this multiplies
+backend resources, and does not isolate the physical device or DPU.
+
+The existing key-pool rotation, reused-buffer geometry, full-key population and
+retrieval checks, common duration window and completion accounting are unchanged.
+Context initialization and destruction occur outside the measured window.
