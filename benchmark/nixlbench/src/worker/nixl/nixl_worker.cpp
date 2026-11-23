@@ -2190,16 +2190,15 @@ execTransferLoop(nixlAgent *agent,
 }
 
 static int
-execTransfer(
-    nixlAgent *agent,
-    nixlBackendH *backend_engine,
-    const std::vector<std::vector<xferBenchIOV>> &local_iovs,
-    const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
-    const nixl_xfer_op_t op,
-    const int num_iter,
-    const int num_threads,
-    xferBenchStats &stats,
-    const std::atomic<int> *terminate_ptr = nullptr) {
+execTransfer(nixlAgent *agent,
+             nixlBackendH *backend_engine,
+             const std::vector<std::vector<xferBenchIOV>> &local_iovs,
+             const std::vector<std::vector<xferBenchIOV>> &remote_iovs,
+             const nixl_xfer_op_t op,
+             const int num_iter,
+             const int num_threads,
+             xferBenchStats &stats,
+             const std::atomic<int> *terminate_ptr = nullptr) {
     if (xferBenchConfig::backend == XFERBENCH_BACKEND_DOCA_MEMOS &&
         (num_threads <= 0 || local_iovs.size() != static_cast<size_t>(num_threads) ||
          remote_iovs.size() != static_cast<size_t>(num_threads))) {
@@ -2238,18 +2237,17 @@ execTransfer(
             setup_ready = false;
         }
 
-        int result = team_matches && setup_ready ?
-            execTransferLoop(agent,
-                             backend_engine,
-                             op,
-                             target,
-                             params,
-                             num_iter,
-                             thread_stats,
-                             local_iov,
-                             remote_iov,
-                             terminate_ptr) :
-            -1;
+        int result = team_matches && setup_ready ? execTransferLoop(agent,
+                                                                    backend_engine,
+                                                                    op,
+                                                                    target,
+                                                                    params,
+                                                                    num_iter,
+                                                                    thread_stats,
+                                                                    local_iov,
+                                                                    remote_iov,
+                                                                    terminate_ptr) :
+                                                   -1;
 
         if (result != 0) [[unlikely]] {
             ret = result;
