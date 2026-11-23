@@ -198,6 +198,7 @@ public:
     static size_t progress_threads;
     static std::string device_list;
     static std::string etcd_endpoints;
+    static int etcd_barrier_poll_ms;
     static std::string asio_address; // IPv4
     static uint16_t asio_port;
     static std::string randomize_location_mode;

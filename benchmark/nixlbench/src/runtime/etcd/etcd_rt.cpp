@@ -31,17 +31,22 @@
 namespace {
 // Lease TTL in seconds: rank key auto-expires this long after the last keepalive.
 constexpr int lease_ttl_s = 30;
+
+// Total wait before barrier() gives up, whatever its poll interval (the former 60 polls x 3 s).
+constexpr auto barrier_timeout = std::chrono::seconds(180);
 } // namespace
 
 // ETCD Runtime implementation
 xferBenchEtcdRT::xferBenchEtcdRT(const std::string &benchmark_group,
                                  const std::string &etcd_endpoints,
                                  const int size,
-                                 std::atomic<int> *terminate_input) {
+                                 std::atomic<int> *terminate_input,
+                                 std::chrono::milliseconds barrier_poll_input) {
     // Store parameters for later use in setup
     stored_etcd_endpoints = etcd_endpoints.empty() ? ETCD_EP_DEFAULT : etcd_endpoints;
     global_size = size;
     terminate = terminate_input;
+    barrier_poll = barrier_poll_input;
 
     // Initialize other members
     namespace_prefix = "xferbench/" + benchmark_group + "/"; // Namespace for XFER benchmark
@@ -481,7 +486,8 @@ xferBenchEtcdRT::barrier(const std::string &barrier_id, const bool finishing) {
             throw std::runtime_error("put");
         }
 
-        for (auto retries = 0; should_retry(retries); ++retries) {
+        const auto deadline = std::chrono::steady_clock::now() + barrier_timeout;
+        while (!error()) {
             auto resp = client->ls(barrier_key);
             if (resp.error_code()) {
                 break;
@@ -497,7 +503,11 @@ xferBenchEtcdRT::barrier(const std::string &barrier_id, const bool finishing) {
                 return 0;
             }
 
-            std::this_thread::sleep_for(std::chrono::seconds(3));
+            const auto now = std::chrono::steady_clock::now();
+            if (now >= deadline) {
+                break;
+            }
+            std::this_thread::sleep_until(std::min(now + barrier_poll, deadline));
         }
 
         throw std::runtime_error("wait");

@@ -221,6 +221,12 @@ NB_ARG_STRING(device_list,
 NB_ARG_STRING(etcd_endpoints,
               "",
               "ETCD server endpoints for communication (optional for storage backends)");
+NB_ARG_INT32(etcd_barrier_poll_ms,
+             3000,
+             "Interval in ms at which the ETCD runtime polls a barrier. A rank leaves a barrier "
+             "at its first poll after the last rank arrives, so a short interval, e.g. 10, makes "
+             "the ranks leave together and start their SG pairwise timed loops together. The "
+             "barrier timeout does not depend on it.");
 
 NB_ARG_STRING(asio_address,
               "127.0.0.1",
@@ -417,6 +423,7 @@ int xferBenchConfig::use_localized = -1;
 bool xferBenchConfig::use_hugepages = false;
 std::string xferBenchConfig::device_list = "";
 std::string xferBenchConfig::etcd_endpoints = "";
+int xferBenchConfig::etcd_barrier_poll_ms = 3000;
 std::string xferBenchConfig::asio_address = "127.0.0.1";
 std::uint16_t xferBenchConfig::asio_port = 12345;
 std::string xferBenchConfig::randomize_location_mode = "none";
@@ -968,6 +975,11 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
     etcd_endpoints = NB_ARG(etcd_endpoints);
+    etcd_barrier_poll_ms = NB_ARG(etcd_barrier_poll_ms);
+    if (etcd_barrier_poll_ms < 1) {
+        std::cerr << "etcd_barrier_poll_ms must be >= 1" << std::endl;
+        return -1;
+    }
     asio_address = NB_ARG(asio_address);
     asio_port = NB_ARG(asio_port);
     randomize_location_mode = NB_ARG(randomize_location_mode);
@@ -1183,6 +1195,8 @@ xferBenchConfig::printConfig() {
             printOption("ETCD Endpoint ", "disabled (storage backend)");
         } else {
             printOption("ETCD Endpoint ", etcd_endpoints);
+            printOption("ETCD barrier poll interval (--etcd_barrier_poll_ms=N)",
+                        std::to_string(etcd_barrier_poll_ms));
         }
     } else if (runtime_type == XFERBENCH_RT_ASIO) {
         printOption("ASIO Address (--asio_address) ", asio_address);

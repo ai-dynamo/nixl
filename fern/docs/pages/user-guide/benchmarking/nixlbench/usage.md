@@ -35,7 +35,7 @@ docker run -d --name etcd-server \
 ```
 
 <Warning>
-When using etcd, all workers in a benchmark group must connect within 60 seconds of the first worker joining. Workers that miss this window cause the barrier to fail and the benchmark to abort.
+When using etcd, all workers in a benchmark group must connect within 180 seconds of the first worker joining. That is the barrier timeout, which does not depend on `--etcd_barrier_poll_ms`. Workers that miss this window cause the barrier to fail and the benchmark to abort.
 </Warning>
 
 Single-instance storage benchmarks run without etcd or ASIO.
@@ -169,6 +169,7 @@ For backend-specific options not listed on this page, see the corresponding back
 | `--backend` | Communication backend (UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA) | `UCX` |
 | `--benchmark_group` | Group name for parallel runs | `default` |
 | `--etcd_endpoints` | etcd server URL for ETCD coordination | `http://localhost:2379` |
+| `--etcd_barrier_poll_ms` | Interval in ms at which ETCD coordination polls a barrier; `10` makes ranks leave the barrier together | `3000` |
 
 ### Memory and Transfer Configuration
 
