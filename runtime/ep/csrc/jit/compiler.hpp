@@ -110,8 +110,9 @@ public:
 
     static void put(const std::filesystem::path& path, const std::string& data) {
         std::ofstream out(path, std::ios::binary);
-        EP_HOST_ASSERT(out.write(data.data(), data.size()));
+        out.write(data.data(), data.size());
         out.close();
+        EP_HOST_ASSERT(out and "Failed to write or close JIT cache file");
 
         // NOTES: fsync to ensure the data is visible to other processes (e.g., NVCC)
         // on distributed filesystems, where `close()` alone does not guarantee persistence
