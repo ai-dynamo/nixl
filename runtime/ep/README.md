@@ -45,7 +45,7 @@ change between completed dispatch/combine pairs while reusing the same graph.
 `dispatch` and `set_active_ranks` have no SM-count argument, and there is no
 runtime SM setter or estimator. Handles do not record an SM count.
 
-## Install and exercise the public API
+## Install
 
 Use an isolated Python environment with PyTorch installed, without the NIXL
 core or backend wheels. The standalone distribution provides the namespace
@@ -56,8 +56,7 @@ python -m pip install ./runtime/ep
 ```
 
 An installed NIXL core package owns the same `nixl` namespace and may load its
-native backend first. Keep the shell in its own environment. For source-only
-review, run the tests below without installing the package.
+native backend first. Keep the shell in its own environment.
 
 ## What the shell models
 
@@ -104,12 +103,3 @@ execution-dependent constraints, CUDA graph or stream behavior, memory ownership
 timeouts, transport completion or GPU
 correctness. The existing core NIXL and EP example sources remain in this repository;
 none is loaded by the standalone shell.
-
-## Test
-
-```bash
-PYTHONPATH=runtime/ep python -m unittest discover -s runtime/ep/tests/api -v
-```
-
-Tests cover API parity and the shell's local state/placeholder behavior. They
-do not require GPUs, UCX, NIXL native libraries, a process group or a Store.
