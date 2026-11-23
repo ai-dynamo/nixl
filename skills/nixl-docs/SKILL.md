@@ -67,6 +67,7 @@ Transfer backends, etcd metadata exchange, telemetry events and exporters, NIXLB
 - [Azure Blob](../../fern/docs/pages/user-guide/backends/azure-blob.md): Azure Blob Storage backend for DRAM-to-object-storage transfers via Azure REST API.
 - [INFINIA](../../fern/docs/pages/user-guide/backends/infinia.md): DDN INFINIA backend for asynchronous transfers between DRAM or VRAM and object storage.
 - [DOCA_MEMOS](../../fern/docs/pages/user-guide/backends/doca-memos.md): DOCA_MEMOS backend for key-value transfers between DRAM and an NVMe KV device on BlueField.
+- [DOCA_MEMOS Splitting PoC](../../docs/doca_memos_split_poc.md): Fixed-geometry large-value chunking format, limitations and validation plan.
 - [GUSLI](../../fern/docs/pages/user-guide/backends/gusli.md): Block-level I/O backend for transfers between block storage devices and DRAM.
 - [Metadata Exchange with etcd](../../fern/docs/pages/user-guide/etcd-metadata-exchange.md): Configure etcd-based distributed metadata exchange for NIXL agents -- key prefix scheme, watcher lifecycle, and Prometheus integration.
 - [Telemetry Guide](../../fern/docs/pages/user-guide/telemetry.md): Understanding NIXL's telemetry system -- event types, metrics, configuration, and monitoring with Prometheus.

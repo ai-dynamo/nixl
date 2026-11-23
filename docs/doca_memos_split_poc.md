@@ -88,7 +88,8 @@ Use a DOCA KV SDK compatible with this branch, plus the repository's normal buil
 dependencies (including libb2 and GoogleTest). From this worktree:
 
 ```bash
-meson setup build-poc -Denable_plugins=DOCA_MEMOS -Dwith_trace=false \
+meson setup build-poc --buildtype=debugoptimized -Dbuild_tests=true \
+  -Denable_plugins=DOCA_MEMOS -Dwith_trace=false \
   --prefix="$PWD/install-poc" --libdir=lib
 meson compile -C build-poc
 meson test -C build-poc --suite doca_memos --print-errorlogs
@@ -133,21 +134,26 @@ equality**; `--check_consistency` is unsupported for DOCA_MEMOS. Byte comparison
 covered by the mock round-trip tests above; a live byte comparison would require
 a small dedicated NIXL client or a separate benchmark verification change.
 
-Run the following fixed block sizes, with both `--enable_pt=false` and `true`:
+Read the effective `chunk_size` (C bytes) from the backend initialization log;
+automatic discovery does not guarantee 8 MiB. Choose aligned logical sizes from
+the following matrix, with both `--enable_pt=false` and `true`. Set
+`--total_buffer_size` to at least four times the logical size for batch 2
+(the smoke command above uses a 64 MiB budget for 16 MiB objects).
 
-| Logical bytes | Size | Physical chunks per object at 8 MiB |
-| ---: | ---: | ---: |
-| 1048576 | 1 MiB | 1 |
-| 8388608 | 8 MiB | 1 |
-| 16777216 | 16 MiB | 2 |
-| 20971520 | 20 MiB | 3 (8 + 8 + 4 MiB) |
-| 25165824 | 24 MiB | 3 |
+| Logical size | Physical chunks per object |
+| ---: | ---: |
+| C / 2 (aligned) | 1 |
+| C | 1 |
+| 2C | 2 |
+| 2C + C / 2 (aligned) | 3, short final chunk |
+| 3C | 3 |
 
-For batch 2, the debug preparation message should show twice the per-object
-physical task count. Also repeat 24 MiB with `--doca_memos_num_tasks=2` to
-exercise physical-task backpressure. Compare 1/8 MiB against the unchanged build
-as a smoke check for the unsplit path; these short runs are not performance
-qualification.
+For batch 2, require the debug preparation message to show twice the per-object
+physical task count. Repeat **3C**, batch 2, with `--doca_memos_num_tasks=2`:
+six physical tasks exceed the two-task pool and exercise backpressure. Ensure
+sufficient approved storage and host memory before selecting these sizes.
+Compare the two unsplit sizes against the unchanged build, using identical
+sizes and settings; these short runs are not performance qualification.
 
 Missing-child and partial-write error tests are already deterministic in the
 mock suite. Avoid deleting production keys merely to reproduce these failures.
