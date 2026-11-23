@@ -22,13 +22,8 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
 ### Installation
 
-Build from the NIXL repository root with NIXL EP enabled:
-
-```bash
-meson setup build -Dbuild_nixl_ep=true -Ducx_path=/path/to/ucx/install
-meson compile -C build
-meson install -C build
-```
+Configure Meson from the NIXL repository root with `build_nixl_ep` enabled and
+`ucx_path` pointing to the UCX installation, then compile and install the build.
 
 `nixl_cuda_arch_list` selects extension targets (for example `100` for
 B200/GB200); communication kernels are JIT-compiled for the running GPU.
@@ -36,8 +31,8 @@ The build uses fmt headers from the system or the pinned Meson fallback.
 `build_nixl_ep` enables both EP implementations and defaults to false.
 This runtime requires CUDA 13; manylinux wheel builds default EP off on CUDA 12.
 With EP disabled, its build prerequisites are not required. The wheel builder
-accepts `--build-nixl-ep --torch-versions 2.14` and merges the extensions produced
-for each Torch version. The container builder enables EP by default on CUDA 13.
+enables EP through `--build-nixl-ep`; `--torch-versions` selects the Torch versions
+whose extensions are merged. The container builder enables EP by default on CUDA 13.
 
 The public import is `nixl.runtime.ep`, routed through the selected NIXL CUDA
 backend wheel. For a Meson installation, put its Python site-packages and
@@ -47,7 +42,7 @@ NIXL/UCX device headers. Explicit header overrides remain available through
 `NIXL_EP_NIXL_ROOT_DIR` and `NIXL_EP_UCX_ROOT_DIR` and must match the loaded libraries.
 
 Runtime settings use `NIXL_EP_*`; compiler macros retain `EP_*`. Set
-`NIXL_EP_NUM_TOPK_IDX_BITS=32` or `64` when building to choose the routing-index
+`NIXL_EP_NUM_TOPK_IDX_BITS` to 32 or 64 when building to choose the routing-index
 width. The JIT uses the extension's compiled width; this setting has no
 effect at runtime.
 
@@ -64,45 +59,23 @@ UCX transport channels per peer default to 64. For tuning, set
 BF16 combine requires `hidden` divisible by 256, including pairs that use
 FP8 or NVFP4 dispatch.
 
-With NIXL's metadata backend configured as described below, a process group `group`
-containing two NVLink domains of eight GPUs,
-a shared `torch.distributed.Store` named `store`, and CUDA tensors `x` (BF16,
-`[tokens, hidden]`), `topk_idx` (`nixl.runtime.ep.topk_idx_t`, `[tokens, topk]`) and
-optional `topk_weights` (float32, the same shape):
+Configure NIXL's metadata backend as described below. Construct an `ElasticBuffer`
+per GPU with its stable world rank, maximum topology dimensions, workload capacities
+and a shared `torch.distributed.Store`. Connect peers with `connect_ranks`, then
+activate membership with `set_active_ranks`.
 
-```python
-from nixl.runtime.ep import ElasticBuffer
-
-domains, positions = 2, 8
-world_rank = group.rank()
-world = list(range(group.size()))
-buffer = ElasticBuffer(
-    world_rank=world_rank,
-    max_num_scaleout_ranks=domains,
-    max_num_scaleup_ranks=positions,
-    store=store,
-    num_max_tokens_per_rank=4096,
-    hidden=7168,
-    num_topk=8,
-    num_experts_per_rank=8,  # Fixed physical routing slots per GPU.
-    explicitly_destroy=True,
-)
-buffer.connect_ranks([rank for rank in world if rank != world_rank])
-buffer.set_active_ranks(world)
-recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
-    x, topk_idx, topk_weights=topk_weights,
-)
-# Replace recv_x with the local experts' BF16 output before combining.
-combined_x, _ = buffer.combine(recv_x, handle)
-buffer.destroy()
-```
+Pass `dispatch` BF16 token rows shaped `[tokens, hidden]`, routing indices of type
+`nixl.runtime.ep.topk_idx_t` shaped `[tokens, topk]`, and optional float32 routing
+weights of the same shape. Run local experts on the received rows, then pass their
+BF16 output and the dispatch handle to `combine`. When using explicit destruction,
+call `destroy` collectively when the buffer is no longer needed.
 
 Construction does not use the Python Store or wait for peers. Peer connection exchanges
 metadata; activation selects the participating ranks. Communication and
 destruction are collective over the committed active world.
-When using `async_with_compute_stream=True`, wait on the returned event
+When `async_with_compute_stream` is enabled, wait on the returned event
 before consuming the result. Deterministic sorting is supported only in eager
-execution. Use `do_cpu_sync=False` for graph capture;
+execution. Disable `do_cpu_sync` for graph capture;
 receive tensors then have maximum capacity, with actual counts in the
 handle. See the `ElasticBuffer` method docstrings for expanded layouts and
 FP8 scale-factor inputs.
@@ -157,7 +130,7 @@ connections may run while the committed graph replays. Activation and peer
 retirement run outside graph capture. Use one CUDA device per process. Serialize control operations
 on each buffer and select that device in any background setup thread. Before
 activation or peer retirement, every old-world rank must finish
-queued CUDA work, call `buffer.barrier(with_cpu_sync=True)` to drain the
+queued CUDA work, call `barrier` with `with_cpu_sync` enabled to drain the
 transport, and complete a host rendezvous before any peer departs. Joining
 ranks construct their buffers independently, then call `connect_ranks` with
 their peers' stable world IDs. Mid-launch rank failure and transport recovery
@@ -179,9 +152,9 @@ may receive new internal coordinates on reconnection. Prepared mappings become
 live only on activation.
 
 NIXL's metadata manager publishes and fetches transport metadata. Configure its
-backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT=host:port`
-on every rank to a running TCPStore server. This can be the server backing the
-Python Store and must remain available through buffer destruction.
+backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT`
+on every rank to the server's host and port separated by a colon. This can be the
+server backing the Python Store and must remain available through buffer destruction.
 Native publication, fetch and readiness checks release the GIL, allowing another Python thread to replay the
 active graph. Publications remain available to future joiners until buffer
 destruction. The manager starts its backend connection asynchronously during
@@ -206,7 +179,7 @@ it instead of attempting recovery.
 - Required positive constructor argument `num_experts_per_rank` fixes physical routing slots
   per GPU. `num_experts` is removed from `dispatch`,
   `EPHandle`, and native dispatch/combine; slot
-  IDs span the declared maximum world. The cached `dispatch(handle=...)` path is
+  IDs span the declared maximum world. The cached `dispatch` path accepting a `handle` is
   removed, along with `allow_hybrid_mode`, the buffer's `group` and alignment
   exports.
 - Constructor `num_bytes` is removed. Allocation is calculated from the workload
@@ -223,13 +196,13 @@ it instead of attempting recovery.
 - Dispatch and combine have no `num_sms` argument. Constructor `num_launch_sms`
   fixes the block count for the buffer's lifetime. There is no separate active
   SM count or automatic estimator. Communicator, QP and service-level arguments are removed.
-- Constructor and size-hint `use_fp8_dispatch=True` reserve smaller FP8
+- Enabling constructor and size-hint `use_fp8_dispatch` reserves smaller FP8
   dispatch capacity; peers must use matching capacity settings. These buffers
   accept FP8/NVFP4 and reject BF16 dispatch. Default BF16-capacity buffers
   accept all three wire formats, selected by dispatch input tensors.
 - Active and connected world-rank queries replace static domain
   attributes/accessors; topology helpers are internal. `get_physical_domain_size` and the
-  `barrier(sequential=)` argument are removed.
+  `sequential` argument of `barrier` are removed.
 - `get_theoretical_num_sms` is removed. `EPHandle.deterministic_sort` uses the
   handle's channel list instead of accepting a separate one. The constant-true private
   `_C.is_sm90_compiled` query is removed.
@@ -247,7 +220,7 @@ BF16 and requires the logical hidden size divisible by 256; use this stricter
 alignment for a complete dispatch/combine pair.
 
 No new constructor flag is needed: either existing capacity setting fits
-NVFP4, and `use_fp8_dispatch=True` reserves the smaller one. Dispatch does
+NVFP4, and enabling `use_fp8_dispatch` reserves the smaller one. Dispatch does
 not quantize, apply scales, or transmit a global scale. The caller must
 supply the consuming GEMM's global scale and any required scale swizzle;
 using one shared GEMM scale requires inputs quantized with that same scale.
@@ -273,18 +246,15 @@ Run `tests/elastic/test_elastic_ep.py` from `runtime/ep` after installing the
 package. Launch one invocation per node with node-level `WORLD_SIZE` and `RANK`;
 `--num-processes` selects the GPUs per node. Run with `--help` for workload,
 format and timing options. The test requires the metadata backend configuration
-above. Set its TCPStore endpoint before launching:
-
-```bash
-export NIXL_TCPSTORE_ENDPOINT="${MASTER_ADDR:-127.0.0.1}:${MASTER_PORT:-8361}"
-```
+above. Before launching, set `NIXL_TCPSTORE_ENDPOINT` to the host and port selected
+by `MASTER_ADDR` and `MASTER_PORT`, which default to loopback and port 8361.
 
 `tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
-enable call, kernel and transition timing; `--save-output PATH` saves
+enable call, kernel and transition timing; `--save-output` selects a path for saving
 per-rank results. Payload byte counts exclude transport overhead and are
-not per-NIC bandwidth measurements. `--dtype {bf16,fp8,nvfp4}` selects the
-dispatch format for checked and timed pairs, with matching buffer capacity.
+not per-NIC bandwidth measurements. `--dtype` selects BF16, FP8 or NVFP4
+dispatch for checked and timed pairs, with matching buffer capacity.
 Payload values and scales are checked byte for byte; combine stays BF16.
 
 Each phase checks eager execution and retained CUDA graphs with both original
@@ -301,7 +271,7 @@ them nor treats rejection as a passing result.
 
 ## Phase profiling
 
-Set `NIXL_EP_ADAPTIVE_PROFILE=1` before importing NIXL EP to record diagnostic
+Set `NIXL_EP_ADAPTIVE_PROFILE` to 1 before importing NIXL EP to record diagnostic
 timestamps. Dispatch and combine keep their existing arguments. Profiling
 adds one buffer-owned timestamp table and a descriptor after the workspace
 controls; existing control offsets and kernel signatures are unchanged.
@@ -315,11 +285,8 @@ warm-up samples with one read, then read after each isolated pair or graph
 replay. The method cannot run inside graph capture. Resetting between
 replays also removes samples from blocks or roles that become inactive.
 
-For eager and graph-replay profiles with the elastic test's correctness checks:
-
-```bash
-NIXL_EP_ADAPTIVE_PROFILE=1 python tests/elastic/test_elastic_ep.py --profile --num-tokens 16
-```
+Enable `--profile` in the elastic test to print diagnostic timestamps alongside
+the eager and graph-replay correctness checks.
 
 `PROFILE` reports the first and last observed phase boundaries relative to
 the earliest entry of that operation, in microseconds, plus the number of
