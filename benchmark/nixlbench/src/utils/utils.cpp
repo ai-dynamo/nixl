@@ -509,8 +509,10 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
-    if (!proxy && std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
-        return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
+    if (!proxy &&
+        (std::getenv("NIXL_UCX_RC_GDA_NUM_CHANNELS") != nullptr ||
+         std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr)) {
+        return reject("NIXL_UCX_RC_GDA_NUM_CHANNELS and UCX_RC_GDA_NUM_CHANNELS must not be set; "
                       "use --device_channel_num to configure Device API channels");
     }
     return true;
