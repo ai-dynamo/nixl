@@ -49,7 +49,8 @@ def bench(
     Arguments:
         fn: the function to benchmark.
         num_warmups: the number of warmup iterations.
-        num_tests: the number of measurement iterations.
+        num_tests: positive number of measurement iterations. Discard the first
+            measurement when more than one is collected.
         post_fn: an optional function to call after each test iteration.
         flush_l2: whether to flush the L2 cache before each iteration.
         barrier: optional rank barrier after cache flushing and before the timed interval.
@@ -59,6 +60,8 @@ def bench(
         min: the minimum execution time in seconds.
         max: the maximum execution time in seconds.
     """
+    if num_tests <= 0:
+        raise ValueError("num_tests must be positive")
     torch.cuda.synchronize()
 
     # Warmup
@@ -79,7 +82,9 @@ def bench(
 
     times = np.array(
         [s.elapsed_time(e) / 1e3 for s, e in zip(start_events, end_events)]
-    )[1:]
+    )
+    if num_tests > 1:
+        times = times[1:]
     return np.average(times), np.min(times), np.max(times)
 
 
