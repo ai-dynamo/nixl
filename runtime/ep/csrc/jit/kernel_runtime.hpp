@@ -10,6 +10,7 @@
 #include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/format.hpp"
+#include "../utils/system.hpp"
 #include "handle.hpp"
 
 namespace nixl_ep_v2::jit {
