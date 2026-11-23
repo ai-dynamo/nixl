@@ -48,8 +48,7 @@ nixlNotifRegistration::reset() noexcept {
     }
 }
 
-nixlNotifRegistration::
-operator bool() const noexcept {
+nixlNotifRegistration::operator bool() const noexcept {
     if (id_ == 0) {
         return false;
     }
