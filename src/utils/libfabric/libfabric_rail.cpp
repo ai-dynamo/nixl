@@ -1389,6 +1389,19 @@ nixlLibfabricRail::drainPostQueue() {
     nixlLibfabricPostRequest pr;
     int posted = 0;
 #if HAVE_CUDA
+    // Applying the engine's CUDA context takes the engine's context lock, so apply it at the
+    // first CUDA post of the drain and reuse its status and workaround flag for the next CUDA
+    // posts. Between CQ polls only cudaSetDevice() below changes this thread's context, and only
+    // with the workaround off. The workaround covers the VRAM of one device and is only ever
+    // turned off: a post for another device means a registration has turned it off since the
+    // context was applied, so apply it again when the device changes. A CQ read can run provider
+    // code, such as CUDA IPC copies for a same-host peer, that may change the context or the
+    // device, so after each pollForCompletions() below the next CUDA post applies the context and
+    // sets the device again. A post that hit -FI_EAGAIN is not such a next post: it is retried
+    // right after its poll.
+    bool cuda_ctx_applied = false;
+    int cuda_ctx_device = -1;
+    nixl_status_t cuda_ctx_status = NIXL_SUCCESS;
     bool use_cuda_addr_wa = false;
     int current_cuda_device = -1;
 #endif
@@ -1405,13 +1418,17 @@ nixlLibfabricRail::drainPostQueue() {
             // NOTE: for now we do not call engine to try to set context in work-around mode - this
             // is postponsed to another PR, which requires substantial refactoring - instead we
             // directly call cudaSetDevice() when needed
-            use_cuda_addr_wa = false;
-            nixl_status_t status = LibfabricUtils::cudaSetCtx(use_cuda_addr_wa);
-            if (status != NIXL_SUCCESS) {
+            if (!cuda_ctx_applied || pr.device_id != cuda_ctx_device) {
+                use_cuda_addr_wa = false;
+                cuda_ctx_status = LibfabricUtils::cudaSetCtx(use_cuda_addr_wa);
+                cuda_ctx_applied = true;
+                cuda_ctx_device = pr.device_id;
+            }
+            if (cuda_ctx_status != NIXL_SUCCESS) {
                 // completion is notified also for failed requests
                 // (otherwise counters would never match)
                 if (pr.req && pr.req->completion_callback) {
-                    pr.req->completion_callback(status);
+                    pr.req->completion_callback(cuda_ctx_status);
                 }
                 if (pr.req) {
                     releaseRequest(pr.req);
@@ -1496,6 +1513,10 @@ nixlLibfabricRail::drainPostQueue() {
 
             if (ret == -FI_EAGAIN) {
                 pollForCompletions();
+#if HAVE_CUDA
+                cuda_ctx_applied = false;
+                current_cuda_device = -1;
+#endif
             }
         }
 
@@ -1515,6 +1536,10 @@ nixlLibfabricRail::drainPostQueue() {
         posted++;
         if (posted % POST_POLL_INTERLEAVE_RATIO == 0) {
             pollForCompletions();
+#if HAVE_CUDA
+            cuda_ctx_applied = false;
+            current_cuda_device = -1;
+#endif
         }
     }
 
