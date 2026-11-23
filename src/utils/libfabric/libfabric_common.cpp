@@ -170,9 +170,8 @@ getNumConfiguredNumaNodes(int &node_count) {
     return true;
 }
 
-// Thread-safe atomic counters for optimized ID generation
+// Thread-safe atomic counter for optimized ID generation
 static std::atomic<uint16_t> g_xfer_id_counter{1}; // 16-bit XFER_ID counter, start from 1
-static std::atomic<uint8_t> g_seq_id_counter{0}; // 4-bit SEQ_ID counter, start from 0
 
 uint16_t
 getNextXferId() {
@@ -198,30 +197,10 @@ getNextXferId() {
 
 uint8_t
 getNextSeqId() {
-    uint8_t seq_id = g_seq_id_counter.fetch_add(1);
-
-    // Handle wraparound: 4-bit field can hold 0 to 15
-    if (seq_id > NIXL_SEQ_ID_MASK) {
-        // Reset counter atomically and get a fresh ID
-        uint8_t expected = seq_id;
-        while (expected > NIXL_SEQ_ID_MASK &&
-               !g_seq_id_counter.compare_exchange_weak(expected, 0)) {
-            expected = g_seq_id_counter.load();
-        }
-        seq_id = g_seq_id_counter.fetch_add(1);
-        // Ensure we don't exceed the mask after reset
-        if (seq_id > NIXL_SEQ_ID_MASK) {
-            seq_id = 0;
-        }
-    }
-
-    return seq_id;
-}
-
-void
-resetSeqId() {
-    // Reset SEQ_ID counter for new postXfer
-    g_seq_id_counter.store(0);
+    // The receiver never decodes SEQ_ID, so it needs no process-wide order or uniqueness.
+    // A per-thread counter keeps the 0-15 range without a shared atomic on every write.
+    static thread_local uint8_t seq_id_counter = 0;
+    return static_cast<uint8_t>(seq_id_counter++ & NIXL_SEQ_ID_MASK);
 }
 
 nixl_status_t

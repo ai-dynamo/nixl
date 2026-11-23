@@ -303,12 +303,9 @@ namespace LibfabricUtils {
 // Get next unique XFER_ID
 uint16_t
 getNextXferId();
-// Get next 4-bit SEQ_ID
+// Get next 4-bit SEQ_ID, counted per thread
 uint8_t
 getNextSeqId();
-// Reset SEQ_ID counter for new postXfer
-void
-resetSeqId();
 } // namespace LibfabricUtils
 
 // Utility functions
