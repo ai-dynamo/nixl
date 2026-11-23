@@ -64,7 +64,9 @@ parseConnectionString(const std::string &conn_str,
 }
 
 nixlUcclEngine::nixlUcclEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                            nixl_backend_capability_t::NOTIF),
       stop_listener_(false) {
 
     local_agent_name_ = init_params->localAgent;

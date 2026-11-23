@@ -45,7 +45,8 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 ## Features
 
 - **Multiple Communication Backends**: UCX, GPUNETIO, Mooncake, Libfabric for network communication
-- **Storage Backend Support**: GDS, GDS_MT, POSIX, HF3FS, OBJ (S3), AZURE_BLOB, GUSLI, INFINIA for storage operations
+- **Storage Backend Support**: GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ (S3), AZURE_BLOB,
+  GUSLI, INFINIA for storage operations
 - **Flexible Communication Patterns**:
   - **Pairwise**: Point-to-point communication between pairs
   - **Many-to-one**: Multiple initiators to single target
@@ -79,7 +80,10 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
 - **Operating System**: Ubuntu 22.04/24.04 LTS (recommended) or RHEL-based
 - **Docker**: Version 20.10+ (for container builds)
 - **Git**: For source code management
-- **CUDA Toolkit**: 12.8+ (for GPU features)
+- **CUDA Toolkit**: 13.x (for GPU features)
+- **ROCm / HIP** (optional): when CUDA is absent, Meson can build VRAM paths
+  with HIP. A single build can target one GPU stack. See
+  [Building NIXL and NIXLBench with ROCm](#building-nixl-and-nixlbench-with-rocm).
 - **Python**: 3.12+ (for benchmark utilities)
 
 ## Quick Start
@@ -181,7 +185,7 @@ cd nixl/benchmark/nixlbench/contrib
 | `--ucx <path>` | Path to custom UCX source (optional) | Uses base image UCX |
 | `--build-type <type>` | Build type: `debug` or `release` | `release` |
 | `--base-image <image>` | Base Docker image | `nvcr.io/nvidia/cuda-dl-base` |
-| `--base-image-tag <tag>` | Base image tag | `25.06-cuda12.9-devel-ubuntu24.04` |
+| `--base-image-tag <tag>` | Base image tag | `26.08-cuda13.4-devel-ubuntu24.04` |
 | `--arch <arch>` | Target architecture: `x86_64` or `aarch64` | Auto-detected |
 | `--python-versions <versions>` | Python versions (comma-separated) | `3.12` |
 | `--tag <tag>` | Custom Docker image tag | Auto-generated |
@@ -196,7 +200,7 @@ For development environments or when Docker is not available.
 **Required:**
 - **NIXL**: Core communication library
 - **UCX**: Unified Communication X library
-- **CUDA**: NVIDIA CUDA Toolkit (≥12.8)
+- **CUDA**: NVIDIA CUDA Toolkit 13.x
 - **CMake**: Build system (≥3.20)
 - **Meson**: Build system for NIXL/NIXLBench
 - **Ninja**: Build backend
@@ -245,9 +249,8 @@ sudo apt-get reinstall -y --no-install-recommends \
 
 #### CUDA Toolkit Installation
 ```bash
-# Download and install CUDA 12.8
-wget https://developer.download.nvidia.com/compute/cuda/12.8.0/local_installers/cuda_12.8.0_550.54.15_linux.run
-sudo sh cuda_12.8.0_550.54.15_linux.run
+# Install the CUDA toolkit
+# Follow https://developer.nvidia.com/cuda-downloads for your distribution
 
 # Set environment variables
 export PATH=/usr/local/cuda/bin:$PATH
@@ -387,6 +390,29 @@ export PATH=/usr/local/nixlbench/bin:/usr/local/nixl/bin:$PATH
 export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 ```
 
+#### Building NIXL and NIXLBench with ROCm
+
+ROCm is never detected automatically. Pass `-Drocm_path=<prefix>` (the ROCm
+install root, e.g. `/opt/rocm`) to both the NIXL and NIXLBench configures:
+
+```bash
+# NIXL (builds the AIS plugin when hipFile is found under rocm_path)
+uv run meson setup build --prefix=/usr/local/nixl --buildtype=release \
+  -Drocm_path=/opt/rocm
+
+# NIXLBench
+uv run meson setup build -Dnixl_path=/usr/local/nixl/ --buildtype=release \
+  -Drocm_path=/opt/rocm -Dnixlbench_gpu=rocm
+```
+
+A single NIXLBench build targets one GPU stack, selected by `nixlbench_gpu`:
+- `auto` (default): CUDA when present, otherwise ROCm. Without `rocm_path`, an
+  AMD-only machine silently gets a CPU-only (DRAM) build.
+- `cuda` / `rocm`: force that stack; configure fails if it is not found.
+
+To build for both stacks on one machine, run two Meson configures in separate
+build directories.
+
 #### Available Meson Build Options
 - `nixl_path`: Path to NIXL installation (default: /usr/local)
 - `cudapath_inc`: Include path for CUDA
@@ -396,6 +422,9 @@ export LD_LIBRARY_PATH=/usr/local/nixlbench/lib:$LD_LIBRARY_PATH
 - `etcd_lib_path`: Path to ETCD C++ client library
 - `nvshmem_inc_path`: Path to NVSHMEM include directory
 - `nvshmem_lib_path`: Path to NVSHMEM library directory
+- `rocm_path`: Path to ROCm installation; required for any ROCm build (default: empty, ROCm not used)
+- `nixlbench_gpu`: GPU stack to build against: `auto`, `cuda`, or `rocm` (default: auto)
+- `use_rocm`: Deprecated alias for `nixlbench_gpu=rocm`; an empty `rocm_path` then defaults to `/opt/rocm` (default: false)
 - `build_raw_cli`: Build the experimental CLI11-based raw command path (default: false)
 - `build_tests`: Build NIXLBench tests for non-release builds (default: true)
 - `buildtype`: Build type: `debug`, `release`, `debugoptimized` (default: release)
@@ -555,7 +584,7 @@ wait
 --config_file PATH         # Configuration file (default: NONE)
 --runtime_type NAME        # Type of runtime to use [ETCD, ASIO] (default: ETCD)
 --worker_type NAME         # Worker to use to transfer data [nixl, nvshmem] (default: nixl)
---backend NAME             # Communication backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
+--backend NAME             # Communication backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, AZURE_BLOB, GUSLI, INFINIA] (default: UCX)
 --benchmark_group NAME     # Name of benchmark group for parallel runs (default: default)
 ```
 
@@ -609,7 +638,7 @@ devices can differ between the initiator and target processes.
 --etcd_endpoints URL       # ETCD server URL when using --runtime_type ETCD
 ```
 
-#### Storage Backend Options (GDS, GDS_MT, POSIX, HF3FS, OBJ, AZURE_BLOB)
+#### Storage Backend Options (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, AZURE_BLOB)
 ```
 --filepath DIR             # Existing directory where the benchmark files are created (default: current directory)
 --num_files NUM            # Number of files used by benchmark (default: 1)
@@ -630,10 +659,15 @@ devices can differ between the initiator and target processes.
 --gds_batch_limit NUM      # Batch limit for GDS operations (default: 128)
 ```
 
-**GDS_MT Backend:**
+**GDS_MT / AIS `mt` mode (multi-threaded file backends):**
 ```
---gds_mt_num_threads NUM   # Number of threads used by GDS MT plugin (default: 1)
+--gds_mt_num_threads NUM   # Taskflow worker threads for GDS_MT and AIS (default: 1)
 ```
+
+Both plugins use a `thread_count` init parameter; nixlbench forwards your CLI
+`--gds_mt_num_threads` flag unchanged. Paths start at `src/plugins/cuda_gds/`,
+`src/plugins/rocm_ais/`, `src/utils/file/` (shared file helpers).
+
 
 **POSIX Backend:**
 ```
@@ -744,7 +778,7 @@ NIXLBench can also use an ETCD key-value store for coordination between benchmar
 **ETCD Requirements:**
 - **Optional**: Two-instance UCX, GPUNETIO, Mooncake, and Libfabric runs can use `--runtime_type ASIO` instead.
 - **Required**: Network backends when using `--runtime_type ETCD`.
-- **Optional**: Storage backends (GDS, GDS_MT, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
+- **Optional**: Storage backends (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, GUSLI) running as single instances.
 - **Required**: Storage backends when ETCD coordination is explicitly requested with `--etcd_endpoints`.
 
 For non-storage backends using `--runtime_type ETCD`, NIXLBench defaults to `http://localhost:2379` when `--etcd_endpoints` is not provided. In that case, an ETCD server must be running on `localhost:2379`; otherwise, provide `--etcd_endpoints` explicitly to point to a custom ETCD server.
@@ -815,7 +849,7 @@ The workers automatically coordinate ranks through ETCD as they connect. Note, t
   --backend UCX --device_list <ucx-device>
 ```
 
-For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `UCX_NET_DEVICES` to constrain NIC selection.
+For pairwise UCX runs, `--device_list` must match the configured initiator and target device counts. For UCX multi-rail experiments, keep `--device_list all` and use UCX environment variables such as `NIXL_UCX_NET_DEVICES` to constrain NIC selection. NIXL reads `NIXL_UCX_<X>` before falling back to `UCX_<X>`; the prefixed form does not affect other UCX users in the same process, such as MPI.
 
 **GPUNETIO Backend:**
 
@@ -866,6 +900,17 @@ counters when measuring a distributed deployment; random keys alone do not verif
 # Multi-threaded GDS (no ETCD needed for single instance)
 ./nixlbench --backend GDS_MT --filepath /mnt/storage/testdir --gds_mt_num_threads 8
 ```
+
+**AIS (AMD Infinity Storage, multi-threaded `mt` mode):**
+```bash
+# Requires NIXL built with AIS; --filepath is a directory prefix (test files
+# are created under it). Use a hipFile-capable path (see plugin docs).
+./nixlbench --backend AIS --filepath /mnt/storage/ais-dir --initiator_seg_type VRAM --gds_mt_num_threads 8
+```
+
+For a containerized AMD GPU + NVMe directory + `ais-stats` workflow, see
+[`contrib/run-ais-amd-gpu-test.sh`](contrib/run-ais-amd-gpu-test.sh) and
+[`docs/rocm-ci.md`](../../docs/rocm-ci.md) (AIS on AMD GPU section).
 
 **POSIX Backend:**
 ```bash
@@ -1204,9 +1249,11 @@ ip link show  # For Ethernet devices
 # Test UCX
 ucx_info -d  # List UCX devices
 
-export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging
+export UCX_LOG_LEVEL=DEBUG # Verbose UCX logging (process-wide, no NIXL_UCX_ form)
 
-export UCX_PROTO_INFO=y # See transport used by UCX
+export NIXL_UCX_PROTO_INFO=y # See transport used by UCX
+
+export NIXL_UCX_TLS=rc,cuda_copy # Restrict NIXL's UCX transports without affecting MPI/UCC
 ```
 
 #### ETCD Cleanup
