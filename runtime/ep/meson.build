@@ -36,7 +36,7 @@ if torch_check.returncode() != 0
     error('PyTorch not found for requested NIXL EP runtime build')
 endif
 
-if is_variable('abseil_proj')
+if absl_strings_dep.type_name() == 'internal'
     absl_str_format_dep = absl_strings_dep
 else
     absl_str_format_dep = dependency('absl_str_format',
