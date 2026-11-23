@@ -1,6 +1,6 @@
-From 3255b0c8559678c981a81170c6ba8f66d450902c Mon Sep 17 00:00:00 2001
-From: Alexander Grissik <agrissik@login-preos01.a51.clusters.nvidia.com>
-Date: Thu, 19 Nov 2026 01:15:11 -0800
+From 535ea491c5ea706d44a6cbadbfdec2e256314205 Mon Sep 17 00:00:00 2001
+From: Alexander Grissik <agrissik@nvidia.com>
+Date: Mon, 23 Nov 2026 08:11:05 +0000
 Subject: [PATCH] UCT/GDA: Support GPU polling of RDMA writes with immediate
 
 Apply to openucx/ucx at 74b413ab19d63c277ffa3fb553ed83e42bc50f6f
@@ -602,7 +602,7 @@ index f34ce4fab9186d8224e11bf9f7604202c0a558de..e97dd691c8ce8acf3f125a653641905a
  out_ctx:
      (void)UCT_CUDADRV_FUNC_LOG_WARN(cuCtxPopCurrent(NULL));
 diff --git a/src/uct/ib/mlx5/gdaki/gdaki.cuh b/src/uct/ib/mlx5/gdaki/gdaki.cuh
-index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8ff1e6d99 100644
+index ebe3b438131189f8cf1aaf4d996839c716aa3e95..f313775d0741d7a538a34101993c025d00abb911 100644
 --- a/src/uct/ib/mlx5/gdaki/gdaki.cuh
 +++ b/src/uct/ib/mlx5/gdaki/gdaki.cuh
 @@ -51,8 +51,8 @@ UCS_F_DEVICE void *uct_rc_mlx5_gda_get_wqe_ptr(uct_rc_gdaki_dev_ep_t *ep,
@@ -651,7 +651,7 @@ index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8
      }
  
      uct_dev_sync<level>();
-@@ -296,7 +297,91 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_put(
+@@ -296,7 +297,92 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_put(
                                              local_mem_elem->lkey,
                                              remote_address, mem_elem->rkey,
                                              length, cid, flags, comp,
@@ -672,6 +672,9 @@ index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8
 +    auto local_mem_elem =
 +            reinterpret_cast<const uct_ib_md_device_mem_element_t*>(
 +                    src_uct_elem);
++    if (channel_id > ep->channel_mask) {
++        return UCS_ERR_INVALID_PARAM;
++    }
 +    auto cid = channel_id & ep->channel_mask;
 +
 +    return uct_rc_mlx5_gda_ep_single<level>(ep, tl_mem_elem, address,
@@ -693,13 +696,11 @@ index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8
 +    auto qp = uct_rc_mlx5_gda_get_qp(ep, cid);
 +    const uint64_t ci = *consumer_index;
 +    auto cqe = reinterpret_cast<mlx5_cqe64*>(qp->rx_cq_daddr) + (ci & (ep->rq_wqe_num - 1));
-+    uint16_t opown_raw;
-+    asm volatile("ld.acquire.sys.global.L1::no_allocate.b8 %0, [%1];"
-+                 : "=h"(opown_raw) : "l"(&cqe->op_own) : "memory");
-+    const uint8_t opown = static_cast<uint8_t>(opown_raw);
++    const uint8_t opown = doca_gpu_dev_verbs_load_relaxed_sys_global(&cqe->op_own);
 +    if ((opown & 1) != !!(ci & ep->rq_wqe_num)) {
 +        return UCS_INPROGRESS;
 +    }
++    asm volatile("fence.acquire.sys;" ::: "memory");
 +
 +    const unsigned opcode = opown >> 4;
 +    const uint16_t wqe_counter = doca_gpu_dev_verbs_bswap32(
@@ -744,7 +745,7 @@ index ebe3b438131189f8cf1aaf4d996839c716aa3e95..3d8ebcf639c158b611e8d2cce0b821c8
  }
  
  template<ucs_device_level_t level>
-@@ -314,7 +399,7 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_atomic_add(
+@@ -314,7 +400,7 @@ UCS_F_DEVICE ucs_status_t uct_rc_mlx5_gda_ep_atomic_add(
                                              ep->atomic_lkey, remote_address,
                                              mem_elem->rkey, sizeof(uint64_t),
                                              cid, flags, comp,
