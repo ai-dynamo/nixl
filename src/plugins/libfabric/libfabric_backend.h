@@ -239,7 +239,10 @@ private:
     std::mutex notif_mutex_;
     notif_list_t notifMainList_;
 
-    // Receiver Side XFER_ID Tracking
+    // Receiver Side XFER_ID Tracking. Guards pending_notifications_.
+    // Lock order: receiver_tracking_mutex_, then notif_mutex_. A ready notification is moved to
+    // notifMainList_ under both, in the same section that erases its pending entry. Never take
+    // receiver_tracking_mutex_ while holding notif_mutex_.
     std::mutex receiver_tracking_mutex_;
 
     // Notification Queuing
@@ -276,6 +279,26 @@ private:
     }
 
     std::unordered_map<uint64_t, PendingNotification> pending_notifications_;
+
+    /**
+     * @brief Release one pending notification if it is now ready
+     *
+     * The caller holds receiver_tracking_mutex_ and has just updated the entry at @p it.
+     * If the entry has all its message fragments and all its expected write completions,
+     * moves it to the main notification list and erases it. Otherwise returns at once,
+     * which is the common case for an incoming write.
+     *
+     * Every caller has just updated exactly that one entry, and an entry's
+     * readiness depends only on its own counters, so no other entry can have
+     * become ready. Checking only that entry keeps each completion O(1); scanning the
+     * whole map made every completion O(entries), and entries for writes posted
+     * without a notification are never released, so that cost grew without bound
+     * on a long-lived receiver.
+     *
+     * @param[in] it The entry the caller just updated; erased if it was ready
+     */
+    void
+    checkPendingNotificationLocked(std::unordered_map<uint64_t, PendingNotification>::iterator it);
 
     // Agents whose handshake arrived before the local createAgentConnection had registered
     // them in connections_. Drained inside createAgentConnection.
@@ -674,7 +697,9 @@ public:
     /**
      * @brief Add received XFER_ID with counter-based matching
      *
-     * Thread-safe method to track received data transfers.
+     * Thread-safe method to track received data transfers. Counts the write and, if it
+     * was the last one a received notification waited for, releases that notification,
+     * under a single hold of receiver_tracking_mutex_.
      *
      * @param[in] xfer_id 16-bit transfer ID that was received
      * @param[in] sender_peer_idx The SENDER's index in our agent_names_ table, resolved
@@ -683,25 +708,6 @@ public:
      */
     void
     addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_idx);
-
-    // Notification Queuing Helper Methods
-    /**
-     * @brief Release one pending notification if it is now ready
-     *
-     * If the entry for @p key has all its message fragments and all its expected
-     * write completions, moves it to the main notification list and erases it.
-     *
-     * Every caller has just updated exactly that one entry, and an entry's
-     * readiness depends only on its own counters, so no other entry can have
-     * become ready. Checking only @p key keeps each completion O(1); scanning the
-     * whole map made every completion O(entries), and entries for writes posted
-     * without a notification are never released, so that cost grew without bound
-     * on a long-lived receiver.
-     *
-     * @param[in] key makePendingKey(sender_peer_idx, notif_xfer_id) of the entry
-     */
-    void
-    checkPendingNotification(uint64_t key);
 };
 
 #endif

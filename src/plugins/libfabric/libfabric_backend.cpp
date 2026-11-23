@@ -2206,10 +2206,10 @@ nixlLibfabricEngine::processNotification(const std::string &serialized_notif,
                    << " received_msg_fragments=" << it->second.received_msg_fragments
                    << " expected_completions=" << it->second.expected_completions
                    << " received_completions=" << it->second.received_completions;
-    }
 
-    // Check whether this notification can now be completed (after releasing the lock)
-    checkPendingNotification(key);
+        // Release the notification if this fragment completed it
+        checkPendingNotificationLocked(it);
+    }
 }
 
 void
@@ -2238,10 +2238,10 @@ nixlLibfabricEngine::handleXferError(uint16_t notif_xfer_id,
                    << " expected_completions=" << it->second.expected_completions
                    << (inserted ? " (error arrived before the notification)" : "")
                    << "; data for this transfer is incomplete";
-    }
 
-    // Check whether this notification can now be completed
-    checkPendingNotification(key);
+        // Release the notification if every write that went out has arrived
+        checkPendingNotificationLocked(it);
+    }
 }
 
 /****************************************
@@ -2271,10 +2271,11 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
         NIXL_DEBUG << "Incremented received count for sender_peer_idx=" << sender_peer_idx
                    << " notif_xfer_id=" << xfer_id << ": " << it->second.received_completions << "/"
                    << it->second.expected_completions;
-    }
 
-    // Check whether this notification can now be completed (after releasing the lock)
-    checkPendingNotification(key);
+        // Release the notification if this was its last write, in the same section that
+        // counted it. For most writes the entry is not ready and this returns at once.
+        checkPendingNotificationLocked(it);
+    }
 }
 
 /****************************************
@@ -2282,64 +2283,62 @@ nixlLibfabricEngine::addReceivedXferId(uint16_t xfer_id, uint32_t sender_peer_id
  *****************************************/
 
 void
-nixlLibfabricEngine::checkPendingNotification(uint64_t key) {
-    std::lock_guard<std::mutex> lock(receiver_tracking_mutex_);
-    auto it = pending_notifications_.find(key);
-    if (it != pending_notifications_.end()) {
-        // Check BOTH conditions: fragments complete AND writes complete
-        bool fragments_complete =
-            (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
-        bool writes_complete = (it->second.received_completions >= it->second.expected_completions);
+nixlLibfabricEngine::checkPendingNotificationLocked(
+    std::unordered_map<uint64_t, PendingNotification>::iterator it) {
+    // Check BOTH conditions: fragments complete AND writes complete
+    bool fragments_complete =
+        (it->second.received_msg_fragments >= it->second.expected_msg_fragments);
+    bool writes_complete = (it->second.received_completions >= it->second.expected_completions);
 
-        if (fragments_complete && writes_complete) {
-            NIXL_TRACE << "Notification complete: fragments=" << it->second.received_msg_fragments
-                       << "/" << it->second.expected_msg_fragments
-                       << " writes=" << it->second.received_completions << "/"
-                       << it->second.expected_completions;
-
-            if (it->second.xfer_failed) {
-                NIXL_WARN << "Releasing the notification for notif_xfer_id="
-                          << it->second.notif_xfer_id
-                          << " whose transfer failed on the initiator; only "
-                          << it->second.received_completions
-                          << " writes arrived, so the data for this transfer is incomplete";
-            }
-
-            // Reassemble combined payload from fragments
-            std::string combined_payload;
-            combined_payload.reserve(it->second.total_message_length);
-            for (const auto &fragment : it->second.message_fragments) {
-                combined_payload.append(fragment);
-            }
-
-            // Extract agent_name and message from combined payload
-            uint16_t agent_name_len = it->second.agent_name_length;
-            std::string remote_agent;
-            std::string message;
-
-            if (agent_name_len > 0 && combined_payload.size() >= agent_name_len) {
-                remote_agent = combined_payload.substr(0, agent_name_len);
-                if (combined_payload.size() > agent_name_len) {
-                    message = combined_payload.substr(agent_name_len);
-                }
-            } else {
-                NIXL_ERROR << "Invalid combined payload: agent_name_len=" << agent_name_len
-                           << " combined_payload_size=" << combined_payload.size();
-            }
-
-            // Move notification to main list (need to acquire notif_mutex_)
-            {
-                std::lock_guard<std::mutex> notif_lock(notif_mutex_);
-                notifMainList_.push_back({remote_agent, message});
-            }
-
-            NIXL_TRACE << "Processed queued notification from " << remote_agent
-                       << " message_len=" << message.length();
-
-            // Remove from pending list
-            pending_notifications_.erase(it);
-        }
+    if (!fragments_complete || !writes_complete) {
+        return;
     }
+
+    NIXL_TRACE << "Notification complete: fragments=" << it->second.received_msg_fragments << "/"
+               << it->second.expected_msg_fragments << " writes=" << it->second.received_completions
+               << "/" << it->second.expected_completions;
+
+    if (it->second.xfer_failed) {
+        NIXL_WARN << "Releasing the notification for notif_xfer_id=" << it->second.notif_xfer_id
+                  << " whose transfer failed on the initiator; only "
+                  << it->second.received_completions
+                  << " writes arrived, so the data for this transfer is incomplete";
+    }
+
+    // Reassemble combined payload from fragments
+    std::string combined_payload;
+    combined_payload.reserve(it->second.total_message_length);
+    for (const auto &fragment : it->second.message_fragments) {
+        combined_payload.append(fragment);
+    }
+
+    // Extract agent_name and message from combined payload
+    uint16_t agent_name_len = it->second.agent_name_length;
+    std::string remote_agent;
+    std::string message;
+
+    if (agent_name_len > 0 && combined_payload.size() >= agent_name_len) {
+        remote_agent = combined_payload.substr(0, agent_name_len);
+        if (combined_payload.size() > agent_name_len) {
+            message = combined_payload.substr(agent_name_len);
+        }
+    } else {
+        NIXL_ERROR << "Invalid combined payload: agent_name_len=" << agent_name_len
+                   << " combined_payload_size=" << combined_payload.size();
+    }
+
+    // Move notification to main list (lock order: receiver_tracking_mutex_, held by the
+    // caller, then notif_mutex_)
+    {
+        std::lock_guard<std::mutex> notif_lock(notif_mutex_);
+        notifMainList_.push_back({remote_agent, message});
+    }
+
+    NIXL_TRACE << "Processed queued notification from " << remote_agent
+               << " message_len=" << message.length();
+
+    // Remove from pending list
+    pending_notifications_.erase(it);
 }
 
 void
