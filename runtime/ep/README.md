@@ -12,7 +12,8 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
 - Hopper (SM90) or newer GPUs with the required TMA instructions.
 - PyTorch 2.14 or newer, with a matching Python and CUDA installation.
-- CUDA 13.0 or newer, supporting the target GPU and the selected NIXL/UCX builds.
+- CUDA 13.0 or newer toolkit with `nvcc` and `cuobjdump` on JIT hosts, including
+  wheel installations, supporting the target GPU and the selected NIXL/UCX builds.
 - NIXL and UCX builds with the GPU device API (`nixlAtomicAdd` and UCX
   device channels), including CUDA IPC support.
 - RDMA development headers on JIT hosts, including `infiniband/mlx5dv.h`
@@ -24,6 +25,7 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
 Configure Meson from the NIXL repository root with `build_nixl_ep` enabled and
 `ucx_path` pointing to the UCX installation, then compile and install the build.
+Set `CUDA_HOME` to the toolkit installation directory to select which toolkit the JIT uses.
 
 `nixl_cuda_arch_list` selects extension targets (for example `100` for
 B200/GB200); communication kernels are JIT-compiled for the running GPU.
@@ -245,9 +247,10 @@ validated.
 Run `tests/elastic/test_elastic_ep.py` from `runtime/ep` after installing the
 package. Launch one invocation per node with node-level `WORLD_SIZE` and `RANK`;
 `--num-processes` selects the GPUs per node. Run with `--help` for workload,
-format and timing options. The test requires the metadata backend configuration
-above. Before launching, set `NIXL_TCPSTORE_ENDPOINT` to the host and port selected
-by `MASTER_ADDR` and `MASTER_PORT`, which default to loopback and port 8361.
+format and timing options. `MASTER_ADDR` and `MASTER_PORT` select the test's
+Store, defaulting to loopback and port 8361; multi-node runs need a rank-0 node
+address reachable from every node. Configure NIXL's metadata backend as described
+above; `NIXL_TCPSTORE_ENDPOINT` may point to this Store or a separate metadata Store.
 
 `tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
