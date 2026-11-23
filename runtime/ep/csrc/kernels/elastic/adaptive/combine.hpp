@@ -101,7 +101,7 @@ static void launch_combine(void* x,
                    "which exceeds the dynamic shared memory num_smem_bytes");
     EP_HOST_ASSERT(num_max_scaleup_ranks <= num_warps * 32 and
                    "The combine block has 2 * num_channels_per_sm warps, fewer threads than the declared scale-up positions: "
-                   "raise the channel count (smaller hidden / prefer_overlap_with_compute=True) or declare fewer positions");
+                   "use a smaller hidden dimension or declare fewer scale-up positions");
 
     // Generate, build and launch
     const auto num_threads = num_warps * 32;

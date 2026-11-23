@@ -5,7 +5,9 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <exception>
 #include <functional>
+#include <initializer_list>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -40,7 +42,7 @@ class ElasticBuffer {
     // Workspace
     // Control words reset at rest except combine readiness; barrier counters retain their epochs.
     void *workspace;
-    void *host_workspace, *mapped_host_workspace;
+    void* host_workspace;
     torch::Tensor profile_storage;
 
     // CUDA streams
@@ -93,7 +95,7 @@ public:
         allow_multiple_reduction(allow_multiple_reduction),
         use_fp8_dispatch(use_fp8_dispatch),
         prefer_overlap_with_compute(prefer_overlap_with_compute),
-        max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks), max_num_ranks(max_num_scaleout_ranks * max_num_scaleup_ranks),
+        max_num_scaleout_ranks(max_num_scaleout_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks),
         num_experts_per_rank(num_experts_per_rank),
         num_launch_sms(num_launch_sms) {
         // Check buffer bytes alignment (2 MB)
@@ -108,6 +110,7 @@ public:
         // Capacity and wire-format settings must match across peers.
         EP_HOST_ASSERT(0 < max_num_scaleout_ranks and max_num_scaleout_ranks <= topology::kNumMaxScaleoutRanksCap and
                        0 < max_num_scaleup_ranks and max_num_scaleup_ranks <= topology::kNumMaxScaleupRanksCap and "Bad declared maximum world");
+        max_num_ranks = max_num_scaleout_ranks * max_num_scaleup_ranks;
         EP_HOST_ASSERT(0 <= world_rank and world_rank < max_num_ranks and
                        "World rank is outside the declared maximum world");
 
@@ -165,14 +168,13 @@ public:
 
         // Allocate host workspaces
         CUDA_RUNTIME_CHECK(cudaMallocHost(&host_workspace, layout::WorkspaceLayout::get_num_bytes(), cudaHostAllocMapped));
-        CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&mapped_host_workspace, host_workspace, 0));
         std::memset(host_workspace, 0, layout::WorkspaceLayout::get_num_bytes());
 
         // Construction is local; callers connect peers and commit the active world explicitly.
     }
 
     ~ElasticBuffer() noexcept(false) {
-        if (not explicitly_destroy)
+        if (not explicitly_destroy and not destroyed)
             destroy();
 
         if (not destroyed) {
@@ -611,7 +613,7 @@ public:
             EP_HOST_ASSERT(num_tokens == num_tokens_);
             EP_HOST_ASSERT(sf->is_cuda());
             EP_HOST_ASSERT(sf->element_size() == sizeof(sf_pack_t));
-            EP_HOST_ASSERT((not nvfp4 or (num_sf_packs_ == hidden / 64 and sf->is_contiguous())) and
+            EP_HOST_ASSERT((not nvfp4 or (sf->scalar_type() == torch::kInt and num_sf_packs_ == hidden / 64 and sf->is_contiguous())) and
                            "NVFP4 block scales require contiguous int32 packs of shape [tokens, hidden / 64]");
             num_sf_packs = num_sf_packs_;
             sf_ptr = sf->data_ptr();
@@ -633,7 +635,7 @@ public:
         float* topk_weights_ptr = nullptr;
         if (topk_weights.has_value()) {
             const auto [num_tokens__, num_topk_] = get_shape<2>(topk_weights.value());
-            EP_HOST_ASSERT(num_tokens == num_tokens__);
+            EP_HOST_ASSERT(num_tokens == num_tokens__ and num_topk == num_topk_);
             EP_HOST_ASSERT(topk_weights->is_cuda() and topk_weights->is_contiguous());
             topk_weights_ptr = topk_weights->data_ptr<float>();
         }
@@ -733,6 +735,23 @@ public:
         std::fill_n(host_workspace_layout.get_scaleup_expert_count_ptr<false>(), num_local_experts, 0);
         std::atomic_thread_fence(std::memory_order_seq_cst);
 
+        // Keep queued tensor storage alive if dispatch unwinds before returning its handle.
+        const int exceptions_on_entry = std::uncaught_exceptions();
+        auto preserve_dispatch_on_failure = c10::make_scope_exit([&] {
+            if (std::uncaught_exceptions() > exceptions_on_entry) {
+                for (const auto* tensor : std::initializer_list<const torch::Tensor*>{
+                         &x, &topk_idx, &psum_num_recv_tokens_per_scaleup_rank,
+                         &psum_num_recv_tokens_per_expert, &num_unaligned_recv_tokens_per_expert,
+                         &token_metadata_at_forward})
+                    tensor->record_stream(comm_stream);
+                for (const auto* tensor : std::initializer_list<const std::optional<torch::Tensor>*>{
+                         &sf, &topk_weights, &copied_topk_idx, &cumulative_local_expert_recv_stats})
+                    if (tensor->has_value())
+                        tensor->value().record_stream(comm_stream);
+            }
+        });
+        preserve_prefix_on_failure.release();
+
         // Do dispatch into the buffers (with SM limitation)
         launch_dispatch(x.data_ptr(), sf_ptr,
                         topk_idx.data_ptr<topk_idx_t>(), topk_weights_ptr,
@@ -747,7 +766,7 @@ public:
                         num_sf_packs, sf_token_stride, sf_hidden_stride,
                         num_experts_per_rank, num_topk, expert_alignment,
                         buffer, math::advance_ptr(buffer, arena.dispatch_send_offset),
-                        mapped_host_workspace,
+                        host_workspace,
                         get_topology_ptr(),
                         max_num_scaleout_ranks, max_num_scaleup_ranks,
                         num_launch_sms,
@@ -756,7 +775,6 @@ public:
                         num_gpu_timeout_cycles,
                         do_cpu_sync,
                         comm_stream);
-        preserve_prefix_on_failure.release();
 
         // Received token counters
         int num_recv_tokens = 0, num_expanded_tokens = 0;
@@ -865,6 +883,15 @@ public:
 
         // Launch copy kernels with full SMs
         stream_control_before_epilogue(previous_event_before_epilogue);
+        auto preserve_outputs_on_failure = c10::make_scope_exit([&] {
+            if (std::uncaught_exceptions() > exceptions_on_entry) {
+                for (const auto* tensor : {&recv_x, &recv_src_metadata, &channel_linked_list})
+                    tensor->record_stream(comm_stream);
+                for (const auto* tensor : {&recv_sf, &recv_topk_idx, &recv_topk_weights})
+                    if (tensor->has_value())
+                        tensor->value().record_stream(comm_stream);
+            }
+        });
         // Without a CPU sync the count is the worst case: a negative value tells the epilogue to read the fixed slot
         launch_dispatch_copy_epilogue(buffer, workspace,
                                       psum_num_recv_tokens_per_scaleup_rank.data_ptr<int>(),
@@ -1000,6 +1027,23 @@ public:
         EP_HOST_ASSERT(d2_ == topo.num_scaleup_ranks);
         EP_HOST_ASSERT(channel_linked_list.is_cuda() and channel_linked_list.is_contiguous());
 
+        torch::Tensor combined_x;
+        // Protect queued reads and writes through epilogue setup and return-value construction.
+        const int exceptions_on_entry = std::uncaught_exceptions();
+        auto preserve_combine_on_failure = c10::make_scope_exit([&] {
+            if (std::uncaught_exceptions() > exceptions_on_entry) {
+                for (const auto* tensor : {&x, &src_metadata, &combined_topk_idx,
+                                          &psum_num_recv_tokens_per_scaleup_rank,
+                                          &token_metadata_at_forward, &channel_linked_list})
+                    tensor->record_stream(comm_stream);
+                for (const auto* tensor : {&bias_0, &bias_1})
+                    if (tensor->has_value())
+                        tensor->value().record_stream(comm_stream);
+                if (combined_x.defined())
+                    combined_x.record_stream(comm_stream);
+            }
+        });
+
         // Push data into remote buffers
         launch_combine(
             x.data_ptr(),
@@ -1020,7 +1064,7 @@ public:
             comm_stream);
 
         // Allocate output tensors
-        auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
+        combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
 
         // Combine pushed data
         stream_control_before_epilogue(previous_event_before_epilogue);
