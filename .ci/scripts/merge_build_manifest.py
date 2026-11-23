@@ -390,7 +390,7 @@ def assemble(
 
     publish_dir = os.environ.get("PUBLISH_DIR") or "verification"
     doc = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "complete": not errors,
         "errors": errors,
