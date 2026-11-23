@@ -27,21 +27,6 @@ public:
     nixlGusliEngine(const nixlBackendInitParams *init_params);
     ~nixlGusliEngine() = default;
 
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal(void) const override {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems(void) const override {
         return {BLK_SEG, DRAM_SEG};
