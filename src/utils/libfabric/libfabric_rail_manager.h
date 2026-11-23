@@ -262,6 +262,15 @@ public:
     size_t
     reserveBaseOffset();
 
+    /** Set the transfer size from which usesStriping() splits a transfer across its rails.
+     *  Call before any transfer is posted: posts read the threshold without synchronization.
+     *  A value below the rail count, 0 included, is rejected with a warning and the current
+     *  threshold is kept.
+     * @param striping_threshold Size threshold in bytes
+     */
+    void
+    setStripingThreshold(size_t striping_threshold);
+
     /** True when a transfer of this size across this many rails is striped (split across the
      *  rails) rather than posted on a single rail.
      * @param transfer_size Size of the transfer in bytes

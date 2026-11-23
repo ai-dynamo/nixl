@@ -240,6 +240,23 @@ nixlLibfabricRailManager::~nixlLibfabricRailManager() {
     NIXL_DEBUG << "Destroying rail manager";
 }
 
+void
+nixlLibfabricRailManager::setStripingThreshold(size_t striping_threshold) {
+    // A striped transfer is split into chunks of transfer_size / rail_count bytes, and
+    // prepareAndSubmitTransfer() stops at the first empty chunk. A transfer smaller than its
+    // rail count would therefore post nothing; a threshold of at least the rail count keeps
+    // such transfers on one rail.
+    const size_t min_threshold = std::max<size_t>(rails_.size(), 1);
+    if (striping_threshold < min_threshold) {
+        NIXL_WARN << "Invalid striping threshold " << striping_threshold
+                  << " bytes: expecting at least the rail count (" << min_threshold << "), keeping "
+                  << striping_threshold_ << " bytes";
+        return;
+    }
+    striping_threshold_ = striping_threshold;
+    NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes";
+}
+
 nixl_status_t
 nixlLibfabricRailManager::init(const nixl_b_params_t &custom_params) {
     // get the CUDA dmabuf mapping type for VRAM_SEG registrations from configuration or

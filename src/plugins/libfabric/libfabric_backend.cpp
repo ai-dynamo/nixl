@@ -522,22 +522,11 @@ nixlLibfabricEngine::nixlLibfabricEngine(const nixlBackendInitParams *init_param
     }
 #endif
 
-    // Parse striping threshold parameter
-    std::string threshold_str;
-    striping_threshold_ = NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD;
-
-    if (getInitParam("striping_threshold", threshold_str) == NIXL_SUCCESS) {
-        try {
-            striping_threshold_ = std::stoull(threshold_str);
-            NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (custom)";
-        }
-        catch (const std::exception &e) {
-            NIXL_WARN << "Invalid striping_threshold value '" << threshold_str
-                      << "', using default: " << striping_threshold_ << " bytes";
-        }
-    } else {
-        NIXL_INFO << "Striping threshold: " << striping_threshold_ << " bytes (default)";
-    }
+    // Striping threshold from the backend parameter, or from NIXL_LIBFABRIC_STRIPING_THRESHOLD,
+    // which overrides it. Applied before any memory is registered or any transfer is posted.
+    size_t striping_threshold = NIXL_LIBFABRIC_DEFAULT_STRIPING_THRESHOLD;
+    LibfabricUtils::getCustomIntParam(getCustomParams(), "striping_threshold", striping_threshold);
+    rail_manager_.setStripingThreshold(striping_threshold);
 
     initPostThreadPool();
     // Initialize Rail Manager which will discover the topology and create all rails.
