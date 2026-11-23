@@ -107,7 +107,6 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     resp.emplace(query[0].addr, query[0].len, query[0].devId, covering->metadataP);
     uintptr_t covering_end = rangeEnd(*covering);
 
-    // Try the current and next sections; bracket larger gaps before binary search.
     for (int i = 1; i < query.descCount(); ++i) {
         if (query[i] < query[i - 1]) [[unlikely]] {
             // Disorder in the list, resolve this element using logN search
@@ -118,18 +117,19 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             }
             covering = &base[s_index];
             covering_end = rangeEnd(*covering);
-        } else {
-            if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
+        } else if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
+            const int next = s_index + 1;
+            if (next < base.descCount() && base[next].covers(query[i])) {
+                s_index = next;
+            } else {
                 s_index = base.getCoveringIndex(query[i]);
-                if (s_index >= 0) {
-                    covering = &base[s_index];
-                    covering_end = rangeEnd(*covering);
+                if (s_index < 0) [[unlikely]] {
+                    resp.clear();
+                    return NIXL_ERR_UNKNOWN;
                 }
             }
-            if (s_index < 0) [[unlikely]] {
-                resp.clear();
-                return NIXL_ERR_UNKNOWN;
-            }
+            covering = &base[s_index];
+            covering_end = rangeEnd(*covering);
         }
 
         resp.emplace(query[i].addr, query[i].len, query[i].devId, covering->metadataP);
@@ -171,8 +171,9 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
         const nixlBasicDesc &it = query[i];
 
         if (!coversWithEnd(base[s_index], covering_end, it)) [[unlikely]] {
-            if (it < query[i - 1]) {
-                s_index = base.getCoveringIndex(it);
+            const int next = s_index + 1;
+            if (next < base.descCount() && base[next].covers(it)) {
+                s_index = next;
             } else {
                 s_index = base.getCoveringIndex(it);
             }
