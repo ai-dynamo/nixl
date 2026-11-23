@@ -1,4 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# This file incorporates material from the DeepSeek project, licensed under the MIT License.
+# The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
+#
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
 """Host-only API shell. Method docstrings retain the production contract for review.
@@ -32,6 +37,8 @@ class EPHandle:
         expert_alignment: align the number of tokens received by each local expert to this variable.
         num_max_tokens_per_rank: the maximum number of tokens per rank, all the ranks must hold the same value.
         topk_idx: dispatch top-k stable expert IDs, `[num_tokens, num_topk]`; cloned when `do_handle_copy=True`.
+        num_recv_tokens: the actual receive count with CPU synchronization; otherwise the declared maximum world's capacity.
+        num_recv_tokens_per_expert_list: CPU per-expert receive counts; empty without CPU synchronization.
         psum_num_recv_tokens_per_scaleup_rank: `[max_num_scaleup_ranks + 1]` inclusive prefix counts
             over the committed scaleup extent; unused entries before the fixed final total are zero.
             A token is counted once per rank even if multiple selected experts belong to that rank.
@@ -42,13 +49,11 @@ class EPHandle:
             of expert `i` — so `psum[i] - align(psum[i-1], expert_alignment)` recovers the real
             count for expert `i`, and `align(psum[i], expert_alignment)` gives expert `i+1`'s
             starting offset.
-        num_recv_tokens_per_expert_list: CPU per-expert receive counts; empty without CPU synchronization.
         num_unaligned_recv_tokens_per_expert: the actual (unaligned) number of tokens received per local
             expert, shape `[num_experts_per_rank]` with `torch.int`, in both compact and expanded layouts.
         recv_src_metadata: source token indices and buffer slot indices.
         token_metadata_at_forward: per-channel forwarded token metadata (allocated in both modes, written in hybrid mode).
         channel_linked_list: per-channel per-scaleup-peer linked list (allocated in both modes, written in hybrid mode).
-        num_recv_tokens: the actual receive count with CPU synchronization; otherwise the declared maximum world's capacity.
         num_recv_tokens_device: 0-d `torch.int` device view of the real count, valid without a CPU sync and in graphs.
     """
 
@@ -73,18 +78,17 @@ class EPHandle:
         self.expert_alignment = expert_alignment
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
         self.topk_idx = topk_idx
+        # May not be accurate without CPU sync
+        self.num_recv_tokens = num_recv_tokens
+        self.num_recv_tokens_per_expert_list = num_recv_tokens_per_expert_list
         self.psum_num_recv_tokens_per_scaleup_rank = (
             psum_num_recv_tokens_per_scaleup_rank
         )
         self.psum_num_recv_tokens_per_expert = psum_num_recv_tokens_per_expert
         self.num_unaligned_recv_tokens_per_expert = num_unaligned_recv_tokens_per_expert
-        self.num_recv_tokens_per_expert_list = num_recv_tokens_per_expert_list
         self.recv_src_metadata = recv_src_metadata
         self.token_metadata_at_forward = token_metadata_at_forward
         self.channel_linked_list = channel_linked_list
-
-        # May not be accurate without CPU sync
-        self.num_recv_tokens = num_recv_tokens
 
     @property
     def num_recv_tokens_device(self) -> torch.Tensor:

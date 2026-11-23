@@ -1,4 +1,9 @@
+# SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+#
+# This file incorporates material from the DeepSeek project, licensed under the MIT License.
+# The modifications made by NVIDIA are licensed under the Apache License, Version 2.0.
+#
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
 """API shell; production docstrings below are API review contracts.
@@ -40,8 +45,6 @@ class EventOverlap:
     def current_stream_wait(self, release_handle: bool = False) -> None:
         """Queue a wait on the current CUDA stream, then invoke any registered hook.
 
-        With ``NIXL_EP_AVOID_RECORD_STREAM=1``, keep the event or tensors alive
-        until their last GPU use completes, unless otherwise protected.
         ``release_handle=True`` drops the event and ``extra_tensors`` references without waiting for consumers.
         """
         if self.event is None:
@@ -58,7 +61,7 @@ class EventOverlap:
         self.hook_after_wait = hook_after_wait
 
     def __call__(self, release_handle: bool = False) -> "EventOverlap":
-        """Configure release on context exit; see ``current_stream_wait`` for lifetime requirements."""
+        """Configure release on context exit."""
         self._release_handle_by_call = release_handle
         return self
 

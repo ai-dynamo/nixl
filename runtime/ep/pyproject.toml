@@ -11,7 +11,7 @@ version = "0.1.0"
 description = "NIXL EP API-only shell for interface review"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
-license-files = ["LICENSE-DeepEP", "LICENSE-fmt", "LICENSE-Apache"]
+license-files = ["LICENSE-DeepEP", "LICENSE-Apache"]
 requires-python = ">=3.10"
 dependencies = ["torch"]
 
