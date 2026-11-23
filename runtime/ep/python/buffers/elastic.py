@@ -338,8 +338,8 @@ class ElasticBuffer:
         self.max_num_scaleout_ranks = max_num_scaleout_ranks
         self.max_num_scaleup_ranks = max_num_scaleup_ranks
         self._prepared_mapping = {world_rank: 0}
-        self._fabric_record = None
-        self._fabric_records = {}
+        self._fabric_record: Optional[dict] = None
+        self._fabric_records: Dict[int, dict] = {}
         self.allow_multiple_reduction = allow_multiple_reduction
         self.prefer_overlap_with_compute = prefer_overlap_with_compute
         self.deterministic = deterministic
