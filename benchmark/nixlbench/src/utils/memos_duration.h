@@ -149,6 +149,11 @@ struct MemosDurationWorkspace {
 
 enum class MemosPostStatus { posted, skipped, error };
 
+struct MemosPostResult {
+    MemosPostStatus status;
+    uint64_t dispatch_us;
+};
+
 // Prepared requests remain live across warmup and measurement. Completion
 // timestamps are observation times, not hardware completion timestamps.
 // The caller coordinates a common start, owns cleanup on all return paths,
@@ -207,13 +212,13 @@ runMemosDurationPipeline(size_t banks,
         // Dispatch may observe a later clock than the scheduler (preemption).
         // A skipped dispatch owns no request and must not enter issue/drain counts.
         const auto dispatched = post(bank);
-        if (dispatched == MemosPostStatus::skipped) {
+        if (dispatched.status == MemosPostStatus::skipped) {
             return true;
         }
-        if (dispatched != MemosPostStatus::posted) {
+        if (dispatched.status != MemosPostStatus::posted) {
             return false;
         }
-        posted_at[bank] = t;
+        posted_at[bank] = dispatched.dispatch_us;
         busy[bank] = true;
         active[lane] = bank;
         ++stats.issued_batches;

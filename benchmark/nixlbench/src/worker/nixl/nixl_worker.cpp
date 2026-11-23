@@ -2003,12 +2003,13 @@ execTransferLoop(nixlAgent *agent,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr,
-                 DurationControl *duration = nullptr) {
+                 DurationControl *duration = nullptr,
+                 bool setup_ready = true) {
     if (xferBenchConfig::memos_keys_per_thread != 0) {
         const size_t batch = xferBenchConfig::max_batch_size;
         const size_t keys = xferBenchConfig::memos_keys_per_thread;
-        bool prepared = local_iov.size() == keys && remote_iov.size() == keys;
-        if (!prepared) {
+        bool prepared = setup_ready && local_iov.size() == keys && remote_iov.size() == keys;
+        if (setup_ready && !prepared) {
             std::cerr << "DOCA_MEMOS: key-pool descriptor count mismatch" << std::endl;
         }
 
@@ -2017,7 +2018,7 @@ execTransferLoop(nixlAgent *agent,
         std::vector<slotState> banks;
         std::optional<nixlbench::MemosDurationWorkspace> workspace;
         try {
-            banks.resize(keys / batch);
+            banks.resize(prepared ? keys / batch : 0);
             for (size_t bank = 0; prepared && bank < banks.size(); ++bank) {
                 auto &slot = banks[bank];
                 const size_t offset = bank * batch;
@@ -2032,7 +2033,7 @@ execTransferLoop(nixlAgent *agent,
                     break;
                 }
             }
-            if (duration != nullptr) {
+            if (duration != nullptr && prepared) {
                 workspace.emplace(banks.size(), xferBenchConfig::pipeline_depth);
             }
         }
@@ -2066,16 +2067,19 @@ execTransferLoop(nixlAgent *agent,
                 [&](size_t bank) {
                     const uint64_t dispatch = nixlbench::steadyTimeUs();
                     if (dispatch >= end) {
-                        return nixlbench::MemosPostStatus::skipped;
+                        return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::skipped,
+                                                          dispatch};
                     }
-                    return postSlot(agent,
-                                    thread_stats,
-                                    banks[bank],
-                                    dispatch >= begin,
-                                    end,
-                                    xferBenchConfig::duration_latency_samples) == NIXL_SUCCESS ?
-                        nixlbench::MemosPostStatus::posted :
-                        nixlbench::MemosPostStatus::error;
+                    const auto status = postSlot(agent,
+                                                 thread_stats,
+                                                 banks[bank],
+                                                 dispatch >= begin,
+                                                 end,
+                                                 xferBenchConfig::duration_latency_samples);
+                    return nixlbench::MemosPostResult{status == NIXL_SUCCESS ?
+                                                          nixlbench::MemosPostStatus::posted :
+                                                          nixlbench::MemosPostStatus::error,
+                                                      dispatch};
                 },
                 [&](size_t bank) {
                     const auto rc = agent->getXferStatus(banks[bank].req);
@@ -2346,7 +2350,8 @@ execTransfer(nixlAgent *agent,
                              local_iov,
                              remote_iov,
                              terminate_ptr,
-                             duration_mode ? &duration : nullptr) :
+                             duration_mode ? &duration : nullptr,
+                             setup_ready) :
             -1;
 
         if (result != 0) [[unlikely]] {
@@ -2646,7 +2651,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            1,
                            xferBenchConfig::num_threads,
                            prepop_stats,
-                           nullptr,
+                           &terminate,
                            false);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
@@ -2719,7 +2724,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                1,
                            xferBenchConfig::num_threads,
                            prepop_stats,
-                           nullptr,
+                           &terminate,
                            false);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
@@ -2742,7 +2747,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                1,
                            xferBenchConfig::num_threads,
                            verify_stats,
-                           nullptr,
+                           &terminate,
                            false);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
