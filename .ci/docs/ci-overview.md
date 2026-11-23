@@ -364,13 +364,13 @@ run.
 
 | PR touches | Component set | Runs | Statuses |
 |---|---|---|---|
-| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 8 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/8 jobs (docs)` |
-| root `README.md` only | `all` (`/README.md`) | all 8 | as before |
-| `docs/...` + `src/core/...` | `docs`, `all` | all 8 | as before |
-| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 8 | as before |
-| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 8 | as before |
-| any PR with label `ci:full` | `all` | all 8 | as before |
-| manual run, no PR | `all` | all 8 | as before |
+| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 9 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/9 jobs (docs)` |
+| root `README.md` only | `all` (`/README.md`) | all 9 | as before |
+| `docs/...` + `src/core/...` | `docs`, `all` | all 9 | as before |
+| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 9 | as before |
+| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 9 | as before |
+| any PR with label `ci:full` | `all` | all 9 | as before |
+| manual run, no PR | `all` | all 9 | as before |
 
 Whenever the decision cannot be made, the dispatcher runs everything and says
 why in the console:
@@ -399,7 +399,7 @@ Path filter: run = [branch, ...]; skip = [branch, ...]
 
 or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
 the `run = ...; skip = []` line. The reason also reaches the PR: the final
-`blossom-ci` status reads `NIXL CI ended: ran <k>/8 jobs (<components>[; <reason>])`
+`blossom-ci` status reads `NIXL CI ended: ran <k>/9 jobs (<components>[; <reason>])`
 (truncated to 140 characters) and the build description carries
 `| components: <components>[; <reason>]`, so a silent fallback is visible
 without opening the console.
