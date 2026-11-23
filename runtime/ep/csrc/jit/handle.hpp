@@ -30,7 +30,10 @@ static KernelHandle load_kernel(const std::filesystem::path& cubin_path, const s
     LibraryHandle library;
     KernelHandle kernel;
     CUDA_DRIVER_CHECK(lazy_cuModuleLoad(&library, cubin_path.c_str()));
-    CUDA_DRIVER_CHECK(lazy_cuModuleGetFunction(&kernel, library, func_name.c_str()));
+    if (const auto error = lazy_cuModuleGetFunction(&kernel, library, func_name.c_str()); error != CUDA_SUCCESS) {
+        lazy_cuModuleUnload(library);  // Preserve the lookup error if unloading also fails.
+        CUDA_DRIVER_CHECK(error);
+    }
 
     if (library_opt != nullptr)
         *library_opt = library;
