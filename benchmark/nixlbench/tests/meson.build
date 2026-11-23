@@ -61,6 +61,14 @@ memos_context_tests = executable(
 )
 test('memos_context_tests', memos_context_tests, suite: 'nixlbench')
 
+memos_manifest_tests = executable(
+  'memos_manifest_tests',
+  'memos_manifest_test.cpp',
+  include_directories: inc_dir,
+  dependencies: dependency('threads'),
+)
+test('memos_manifest_tests', memos_manifest_tests, suite: 'nixlbench')
+
 gtest_dep = dependency('gtest',
                        main: true,
                        required: false)

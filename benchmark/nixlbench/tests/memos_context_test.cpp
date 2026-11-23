@@ -84,5 +84,34 @@ main() {
         check(releaseMemosHandles(agent, request, local, remote));
         check(!request && !local && !remote);
     }
+    // Backend ownership alone cannot identify a registration: retain copied
+    // descriptor values per agent and reject cross-agent/duplicate deregistration.
+    for (bool reverse : {false, true}) {
+        nixlAgentConfig config;
+        config.useProgThread = false;
+        config.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
+        nixlAgent a("a", config), b("b", config);
+        nixlBackendH *ab = nullptr, *bb = nullptr;
+        check(a.createBackend("DOCA_MEMOS", {}, ab) == NIXL_SUCCESS);
+        check(b.createBackend("DOCA_MEMOS", {}, bb) == NIXL_SUCCESS);
+        nixl_opt_args_t ao, bo;
+        ao.backends.push_back(ab);
+        bo.backends.push_back(bb);
+        nixl_reg_dlist_t al{11}, bl{22};
+        check(a.registerMem(al, &ao) == NIXL_SUCCESS);
+        check(b.registerMem(bl, &bo) == NIXL_SUCCESS);
+        check(a.deregisterMem(bl, &ao) != NIXL_SUCCESS);
+        check(b.deregisterMem(al, &bo) != NIXL_SUCCESS);
+        check(nixlAgent::registered == 2);
+        if (reverse) {
+            check(b.deregisterMem(bl, &bo) == NIXL_SUCCESS);
+            check(a.deregisterMem(al, &ao) == NIXL_SUCCESS);
+        } else {
+            check(a.deregisterMem(al, &ao) == NIXL_SUCCESS);
+            check(b.deregisterMem(bl, &bo) == NIXL_SUCCESS);
+        }
+        check(a.deregisterMem(al, &ao) != NIXL_SUCCESS);
+        check(nixlAgent::registered == 0);
+    }
     std::cout << "Ownership, partial failure and drain checks PASS (mock API)\n";
 }

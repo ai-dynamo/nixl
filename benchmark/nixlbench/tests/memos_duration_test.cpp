@@ -67,14 +67,15 @@ struct Simulation {
                     }
                 }
                 if (issued == fail_post) {
-                    return nixlbench::MemosPostStatus::error;
+                    return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::error, 0};
                 }
                 posting[bank] = clock - 1; // Clock call immediately before post.
                 // Slow ownership class zero; other lanes may make more progress.
                 remaining[bank] = bank % depth == 0 ? 7 : 1;
                 ++visits[bank];
                 ++issued;
-                return nixlbench::MemosPostStatus::posted;
+                return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::posted,
+                                                  posting[bank]};
             },
             [&](size_t bank) {
                 check(remaining[bank] > 0);
@@ -191,7 +192,7 @@ main() {
                 30,
                 [&](size_t) {
                     ++posts;
-                    return nixlbench::MemosPostStatus::posted;
+                    return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::posted, 0};
                 },
                 [&](size_t) {
                     next = t;
@@ -230,9 +231,10 @@ main() {
                 [&](size_t) {
                     if (++dispatches == 2) {
                         clock = 10;
-                        return nixlbench::MemosPostStatus::skipped;
+                        return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::skipped,
+                                                          clock};
                     }
-                    return nixlbench::MemosPostStatus::posted;
+                    return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::posted, 0};
                 },
                 [](size_t) { return nixlbench::MemosBatchStatus::complete; },
                 [&](size_t, bool) { ++completions; },
@@ -242,6 +244,38 @@ main() {
             check(dispatches == 2 && completions == 1);
             check(stats.issued_batches == 1 && stats.completed_batches == 1);
             check(stats.drain_batches == 1 && stats.peak_batches == 1);
+        }
+        // Scheduler observation and actual dispatch can straddle warmup-end.
+        // Throughput follows completion; latency eligibility follows dispatch.
+        for (uint64_t dispatch : {uint64_t{9}, uint64_t{10}, uint64_t{11}}) {
+            uint64_t clock = 9;
+            bool sampled = false;
+            nixlbench::MemosDurationStats stats;
+            check(nixlbench::runMemosDurationPipeline(
+                1,
+                1,
+                false,
+                0,
+                10,
+                10,
+                [&](size_t) {
+                    clock = dispatch;
+                    return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::posted, dispatch};
+                },
+                [&](size_t) {
+                    clock = 12;
+                    return nixlbench::MemosBatchStatus::complete;
+                },
+                [&](size_t, bool latency) {
+                    sampled = latency;
+                    clock = 20;
+                },
+                [&] { return clock; },
+                [] { return false; },
+                stats));
+            check(stats.measured_batches == 1 && stats.completed_batches == 1);
+            check(sampled == (dispatch >= 10));
+            check(stats.latency_batches == (dispatch >= 10 ? 1 : 0));
         }
         nixlbench::MemosDurationStats aggregate;
         Simulation a(8, 2, true), b(8, 2, true);
@@ -303,7 +337,7 @@ main() {
             30,
             [&](size_t) {
                 ++callbacks;
-                return nixlbench::MemosPostStatus::posted;
+                return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::posted, 0};
             },
             [&](size_t) {
                 ++callbacks;

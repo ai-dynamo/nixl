@@ -58,6 +58,7 @@ struct nixlAgent {
     inline static bool fail_release = false, fail_list = false;
     int id = next++;
     nixlBackendH *backend = nullptr;
+    std::multiset<nixl_reg_dlist_t> registrations;
 
     nixlAgent(const std::string &, const nixlAgentConfig &config) {
         mockCheck(!config.useProgThread);
@@ -67,6 +68,7 @@ struct nixlAgent {
     }
 
     ~nixlAgent() {
+        mockCheck(registrations.empty());
         if (backend) {
             delete backend;
             --backends;
@@ -91,18 +93,24 @@ struct nixlAgent {
     }
 
     int
-    registerMem(nixl_reg_dlist_t &, nixl_opt_args_t *options) {
+    registerMem(nixl_reg_dlist_t &descriptors, nixl_opt_args_t *options) {
         mockCheck(options->backends.at(0) == backend);
         if (register_calls++ == fail_registration) {
             return -1;
         }
+        registrations.insert(descriptors);
         ++registered;
         return 0;
     }
 
     int
-    deregisterMem(nixl_reg_dlist_t &, nixl_opt_args_t *options) {
+    deregisterMem(nixl_reg_dlist_t &descriptors, nixl_opt_args_t *options) {
         mockCheck(options->backends.at(0) == backend);
+        auto registration = registrations.find(descriptors);
+        if (registration == registrations.end()) {
+            return NIXL_ERR_UNKNOWN;
+        }
+        registrations.erase(registration);
         --registered;
         return 0;
     }

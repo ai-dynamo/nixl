@@ -1414,3 +1414,8 @@ backend resources, and does not isolate the physical device or DPU.
 The existing key-pool rotation, reused-buffer geometry, full-key population and
 retrieval checks, common duration window and completion accounting are unchanged.
 Context initialization and destruction occur outside the measured window.
+
+Per-worker setup publishes its complete key list at the path printed as
+`DOCA_MEMOS_KEY_MANIFEST`. Each allocation uses a unique `memos-keys-*` directory;
+failed registration removes only that run's temporary manifest. Successful
+manifests and previous runs' files are retained. Manifest I/O is outside timing.

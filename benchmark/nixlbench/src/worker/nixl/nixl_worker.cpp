@@ -26,7 +26,7 @@
  * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
-#include <fstream>
+#include "utils/memos_manifest.h"
 #include <iomanip>
 #include "kernels/nixlbench_device_launch.cuh"
 #include <limits>
@@ -1163,10 +1163,7 @@ xferBenchNixlWorker::allocateThreadMemory(int num_threads) {
         const size_t buffer_size = xferBenchConfig::total_buffer_size / num_threads;
         const size_t keys = xferBenchConfig::memos_keys_per_thread;
         std::random_device entropy;
-        std::ofstream key_manifest("memos-keys.txt");
-        if (!key_manifest) {
-            throw std::runtime_error("cannot create MEMOS key manifest");
-        }
+        nixlbench::MemosKeyManifest key_manifest;
         for (int tid = 0; tid < num_threads; ++tid) {
             auto &context = *thread_contexts_[tid];
             std::shared_ptr<nixlAlloc> allocation = nixlAlloc::make(buffer_size);
@@ -1187,10 +1184,7 @@ xferBenchNixlWorker::allocateThreadMemory(int num_threads) {
             remote.reserve(keys);
             for (size_t key = 0; key < keys; ++key) {
                 const auto object_key = nixlbench::makeMemosKey(entropy);
-                key_manifest << object_key << '\n';
-                if (!key_manifest) {
-                    throw std::runtime_error("cannot write MEMOS key manifest");
-                }
+                key_manifest.append(object_key);
                 const auto descriptor =
                     initBasicDescObj(buffer_size, static_cast<int>(tid * keys + key), object_key);
                 if (!descriptor) {
@@ -1205,10 +1199,8 @@ xferBenchNixlWorker::allocateThreadMemory(int num_threads) {
             lists.push_back(std::move(local));
             remote_iovs.push_back(std::move(remote));
         }
-        key_manifest.close();
-        if (!key_manifest) {
-            throw std::runtime_error("cannot close MEMOS key manifest");
-        }
+        key_manifest.publish();
+        std::cout << "DOCA_MEMOS_KEY_MANIFEST=" << key_manifest.path() << std::endl;
         std::cout << "DOCA_MEMOS: Registered " << keys * num_threads << " keys across "
                   << num_threads << " threads (random128 metaInfo=hex32; per-thread contexts)"
                   << std::endl;
@@ -2108,12 +2100,13 @@ execTransferLoop(nixlAgent *agent,
                  const std::vector<xferBenchIOV> &local_iov,
                  const std::vector<xferBenchIOV> &remote_iov,
                  const std::atomic<int> *terminate_ptr = nullptr,
-                 DurationControl *duration = nullptr) {
+                 DurationControl *duration = nullptr,
+                 bool setup_ready = true) {
     if (xferBenchConfig::memos_keys_per_thread != 0) {
         const size_t batch = xferBenchConfig::max_batch_size;
         const size_t keys = xferBenchConfig::memos_keys_per_thread;
-        bool prepared = local_iov.size() == keys && remote_iov.size() == keys;
-        if (!prepared) {
+        bool prepared = setup_ready && local_iov.size() == keys && remote_iov.size() == keys;
+        if (setup_ready && !prepared) {
             std::cerr << "DOCA_MEMOS: key-pool descriptor count mismatch" << std::endl;
         }
 
@@ -2122,7 +2115,7 @@ execTransferLoop(nixlAgent *agent,
         std::vector<slotState> banks;
         std::optional<nixlbench::MemosDurationWorkspace> workspace;
         try {
-            banks.resize(keys / batch);
+            banks.resize(prepared ? keys / batch : 0);
             for (size_t bank = 0; prepared && bank < banks.size(); ++bank) {
                 auto &slot = banks[bank];
                 const size_t offset = bank * batch;
@@ -2137,7 +2130,7 @@ execTransferLoop(nixlAgent *agent,
                     break;
                 }
             }
-            if (duration != nullptr) {
+            if (duration != nullptr && prepared) {
                 workspace.emplace(banks.size(), xferBenchConfig::pipeline_depth);
             }
         }
@@ -2171,16 +2164,19 @@ execTransferLoop(nixlAgent *agent,
                 [&](size_t bank) {
                     const uint64_t dispatch = nixlbench::steadyTimeUs();
                     if (dispatch >= end) {
-                        return nixlbench::MemosPostStatus::skipped;
+                        return nixlbench::MemosPostResult{nixlbench::MemosPostStatus::skipped,
+                                                          dispatch};
                     }
-                    return postSlot(agent,
-                                    thread_stats,
-                                    banks[bank],
-                                    dispatch >= begin,
-                                    end,
-                                    xferBenchConfig::duration_latency_samples) == NIXL_SUCCESS ?
-                        nixlbench::MemosPostStatus::posted :
-                        nixlbench::MemosPostStatus::error;
+                    const auto status = postSlot(agent,
+                                                 thread_stats,
+                                                 banks[bank],
+                                                 dispatch >= begin,
+                                                 end,
+                                                 xferBenchConfig::duration_latency_samples);
+                    return nixlbench::MemosPostResult{status == NIXL_SUCCESS ?
+                                                          nixlbench::MemosPostStatus::posted :
+                                                          nixlbench::MemosPostStatus::error,
+                                                      dispatch};
                 },
                 [&](size_t bank) {
                     const auto rc = agent->getXferStatus(banks[bank].req);
@@ -2465,7 +2461,8 @@ execTransfer(
                              local_iov,
                              remote_iov,
                              terminate_ptr,
-                             duration_mode ? &duration : nullptr) :
+                             duration_mode ? &duration : nullptr,
+                             setup_ready) :
             -1;
 
         if (result != 0) [[unlikely]] {
@@ -2771,7 +2768,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            1,
                            xferBenchConfig::num_threads,
                            prepop_stats,
-                           nullptr,
+                           &terminate,
                            false,
                            &thread_contexts_);
         if (ret < 0) {
@@ -2845,7 +2842,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                1,
                            xferBenchConfig::num_threads,
                            prepop_stats,
-                           nullptr,
+                           &terminate,
                            false,
                            &thread_contexts_);
         if (ret < 0) {
@@ -2869,7 +2866,7 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                1,
                            xferBenchConfig::num_threads,
                            verify_stats,
-                           nullptr,
+                           &terminate,
                            false,
                            &thread_contexts_);
         if (ret < 0) {
