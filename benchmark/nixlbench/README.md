@@ -1290,3 +1290,64 @@ sudo sysctl -p
 ---
 
 *This guide covers NIXLBench build and usage procedures as of 2025. For the latest updates, please refer to the official repository.*
+
+### DOCA_MEMOS working-set size
+
+By default, DOCA_MEMOS registers only `max_batch_size` keys per thread/device.
+Increasing `total_buffer_size` alone does not increase the number of stored keys.
+To vary the storage working set independently of batch size, set:
+
+```bash
+export NIXLBENCH_MEMOS_KEYS_PER_THREAD=2048
+```
+
+With eight threads, a fixed batch size of 32, and 512 KiB values, this registers
+16,384 distinct keys and exercises an 8 GiB working set. Set
+`--total_buffer_size=8589934592` so each worker has sufficient local buffer space.
+For other block sizes, choose a key count that is a multiple of the batch size;
+for an approximately 8 GiB total working set with eight threads, use
+`floor(1 GiB / block_size / batch_size) * batch_size` keys per thread.
+
+The benchmark prepares one transfer request per batch of keys and cycles through
+those requests in order at `pipeline_depth=1`. With `--pipeline_depth=N`, each
+worker keeps up to N batches in flight, replacing each completed batch independently
+and selecting a free bank from the pool. Banks still in flight are never reused.
+The last batches drain before returning; iteration counts and existing statistics
+retain their usual meaning. This is batch-level replenishment, not FIO's
+per-I/O replenishment: batch size 32 with depth 2 allows up to 64 operations per
+worker (512 across eight workers). READ prepopulation and its retrieval-success
+check visit every key before warmup and measurement. Each phase starts at the first
+batch; a short measurement may visit only part of the pool. The retrieval check
+is not a data-integrity checksum. Request preparation is still included in the
+existing execution-loop timing; larger pools create more request handles.
+
+The option accepts decimal integers from 1 through 1,000,000. It requires the
+NIXL worker, DOCA_MEMOS READ or WRITE, DRAM, one device per side, SG/pairwise mode,
+a positive `pipeline_depth` no larger than `keys_per_thread / batch_size`, and a
+fixed batch size. Request recreation, memory reregistration, QUERY, and location
+randomization are unsupported and rejected.
+By default, the full pool must fit in each thread's buffer at `max_block_size`.
+Set `NIXLBENCH_REUSE_LOCAL=1` with the key-pool option to use only
+`batch_size * pipeline_depth` local value buffers per worker. For example,
+8,192 keys per worker, eight workers, batch 32 and depth 2 with 512 KiB values
+need 256 MiB of local buffers, while the remote working set remains 32 GiB.
+Use `--total_buffer_size=268435456` for that configuration. Reuse defaults to
+off; the variable accepts only `0` or `1` and requires the key-pool mode.
+
+Reuse requires the number of key banks to be divisible by pipeline depth.
+Each lane keeps its local buffers until completion and advances through its
+own key banks. Fixed per-lane iteration budgets ensure prepopulation and the
+retrieval check visit every key despite out-of-order completions. At the end
+of a phase, a fast lane may drain before a slower lane finishes its budget.
+Native iteration counts, timing and statistics are unchanged.
+
+Each local region must hold at least `max_block_size * batch_size * pipeline_depth`
+bytes. Extra bytes, including hugepage allocation padding, are left unused:
+address wrapping uses exactly `block_size * batch_size * pipeline_depth` bytes
+for the current value size. Values such as 508 and 1020 KiB retain their exact
+sizes; they are not rounded to 512 or 1024 KiB. Larger buffers and block-size
+sweeps use the same logical slot mapping.
+
+Existing
+random 128-bit object keys remain independent across threads and runs. Unset the
+environment variable to retain the default transfer path and key count.

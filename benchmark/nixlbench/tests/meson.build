@@ -8,6 +8,34 @@ memos_key_tests = executable(
 )
 test('memos_key_tests', memos_key_tests, suite: 'nixlbench')
 
+memos_key_pool_tests = executable(
+  'memos_key_pool_tests',
+  'memos_key_pool_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_key_pool_tests', memos_key_pool_tests, suite: 'nixlbench')
+
+memos_pipeline_tests = executable(
+  'memos_pipeline_tests',
+  'memos_pipeline_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_pipeline_tests', memos_pipeline_tests, suite: 'nixlbench')
+
+memos_buffer_tests = executable(
+  'memos_buffer_tests',
+  'memos_buffer_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_buffer_tests', memos_buffer_tests, suite: 'nixlbench')
+
+memos_cleanup_tests = executable(
+  'memos_cleanup_tests',
+  'memos_cleanup_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_cleanup_tests', memos_cleanup_tests, suite: 'nixlbench')
+
 gtest_dep = dependency('gtest',
                        main: true,
                        required: false)
