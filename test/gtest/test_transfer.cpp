@@ -789,7 +789,7 @@ TEST_P(TestTransfer, DrainAfterInvalidation) {
         const LogIgnoreGuard lig("invalidated or re-registered after");
         EXPECT_EQ(NIXL_ERR_NOT_FOUND, getAgent(0).postXferReq(req));
     }
-    EXPECT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
+    ASSERT_EQ(NIXL_SUCCESS, getAgent(0).releaseXferReq(req));
 
     // A fresh request against the reloaded registration succeeds.
     fillPayloads(local_buffers, 0);
@@ -1197,6 +1197,10 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
     nixl_blob_t remote_md;
     std::string remote_name;
     ASSERT_EQ(remote_agent->getLocalMD(remote_md), NIXL_SUCCESS);
+    nixlBackendMD remote_backend_md(false);
+    EXPECT_CALL(local_engine, loadRemoteMD(_, DRAM_SEG, _, _))
+        .WillOnce(
+            testing::DoAll(testing::SetArgReferee<3>(&remote_backend_md), Return(NIXL_SUCCESS)));
     ASSERT_EQ(local_agent->loadRemoteMD(remote_md, remote_name), NIXL_SUCCESS);
 
     nixl_xfer_dlist_t local_xfer(DRAM_SEG), remote_xfer(DRAM_SEG);
@@ -1226,7 +1230,7 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
         .WillOnce(Return(NIXL_SUCCESS));
     EXPECT_EQ(local_agent->getXferStatus(req), NIXL_IN_PROG);
     EXPECT_CALL(local_engine, releaseReqH(_)).Times(0);
-    EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+    ASSERT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
     EXPECT_EQ(local_agent->getXferStatus(req), NIXL_SUCCESS);
     {
         const LogIgnoreGuard lig("invalidated or re-registered after");
@@ -1242,7 +1246,7 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
         const LogIgnoreGuard lig("could not release transfer request");
         EXPECT_CALL(local_engine, releaseReqH(&backend_req)).WillOnce(Return(NIXL_ERR_BACKEND));
         EXPECT_CALL(local_engine, unloadMD(_)).Times(0);
-        EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
+        ASSERT_EQ(local_agent->releaseXferReq(req), NIXL_ERR_REPOST_ACTIVE);
     }
     EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
 
@@ -1250,8 +1254,10 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
     EXPECT_CALL(local_engine, releaseReqH(&backend_req))
         .InSequence(cleanup)
         .WillOnce(Return(NIXL_SUCCESS));
-    EXPECT_CALL(local_engine, unloadMD(_)).InSequence(cleanup).WillOnce(Return(NIXL_SUCCESS));
-    EXPECT_EQ(local_agent->releaseXferReq(req), NIXL_SUCCESS);
+    EXPECT_CALL(local_engine, unloadMD(&remote_backend_md))
+        .InSequence(cleanup)
+        .WillOnce(Return(NIXL_SUCCESS));
+    ASSERT_EQ(local_agent->releaseXferReq(req), NIXL_SUCCESS);
     EXPECT_TRUE(testing::Mock::VerifyAndClearExpectations(&local_engine));
 
     EXPECT_EQ(local_agent->releasedDlistH(local_dlist), NIXL_SUCCESS);
