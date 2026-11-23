@@ -15,9 +15,9 @@ using UCX transports such as RDMA, shared memory, and TCP. See the
   exchanges a packed remote key (rkey) for each registered region. The
   receiver stores one unpacked rkey per endpoint for that region.
 - **GPU memory views** prepared with `prep_mem_view` let CUDA kernels initiate
-  transfers. Both the direct path and the device proxy require a loaded NIXL
-  device operations implementation. The direct path also requires the UCX GPU
-  device API at build time.
+  transfers. The `UCX_DIRECT` and `PROXY` device execution modes both require
+  a loaded NIXL device operations implementation. `UCX_DIRECT` also requires
+  UCX GPU device API support at build time.
 
 ## Engine Variants
 
@@ -25,7 +25,7 @@ Backend creation checks these conditions in order.
 
 | Condition | Engine | Description |
 | --------- | ------ | ----------- |
-| `device_proxy=true` | proxy engine | Host threads relay device-issued `PUT` and `ATOMIC_ADD` commands from per-channel, per-peer rings through the UCX host API. |
+| `device_proxy=true` | proxy engine | The GPU executes `PUT` directly when both buffers have direct pointers, and `ATOMIC_ADD` when the counter has one. If a required pointer is missing, host threads relay the command through UCX using per-channel, per-peer rings. |
 | `num_threads > 0` | thread pool engine | Each transfer thread drives a dedicated UCX worker. Batches reaching `split_batch_size` are divided across those workers. |
 | progress thread enabled (Python default) | thread engine | One background thread advances all shared UCX workers and processes incoming notifications. |
 | progress thread disabled (C++ default) | base engine | Polling transfer status or notifications drives progress on the calling thread. |
