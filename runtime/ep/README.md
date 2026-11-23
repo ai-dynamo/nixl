@@ -174,7 +174,9 @@ if no new peers remain, the call does nothing and needs no Store. New peers must
 other in the same exchange. World IDs must be unique within the Store, and
 all participants must finish an exchange before reusing its keys.
 It also exchanges GPU discovery records and agrees on private domain/position mappings.
-Established mappings are preserved, and prepared mappings become live only on activation.
+Mappings of connected ranks are preserved. Ranks that retire all peer connections
+may receive new internal coordinates on reconnection. Prepared mappings become
+live only on activation.
 
 NIXL's metadata manager publishes and fetches transport metadata. Configure its
 backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT=host:port`
@@ -290,6 +292,12 @@ and changed routing. Processes remain alive throughout the membership plan;
 the active topology determines direct or hybrid execution.
 `--reconnect-on-leave` retires departing ranks' peer connections into local
 singleton buffers that sit out until rejoining; their captured graphs are retained.
+Custom reconnect plans must form a product of domains and positions after each
+reconnection. Ranks in a fully retired domain may receive positions incompatible
+with those retained in another domain. The default plan avoids this by restoring
+the full cohort between shrinks; custom plans can do the same or keep connections.
+Unsupported plans fail the normal activation check; the test neither rewrites
+them nor treats rejection as a passing result.
 
 ## Phase profiling
 
