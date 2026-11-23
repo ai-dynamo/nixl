@@ -44,6 +44,10 @@ protected:
         // On a host with NVIDIA GPUs, NIXL rejects transports without CUDA support
         const std::string tls =
             (nixl::hwInfo::instance().numNvidiaGpus == 0) ? "tcp" : "tcp,cuda_copy";
+        // Set in the environment, not passed to the context: the context keeps
+        // a setting that the environment already has (NIXL_UCX_* or UCX_*,
+        // which CI images may set), and these checks need TCP with small
+        // socket buffers
         env_.addVar("UCX_TLS", tls);
         env_.addVar("UCX_ZCOPY_THRESH", zcopyThresh());
         // Small socket buffers keep a large send in progress while the
@@ -52,10 +56,10 @@ protected:
         env_.addVar("UCX_TCP_RCVBUF", "65536");
         context_ = std::make_unique<nixlUcxContext>(
             std::vector<std::string>{}, false, 2, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0, "");
-        receiver_ = std::make_unique<nixlUcxWorker>(*context_, UCP_ERR_HANDLING_MODE_PEER);
+        receiver_ = std::make_unique<nixlUcxWorker>(*context_);
         ASSERT_EQ(UCS_OK,
                   receiver_->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, receive, &received_));
-        sender_ = std::make_unique<nixlUcxWorker>(*context_, UCP_ERR_HANDLING_MODE_PEER);
+        sender_ = std::make_unique<nixlUcxWorker>(*context_, errHandlingMode());
         auto address = receiver_->epAddr();
         ep_ = sender_->connect(address.data());
         ASSERT_NE(nullptr, ep_);
@@ -68,15 +72,10 @@ protected:
         return "0";
     }
 
-    static ucs_status_t
-    receive(void *arg,
-            const void *,
-            size_t,
-            void *data,
-            size_t length,
-            const ucp_am_recv_param_t *) {
-        static_cast<std::string *>(arg)->append(static_cast<const char *>(data), length);
-        return UCS_OK;
+    // Error handling of the sender: only a check that loses the receiver needs it
+    [[nodiscard]] virtual ucp_err_handling_mode_t
+    errHandlingMode() const {
+        return UCP_ERR_HANDLING_MODE_NONE;
     }
 
     template<typename Predicate>
@@ -102,6 +101,58 @@ protected:
         }));
         EXPECT_TRUE(payload == received_)
             << "expected bytes=" << payload.size() << ", received bytes=" << received_.size();
+    }
+
+    // Start the transfer, and wait until only the send of its notification
+    // is in progress. Skips the test where the sockets take a large send
+    // without the receiver: there is nothing to hold.
+    void
+    holdNotification(const std::string &payload) {
+        ASSERT_EQ(large_payload_size, payload.size());
+        if (!heldBack_) {
+            GTEST_SKIP() << "the sockets take a send of " << payload.size()
+                         << " bytes without the receiver";
+        }
+        transfer_.reset(new nixlUcxBackendReqH(sender_.get()));
+        transfer_->setNotif(std::string(payload));
+        transfer_->init({}, *ep_);
+        ASSERT_EQ(NIXL_SUCCESS, transfer_->flush());
+        ASSERT_TRUE(waitUntil([&] {
+            return (transfer_->status() == NIXL_IN_PROG) && !transfer_->hasPendingRequests();
+        }));
+    }
+
+    void
+    progressReceiver() {
+        receiver_->progress();
+    }
+
+    void
+    destroyReceiver() {
+        receiver_.reset();
+    }
+
+    [[nodiscard]] nixl_status_t
+    transferStatus() {
+        return transfer_->status();
+    }
+
+    // Release the transfer and destroy it, as the engine does
+    void
+    releaseTransfer() {
+        transfer_.reset();
+    }
+
+private:
+    static ucs_status_t
+    receive(void *arg,
+            const void *,
+            size_t,
+            void *data,
+            size_t length,
+            const ucp_am_recv_param_t *) {
+        static_cast<std::string *>(arg)->append(static_cast<const char *>(data), length);
+        return UCS_OK;
     }
 
     // Whether the sockets hold back a large send while the receiver does not
@@ -148,7 +199,7 @@ protected:
         ASSERT_NO_FATAL_FAILURE(probeHold());
         // A TCP flush after a send waits for the peer. Flush now, so that a
         // flush with no sends after this one completes without the receiver.
-        nixlUcxReq req = nullptr;
+        nixlUcxReq req;
         const nixl_status_t flushed = ep_->flushEp(req);
         ASSERT_TRUE(flushed == NIXL_SUCCESS || flushed == NIXL_IN_PROG);
         if (flushed == NIXL_IN_PROG) {
@@ -163,27 +214,8 @@ protected:
         received_.clear();
     }
 
-    // Start the transfer, and wait until only the send of its notification
-    // is in progress. Skips the test where the sockets take a large send
-    // without the receiver: there is nothing to hold.
-    void
-    holdNotification(const std::string &payload) {
-        ASSERT_EQ(large_payload_size, payload.size());
-        if (!heldBack_) {
-            GTEST_SKIP() << "the sockets take a send of " << payload.size()
-                         << " bytes without the receiver";
-        }
-        transfer_.reset(new nixlUcxBackendReqH(sender_.get()));
-        transfer_->setNotif(std::string(payload));
-        transfer_->init({}, *ep_);
-        ASSERT_EQ(NIXL_SUCCESS, transfer_->flush());
-        ASSERT_TRUE(waitUntil([&] {
-            return (transfer_->status() == NIXL_IN_PROG) && !transfer_->hasPendingRequests();
-        }));
-    }
-
     // Releases a transfer and then destroys it, as the engine does
-    struct releaseTransfer {
+    struct transferDeleter {
         void
         operator()(nixlUcxBackendReqH *transfer) const {
             transfer->release();
@@ -203,7 +235,7 @@ protected:
     // Released before the endpoint and the worker go, also when a failed
     // assertion ends a test early: a flush in progress must not call back
     // into a destroyed transfer
-    std::unique_ptr<nixlUcxBackendReqH, releaseTransfer> transfer_;
+    std::unique_ptr<nixlUcxBackendReqH, transferDeleter> transfer_;
 };
 
 TEST_F(ucxNotification, TransferIsDoneOnceNotificationIsSent) {
@@ -215,11 +247,11 @@ TEST_F(ucxNotification, TransferIsDoneOnceNotificationIsSent) {
 
     nixl_status_t status = NIXL_IN_PROG;
     ASSERT_TRUE(waitUntil([&] {
-        receiver_->progress();
-        return (status = transfer_->status()) != NIXL_IN_PROG;
+        progressReceiver();
+        return (status = transferStatus()) != NIXL_IN_PROG;
     }));
     EXPECT_EQ(NIXL_SUCCESS, status);
-    transfer_.reset();
+    releaseTransfer();
     ASSERT_NO_FATAL_FAILURE(progressUntilReceived(payload));
 }
 
@@ -235,19 +267,25 @@ TEST_F(ucxNotification, ReleaseLeavesNotificationSendToItsCallback) {
     // releases the request and the payload.
     const gtest::LogIgnoreGuard in_progress(
         "request handle .* released with .* requests in progress");
-    transfer_.reset();
+    releaseTransfer();
     ASSERT_NO_FATAL_FAILURE(progressUntilReceived(payload));
     EXPECT_EQ(0, in_progress.getIgnoredCount());
 }
 
-// The notification is sent with bcopy: when the connection fails while a
-// zero-copy send is partly written, UCX TCP can complete it twice
-// (openucx/ucx#12376)
+// The receiver goes away while it holds back the notification, so the sender
+// handles peer errors. The notification is sent with bcopy: when the
+// connection fails while a zero-copy send is partly written, UCX TCP can
+// complete it twice (openucx/ucx#12376).
 class ucxNotificationBcopy : public ucxNotification {
 protected:
     [[nodiscard]] std::string
     zcopyThresh() const override {
         return "inf";
+    }
+
+    [[nodiscard]] ucp_err_handling_mode_t
+    errHandlingMode() const override {
+        return UCP_ERR_HANDLING_MODE_PEER;
     }
 };
 
@@ -260,9 +298,9 @@ TEST_F(ucxNotificationBcopy, FailedNotificationSendFailsTransfer) {
     // The receiver goes away while it holds back the notification. The send
     // fails, and so does the transfer.
     const gtest::LogIgnoreGuard send_failed("UCX AM send failed with status");
-    receiver_.reset();
+    destroyReceiver();
     nixl_status_t status = NIXL_IN_PROG;
-    ASSERT_TRUE(waitUntil([&] { return (status = transfer_->status()) != NIXL_IN_PROG; }));
+    ASSERT_TRUE(waitUntil([&] { return (status = transferStatus()) != NIXL_IN_PROG; }));
     EXPECT_EQ(NIXL_ERR_REMOTE_DISCONNECT, status);
 }
 
