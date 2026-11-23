@@ -15,6 +15,7 @@ mockCheck(bool value) {
         throw std::runtime_error("mock NIXL ownership contract violated");
     }
 }
+
 using nixl_status_t = int;
 inline constexpr int NIXL_SUCCESS = 0, NIXL_IN_PROG = 1, NIXL_ERR_UNKNOWN = -1,
                      NIXL_ERR_REPOST_ACTIVE = -2;
