@@ -2537,7 +2537,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                            NIXL_WRITE,
                            1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "Failed to pre-populate for QUERY (block_size=" << block_size << ")"
                       << std::endl;
@@ -2608,7 +2609,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                                 xferBenchConfig::max_batch_size) :
                                1,
                            xferBenchConfig::num_threads,
-                           prepop_stats);
+                           prepop_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Failed to pre-populate keys for READ (block_size="
                       << block_size << ")" << std::endl;
@@ -2629,7 +2631,8 @@ xferBenchNixlWorker::transfer(size_t block_size,
                                                 xferBenchConfig::max_batch_size) :
                                1,
                            xferBenchConfig::num_threads,
-                           verify_stats);
+                           verify_stats,
+                           &terminate);
         if (ret < 0) {
             std::cerr << "DOCA_MEMOS: Verification failed - retrieve operations failed after "
                          "pre-population (block_size="
