@@ -20,7 +20,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "nixl"
 version = "@VERSION@"
-description = "NIXL Python API meta package for CUDA variants"
+description = "NIXL Python API meta package"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
 license-files = ["LICENSE"]
@@ -32,7 +32,6 @@ authors = [
 dependencies = [@WHEEL_DEPS@]
 
 [project.optional-dependencies]
-cu12 = ["nixl-cu12==@VERSION@"]
 cu13 = ["nixl-cu13==@VERSION@"]
 
 [tool.setuptools]
