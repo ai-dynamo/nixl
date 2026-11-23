@@ -11,9 +11,10 @@
 #include <regex>
 #include <string>
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/exception.cuh>
 
-#include "../utils/format.hpp"
 #include "../utils/hash.hpp"
 #include "../utils/lazy_init.hpp"
 #include "../utils/system.hpp"
@@ -65,7 +66,7 @@ public:
         cache_dir_path = std::filesystem::absolute(cache_dir_path);
 
         // The compiler flags applied to all derived compilers
-        flags = fmt::format("-std=c++{} --diag-suppress=39,161,174,177,186,940,3012 "
+        flags = absl::StrFormat("-std=c++%d --diag-suppress=39,161,174,177,186,940,3012 "
                             "--ptxas-options=--register-usage-level=10",
                             get_env<int>("NIXL_EP_JIT_CPP_STANDARD", 20));
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PTXAS_VERBOSE", 0))
@@ -75,9 +76,9 @@ public:
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_WITH_LINEINFO", 0))
             flags += " -Xcompiler -rdynamic -lineinfo";
         // NIXL's GPU API and UCX's device API for the kernels (`EP_NIXL_DEVICE_API` lets `nixl_transport.cuh` include them)
-        flags += fmt::format(" -I {} -I {} -DEP_NIXL_DEVICE_API=1", quote_path(nixl_root / "include"), quote_path(ucx_root / "include"));
+        flags += absl::StrFormat(" -I %s -I %s -DEP_NIXL_DEVICE_API=1", quote_path(nixl_root / "include"), quote_path(ucx_root / "include"));
 
-        flags += fmt::format(" -DEP_NUM_TOPK_IDX_BITS={}", EP_NUM_TOPK_IDX_BITS);
+        flags += absl::StrFormat(" -DEP_NUM_TOPK_IDX_BITS=%d", EP_NUM_TOPK_IDX_BITS);
         if (profiling_enabled())
             flags += " -DEP_ADAPTIVE_PROFILE=1";
     }
@@ -120,8 +121,8 @@ public:
     }
 
     std::shared_ptr<KernelRuntime> build(const std::string& name, const std::string& code) const {
-        const auto kernel_signature = fmt::format("{}$${}$${}$${}", name, signature, flags, code);
-        const auto dir_path = cache_dir_path / "cache" / fmt::format("kernel.{}.{}", name, get_hex_digest(kernel_signature));
+        const auto kernel_signature = absl::StrFormat("%s$$%s$$%s$$%s", name, signature, flags, code);
+        const auto dir_path = cache_dir_path / "cache" / absl::StrFormat("kernel.%s.%s", name, get_hex_digest(kernel_signature));
 
         // Hit the runtime cache
         if (const auto runtime = kernel_runtime_cache->get(dir_path); runtime != nullptr)
@@ -175,7 +176,7 @@ public:
 
     static void disassemble(const std::filesystem::path &cubin_path, const std::filesystem::path &sass_path) {
         // Disassemble the CUBIN file to SASS
-        const auto command = fmt::format("{} --dump-sass {} > {}", quote_path(cuobjdump_path), quote_path(cubin_path), quote_path(sass_path));
+        const auto command = absl::StrFormat("%s --dump-sass %s > %s", quote_path(cuobjdump_path), quote_path(cubin_path), quote_path(sass_path));
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
             printf("Running cuobjdump command: %s\n", command.c_str());
         const auto [return_code, output] = call_external_command(command);
@@ -203,7 +204,7 @@ class NVCCCompiler final: public Compiler {
         const auto command = quote_path(nvcc_path) + " --version";
         const auto [return_code, output] = call_external_command(command);
         if (return_code != 0)
-            EP_HOST_UNREACHABLE(fmt::format("Cannot run NVCC '{}': {}. Set NIXL_EP_JIT_NVCC_COMPILER to a CUDA 13 compiler", nvcc_path.string(), output));
+            EP_HOST_UNREACHABLE(absl::StrFormat("Cannot run NVCC '%s': %s. Set NIXL_EP_JIT_NVCC_COMPILER to a CUDA 13 compiler", nvcc_path.string(), output));
 
         int major, minor;
         std::smatch match;
@@ -222,11 +223,11 @@ public:
         if (nvcc_path.has_parent_path())
             nvcc_path = std::filesystem::absolute(nvcc_path);
         const auto [nvcc_major, nvcc_minor] = get_nvcc_version();
-        signature = fmt::format("NVCC{}.{}", nvcc_major, nvcc_minor);
+        signature = absl::StrFormat("NVCC%d.%d", nvcc_major, nvcc_minor);
 
         // Override the compiler flags
         const auto arch = device_runtime->get_arch();
-        flags = fmt::format("{} -I{} --gpu-architecture=sm_{} "
+        flags = absl::StrFormat("%s -I%s --gpu-architecture=sm_%s "
                             "--compiler-options=-fPIC,-O3,-fconcepts,-Wno-deprecated-declarations,-Wno-abi "
                             "-O3 --expt-relaxed-constexpr --expt-extended-lambda",
                             flags, quote_path(library_include_path), arch);
@@ -242,7 +243,7 @@ public:
         // Compile to CUBIN
         // Avoid cwd files shadowing C++ standard library headers
         const auto compile_dir = make_tmp_dir();
-        const auto command = fmt::format("cd {} && {} {} -cubin -o {} {}",
+        const auto command = absl::StrFormat("cd %s && %s %s -cubin -o %s %s",
             quote_path(compile_dir), quote_path(nvcc_path), quote_path(code_path), quote_path(cubin_path), flags);
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
             printf("Running NVCC command: %s\n", command.c_str());
@@ -254,7 +255,7 @@ public:
 
         // Compile to PTX if needed
         if (ptx_path.has_value()) {
-            const auto ptx_command = fmt::format("cd {} && {} {} -ptx -o {} {}",
+            const auto ptx_command = absl::StrFormat("cd %s && %s %s -ptx -o %s %s",
                 quote_path(compile_dir), quote_path(nvcc_path), quote_path(code_path), quote_path(*ptx_path), flags);
             if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
                 printf("Running NVCC PTX command: %s\n", ptx_command.c_str());

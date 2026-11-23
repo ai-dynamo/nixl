@@ -7,9 +7,10 @@
 #include <ATen/cuda/CUDAContext.h>
 #include <fstream>
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/exception.cuh>
 
-#include "../utils/format.hpp"
 #include "../utils/system.hpp"
 #include "handle.hpp"
 
@@ -39,7 +40,7 @@ public:
         // Find the only symbol
         // TODO: use kernel enumeration for newer drivers
         const std::vector<std::string> illegal_names = {"vprintf", "__instantiate_kernel", "__internal", "__assertfail"};
-        const auto [exit_code, symbols] = call_external_command(fmt::format("{} -symbols {}", quote_path(cuobjdump_path), quote_path(cubin_path)));
+        const auto [exit_code, symbols] = call_external_command(absl::StrFormat("%s -symbols %s", quote_path(cuobjdump_path), quote_path(cubin_path)));
         EP_HOST_ASSERT(exit_code == 0);
         std::istringstream iss(symbols);
         std::vector<std::string> symbol_names;

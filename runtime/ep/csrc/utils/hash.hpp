@@ -6,6 +6,9 @@
 
 #include <string>
 #include <cstdint>
+#include <iomanip>
+#include <sstream>
+#include <vector>
 
 namespace nixl_ep_v2 {
 

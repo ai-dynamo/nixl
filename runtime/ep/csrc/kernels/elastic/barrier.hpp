@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/compiled.cuh>
 #include <nixl_ep_v2/common/exception.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
@@ -27,14 +29,14 @@ public:
     };
 
     static std::string generate_impl(const Args& args) {
-        return fmt::format(R"(
+        return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/barrier.cuh>
 
 using namespace nixl_ep_v2::elastic;
 
-static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&barrier_impl<{}, {}, {}>);
-}}
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&barrier_impl<%d, %d, %d>);
+}
 )",                        args.launch_args.num_threads, args.num_max_scaleup_ranks, args.num_timeout_cycles);
     }
 

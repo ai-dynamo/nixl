@@ -27,7 +27,7 @@ Configure Meson from the NIXL repository root with `build_nixl_ep` enabled and
 
 `nixl_cuda_arch_list` selects extension targets (for example `100` for
 B200/GB200); communication kernels are JIT-compiled for the running GPU.
-The build uses fmt headers from the system or the pinned Meson fallback.
+Formatting uses NIXL's Abseil dependency.
 `build_nixl_ep` enables both EP implementations and defaults to false.
 This runtime requires CUDA 13; manylinux wheel builds default EP off on CUDA 12.
 With EP disabled, its build prerequisites are not required. The wheel builder

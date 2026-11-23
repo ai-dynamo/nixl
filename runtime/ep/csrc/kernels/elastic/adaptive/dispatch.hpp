@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/compiled.cuh>
 #include <nixl_ep_v2/common/exception.cuh>
 #include <nixl_ep_v2/common/layout.cuh>
@@ -44,16 +46,16 @@ public:
     };
 
     static std::string generate_impl(const Args& args) {
-        return fmt::format(R"(
+        return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/dispatch.cuh>
 
 using namespace nixl_ep_v2::elastic::adaptive;
 
-static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
-}}
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<%s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
+}
 )",
-            args.do_cpu_sync,
+            args.do_cpu_sync ? "true" : "false",
             args.launch_args.grid_dim.first,
             args.num_notify_warps, args.num_channels_per_sm,
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
@@ -201,16 +203,16 @@ public:
     };
 
     static std::string generate_impl(const Args& args) {
-        return fmt::format(R"(
+        return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/dispatch_copy_epilogue.cuh>
 
 using namespace nixl_ep_v2::elastic::adaptive;
 
-static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
-}}
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
+}
 )",
-                           args.do_expand, args.do_zero_padding,
+                           args.do_expand ? "true" : "false", args.do_zero_padding ? "true" : "false",
                            args.launch_args.grid_dim.first, args.num_launch_sms, args.num_channels_per_sm, args.num_warps,
                            args.num_max_scaleup_ranks,
                            args.num_hidden_bytes, args.num_sf_packs,

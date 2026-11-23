@@ -36,7 +36,12 @@ if torch_check.returncode() != 0
     error('PyTorch not found for requested NIXL EP runtime build')
 endif
 
-fmt_dep = dependency('fmt', version: '>=11', fallback: ['fmt', 'fmt_dep'])
+if is_variable('abseil_proj')
+    absl_str_format_dep = absl_strings_dep
+else
+    absl_str_format_dep = dependency('absl_str_format',
+        version: '==' + absl_strings_dep.version(), allow_fallback: false)
+endif
 
 v2_cuda_include_root = cuda_inc_path
 if v2_cuda_include_root == ''
@@ -170,7 +175,7 @@ py.extension_module(
         'csrc/kernels/backend/nixl_device.cu',
     ],
     subdir: v2_install_dir,
-    dependencies: [nixl_dep, pybind_dep, cuda_dep, torch_dep, ucx_dep, fmt_dep],
+    dependencies: [nixl_dep, pybind_dep, cuda_dep, torch_dep, ucx_dep, absl_str_format_dep],
     include_directories: v2_inc_dirs,
     cpp_args: v2_cpp_args,
     cuda_args: v2_cuda_args,

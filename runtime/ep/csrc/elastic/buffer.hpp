@@ -13,6 +13,7 @@
 #include <c10/cuda/CUDAGraphsC10Utils.h>
 #include <c10/cuda/CUDAGuard.h>
 #include <c10/util/ScopeExit.h>
+#include <absl/strings/str_format.h>
 
 #include <nixl_ep_v2/common/layout.cuh>
 #include <nixl_ep_v2/common/compiled.cuh>
@@ -21,7 +22,6 @@
 #include "../kernels/backend/nixl.hpp"
 #include "../kernels/elastic/api.hpp"
 #include "../utils/event.hpp"
-#include "../utils/format.hpp"
 #include "utils.hpp"
 
 namespace nixl_ep_v2::elastic {
@@ -266,7 +266,7 @@ private:
             for (int d = 0; d < next.num_scaleout_ranks; ++ d) for (int k = 0; k < next.num_scaleup_ranks; ++ k) {
                 const int wr = slot_to_world[d * max_num_scaleup_ranks + k];
                 if (next.is_active(d, k) and (wr < 0 or not nixl_context->is_connected(wr)))
-                    EP_HOST_UNREACHABLE(fmt::format("Rank {} requests domain {}, position {} without a connected peer: call `connect_ranks` first", nixl_context->world_rank, d, k));
+                    EP_HOST_UNREACHABLE(absl::StrFormat("Rank %d requests domain %d, position %d without a connected peer: call `connect_ranks` first", nixl_context->world_rank, d, k));
             }
         }
         return next;
@@ -367,7 +367,7 @@ public:
         const auto wl = layout::WorkspaceLayout(workspace);
         for (const int wr: world_ranks) {
             if (nixl_context->is_connected(wr))
-                EP_HOST_UNREACHABLE(fmt::format("Rank {}: world rank {} is this rank or already connected", nixl_context->world_rank, wr));
+                EP_HOST_UNREACHABLE(absl::StrFormat("Rank %d: world rank %d is this rank or already connected", nixl_context->world_rank, wr));
             CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_signal_ptr(wr), 0, sizeof(int64_t), stream));
             CUDA_RUNTIME_CHECK(cudaMemsetAsync(wl.get_peer_barrier_expected_ptr(wr), 0, sizeof(int64_t), stream));
         }
@@ -646,7 +646,7 @@ public:
             EP_HOST_ASSERT(cumulative_local_expert_recv_stats->is_cuda() and
                            cumulative_local_expert_recv_stats->is_contiguous());
             if (num_local_experts_ < num_local_experts)
-                EP_HOST_UNREACHABLE(fmt::format("`cumulative_local_expert_recv_stats` has {} entries: allocate at least {} for the fixed local expert slots",
+                EP_HOST_UNREACHABLE(absl::StrFormat("`cumulative_local_expert_recv_stats` has %d entries: allocate at least %d for the fixed local expert slots",
                                                num_local_experts_, num_local_experts));
             cumulative_local_expert_recv_stats_ptr = cumulative_local_expert_recv_stats->data_ptr<int>();
         }

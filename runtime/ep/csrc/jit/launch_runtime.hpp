@@ -5,10 +5,10 @@
 #pragma once
 
 #include <ATen/cuda/CUDAContext.h>
+#include <absl/strings/str_format.h>
 
 #include <nixl_ep_v2/common/exception.cuh>
 
-#include "../utils/format.hpp"
 #include "../utils/system.hpp"
 #include "compiler.hpp"
 #include "include_parser.hpp"
@@ -40,7 +40,7 @@ public:
             include_hash = include_parser->get_hash_value(code);
 
         // TODO: optimize string concat performance
-        code = fmt::format("// Includes' hash value: {}\n{}", include_hash, code);
+        code = absl::StrFormat("// Includes' hash value: %s\n%s", include_hash, code);
         if (get_env<int>("NIXL_EP_JIT_DEBUG", 0))
             printf("Generated kernel code:\n%s\n", code.c_str());
         return code;

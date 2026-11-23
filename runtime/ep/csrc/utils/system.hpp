@@ -7,18 +7,23 @@
 #include <algorithm>
 #include <array>
 #include <cerrno>
+#include <chrono>
 #include <cstdlib>
 #include <filesystem>
 #include <functional>
+#include <iomanip>
 #include <limits>
 #include <random>
+#include <sstream>
 #include <string>
+#include <tuple>
+#include <type_traits>
 #include <memory>
 #include <unistd.h>
 
-#include <nixl_ep_v2/common/exception.cuh>
+#include <absl/strings/str_format.h>
 
-#include "format.hpp"
+#include <nixl_ep_v2/common/exception.cuh>
 
 namespace nixl_ep_v2 {
 
@@ -38,7 +43,7 @@ static dtype_t get_env(const std::string& name, const dtype_t& default_value = d
         const auto value = std::strtol(c_str, &end, 10);
         if (errno == ERANGE or end == c_str or *end != '\0' or
             value < std::numeric_limits<int>::min() or value > std::numeric_limits<int>::max())
-            EP_HOST_UNREACHABLE(fmt::format("Invalid {}='{}': set an in-range base-10 integer", name, c_str));
+            EP_HOST_UNREACHABLE(absl::StrFormat("Invalid %s='%s': set an in-range base-10 integer", name, c_str));
         return static_cast<int>(value);
     } else {
         EP_HOST_ASSERT(false and "Unexpected type");
@@ -74,8 +79,8 @@ static std::filesystem::path make_dirs(const std::filesystem::path& path) {
     std::error_code capture;
     const bool created = std::filesystem::create_directories(path, capture);
     if (not (created or capture.value() == 0)) {
-        EP_HOST_UNREACHABLE(fmt::format("Failed to make directory: {}, created: {}, value: {}",
-                                        path.c_str(), created, capture.value()));
+        EP_HOST_UNREACHABLE(absl::StrFormat("Failed to make directory: %s, created: %s, value: %d",
+                                           path.c_str(), created ? "true" : "false", capture.value()));
     }
     if (created and get_env<int>("NIXL_EP_JIT_DEBUG"))
         printf("Create directory: %s\n", path.c_str());

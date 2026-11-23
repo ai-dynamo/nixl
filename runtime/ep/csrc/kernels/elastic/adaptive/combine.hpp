@@ -4,6 +4,8 @@
 
 #pragma once
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/compiled.cuh>
 #include <nixl_ep_v2/common/exception.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
@@ -41,16 +43,16 @@ public:
     };
 
     static std::string generate_impl(const Args& args) {
-        return fmt::format(R"(
+        return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/combine.cuh>
 
 using namespace nixl_ep_v2::elastic::adaptive;
 
-static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}>);
-}}
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<%s, %s, %d, %d, %d, %d, %d, %d>);
+}
 )",
-                           args.use_expanded_layout, args.allow_multiple_reduction,
+                           args.use_expanded_layout ? "true" : "false", args.allow_multiple_reduction ? "true" : "false",
                            args.launch_args.grid_dim.first,
                            args.num_channels_per_sm,
                            args.num_max_scaleup_ranks,
@@ -154,15 +156,15 @@ public:
     };
 
     static std::string generate_impl(const Args& args) {
-        return fmt::format(R"(
+        return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/combine_reduce_epilogue.cuh>
 
 using namespace nixl_ep_v2::elastic::adaptive;
 
-static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
-}}
-)",                        args.use_expanded_layout, args.allow_multiple_reduction,
+static void __instantiate_kernel() {
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
+}
+)",                        args.use_expanded_layout ? "true" : "false", args.allow_multiple_reduction ? "true" : "false",
                            args.launch_args.grid_dim.first, args.num_launch_sms,
                            args.launch_args.num_threads / 32,
                            args.num_channels_per_sm,

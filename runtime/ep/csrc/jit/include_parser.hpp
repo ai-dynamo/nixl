@@ -15,9 +15,10 @@
 #include <unordered_map>
 #include <vector>
 
+#include <absl/strings/str_format.h>
+
 #include <nixl_ep_v2/common/exception.cuh>
 
-#include "../utils/format.hpp"
 #include "../utils/hash.hpp"
 #include "../utils/lazy_init.hpp"
 
@@ -41,9 +42,9 @@ class IncludeParser {
                 if (filename.rfind("nixl_ep_v2/", 0) == 0)  // We only parse `<nixl_ep_v2/*>`
                     includes.push_back(filename);
             } else {
-                std::string error_info = fmt::format("Non-standard include: {}", include_str);
+                std::string error_info = absl::StrFormat("Non-standard include: %s", include_str);
                 if (file_path != "")
-                    error_info += fmt::format(" ({})", file_path.string());
+                    error_info += absl::StrFormat(" (%s)", file_path.string());
                 EP_HOST_UNREACHABLE(error_info);
             }
         }
@@ -72,14 +73,14 @@ public:
         if (cache.count(path) > 0) {
             const auto opt = cache[path];
             if (not opt.has_value())
-                EP_HOST_UNREACHABLE(fmt::format("Circular include may occur: {}", path.string()));
+                EP_HOST_UNREACHABLE(absl::StrFormat("Circular include may occur: %s", path.string()));
             return opt.value();
         }
 
         // Read file and calculate hash recursively
         std::ifstream in(path);
         if (not in.is_open())
-            EP_HOST_UNREACHABLE(fmt::format("Failed to open: {}", path.string()));
+            EP_HOST_UNREACHABLE(absl::StrFormat("Failed to open: %s", path.string()));
         std::string code((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
         cache[path] = std::nullopt;
         return (cache[path] = get_hash_value(code, false)).value();
