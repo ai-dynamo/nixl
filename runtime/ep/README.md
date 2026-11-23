@@ -12,6 +12,7 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
 
 - Hopper (SM90) or newer GPUs with the required TMA instructions.
 - PyTorch 2.14 or newer, with a matching Python and CUDA installation.
+  Wheels must include an EP extension matching the installed PyTorch major/minor version.
 - CUDA 13.0 or newer toolkit with `nvcc` and `cuobjdump` on JIT hosts, including
   wheel installations, supporting the target GPU and the selected NIXL/UCX builds.
 - NIXL and UCX builds with the GPU device API (`nixlAtomicAdd` and UCX
@@ -148,6 +149,8 @@ have read it and native preparation finishes. Already-connected peers are ignore
 if no new peers remain, the call does nothing and needs no Store. New peers must request each
 other in the same exchange. World IDs must be unique within the Store, and
 all participants must finish an exchange before reusing its keys.
+Restrict access to the supplied Python Store to trusted participants; peer
+records are deserialized using `pickle`.
 It also exchanges GPU discovery records and agrees on private domain/position mappings.
 Mappings of connected ranks are preserved. Ranks that retire all peer connections
 may receive new internal coordinates on reconnection. Prepared mappings become
@@ -269,6 +272,8 @@ Custom reconnect plans must form a product of domains and positions after each
 reconnection. Ranks in a fully retired domain may receive positions incompatible
 with those retained in another domain. The default plan avoids this by restoring
 the full cohort between shrinks; custom plans can do the same or keep connections.
+With `--feed-pairs`, warm-up retains connections while visiting phases with new
+participants; those phases must also form products under the initial mapping.
 Unsupported plans fail the normal activation check; the test neither rewrites
 them nor treats rejection as a passing result.
 
