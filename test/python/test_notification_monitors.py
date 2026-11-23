@@ -22,7 +22,6 @@ from nixl import (
     nixl_notification_monitor,
 )
 
-
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="requires Linux eventfd"
 )

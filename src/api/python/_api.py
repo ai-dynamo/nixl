@@ -182,9 +182,16 @@ class nixl_notification_monitor(nixlBind.nixlNotificationMonitor):
         return notifications
 
 
-# The native enum itself, so its members and the module-level NIXL_NOTIF_CALLBACK_*
-# constants are the same values and compare equal.
-nixl_notif_callback_support_t = nixlBind.nixl_notif_callback_support_t
+if TYPE_CHECKING:
+
+    class nixl_notif_callback_support_t(Enum):
+        NIXL_NOTIF_CALLBACK_NONE = 0
+        NIXL_NOTIF_CALLBACK_ON_PROGRESS = 1
+        NIXL_NOTIF_CALLBACK_BACKGROUND = 2
+
+else:
+    # Keep the runtime enum identical to the type exported by the native bindings.
+    nixl_notif_callback_support_t = nixlBind.nixl_notif_callback_support_t
 
 
 class nixl_thread_sync_t(Enum):
