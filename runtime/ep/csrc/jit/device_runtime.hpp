@@ -4,6 +4,7 @@
 
 #pragma once
 
+#include <cuda_runtime.h>
 #include <nixl_ep_v2/common/exception.cuh>
 
 #include "../utils/lazy_init.hpp"
