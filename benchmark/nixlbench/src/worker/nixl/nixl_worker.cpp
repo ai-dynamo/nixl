@@ -26,6 +26,7 @@
  * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
+#include <fstream>
 #include <iomanip>
 #include "kernels/nixlbench_device_launch.cuh"
 #include <limits>
