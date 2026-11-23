@@ -77,7 +77,7 @@ class Buffer:
         self.tcp_store_group = tcp_store_group
 
         if disable_ll_nvlink:
-            os.environ["UCX_TLS"] = "^cuda_ipc"
+            os.environ["NIXL_UCX_TLS"] = "^cuda_ipc"
 
         self.runtime = nixl_ep_cpp.Buffer(self.rank, explicitly_destroy, timeout_ms)
 
