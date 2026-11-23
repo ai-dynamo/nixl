@@ -301,7 +301,7 @@ else
     add_languages('cuda', native: false)
     add_project_arguments('-std=c++20', language: 'cuda')
     cuda = meson.get_compiler('cuda')
-    doca_gpunetio_dep = dependency('doca-gpunetio', required: false)
+    doca_gpunetio_dep = dependency('doca-gpunetio', version: '>=3.5', required: false)
     if ucx_device_cuda_arch_list == 'auto'
         ucx_device_cuda_arch_list = '80,86,89,90,100,103,120'
     endif

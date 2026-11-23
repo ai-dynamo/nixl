@@ -271,6 +271,7 @@ public:
     static int device_channel_num;
     static std::string device_mode;
     static uint32_t device_proxy_threads;
+    static uint32_t device_posts_per_doorbell;
 
     /* Number of independent groups Device API kernel runs with. */
     static int

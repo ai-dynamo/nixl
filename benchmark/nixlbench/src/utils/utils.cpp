@@ -358,6 +358,11 @@ NB_ARG_BOOL(gusli_try_use_uring,
             "Try to use io_uring engine in GUSLI backend (default: false)");
 
 // UCX GPU Device API options
+NB_ARG_UINT32(device_posts_per_doorbell,
+              0,
+              "PUTs per execution group before requesting a doorbell; 0 or 1 requests one "
+              "for every PUT. The last PUT of each iteration always requests a doorbell. "
+              "Only used with --use_device_api; proxy ignores defer flags.");
 NB_ARG_BOOL(use_device_api,
             false,
             "Use UCX GPU Device API for GPU-kernel-initiated PUT transfers. "
@@ -486,6 +491,7 @@ int xferBenchConfig::block_threads = 1;
 int xferBenchConfig::device_channel_num = 0;
 std::string xferBenchConfig::device_mode = XFERBENCH_DEVICE_MODE_DIRECT;
 uint32_t xferBenchConfig::device_proxy_threads = 0;
+uint32_t xferBenchConfig::device_posts_per_doorbell = 0;
 
 static bool
 validateDeviceAPIConfig() {
@@ -964,6 +970,7 @@ xferBenchConfig::loadParams(void) {
     device_channel_num = NB_ARG(device_channel_num);
     device_mode = NB_ARG(device_mode);
     device_proxy_threads = NB_ARG(device_proxy_threads);
+    device_posts_per_doorbell = NB_ARG(device_posts_per_doorbell);
     if (use_device_api && (!validateDeviceAPIConfig() || !setupDeviceAPIConfig())) {
         return -1;
     }
@@ -1349,6 +1356,8 @@ xferBenchConfig::printConfig() {
         printOption("Device API channels (--device_channel_num=N)",
                     std::to_string(device_channel_num));
         printOption("Device API mode (--device_mode=[direct,proxy])", device_mode);
+        printOption("Device API posts per doorbell (--device_posts_per_doorbell=N)",
+                    std::to_string(device_posts_per_doorbell));
         if (device_mode == XFERBENCH_DEVICE_MODE_PROXY) {
             printOption("Device API proxy threads (--device_proxy_threads=N)",
                         std::to_string(device_proxy_threads));
