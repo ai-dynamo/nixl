@@ -212,7 +212,7 @@ meson setup build -Drocm_path=/custom/path/to/rocm
 #### Environment Variables
 
 There are a few environment variables that can be set to configure the build:
-- `NIXL_NO_STUBS_FALLBACK`: Read by the Rust bindings build (`src/bindings/rust/build.rs`); when not set (or not `1`), a failed build of the NIXL library falls back to building the stub API. Set it to `1` to turn that fallback into a hard error.
+- The Rust bindings (`src/bindings/rust/build.rs`) fall back to the stub API if the native NIXL build fails. Only `NIXL_NO_STUBS_FALLBACK=1` turns that failure into a build error. If Cargo already cached a stub build, run `cargo clean -p nixl-sys` in the Cargo workspace before rebuilding with the new setting.
 
 ### Building Documentation
 
