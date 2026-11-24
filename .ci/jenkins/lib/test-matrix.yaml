@@ -31,6 +31,7 @@ registry_path: /sw-nbu-swx-nixl-docker-local/ci
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  activeDeadlineSeconds: 25500
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true

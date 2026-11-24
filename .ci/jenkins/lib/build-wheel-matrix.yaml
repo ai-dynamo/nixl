@@ -85,6 +85,7 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  activeDeadlineSeconds: 25500
   # 24GB memory and 16 CPU cores for parallel compilation and large builds
   limits: '{memory: 24Gi, cpu: 16000m}'
   requests: '{memory: 24Gi, cpu: 16000m}'

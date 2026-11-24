@@ -37,6 +37,7 @@ credentials:
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  activeDeadlineSeconds: 2100
   imagePullSecrets: "['artifactory-pull-secret']"
   limits: '{memory: 2Gi, cpu: 2000m}'
   requests: '{memory: 2Gi, cpu: 2000m}'

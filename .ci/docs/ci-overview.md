@@ -427,6 +427,10 @@ Every Slurm pipeline's allocation step waits up to 4h for resources (`SLURM_IMME
 
 When changing `SLURM_IMMEDIATE_TIMEOUT`, change `timeout_minutes` (and the nightly fan-out timeout) by the same amount.
 
+## Agent pod deadline
+
+Each matrix sets `kubernetes.activeDeadlineSeconds` to `(timeout_minutes + 5) * 60`. Kubernetes ends an agent pod that many seconds after it starts, even when the Jenkins build that created it is gone, so a pod left behind by a hard-killed build stops holding its CPU and memory requests. `timeout_minutes` covers every pod of the matrix, so the 5 minute margin only covers the abort and never cuts a healthy run. When changing `timeout_minutes`, change `activeDeadlineSeconds` with it.
+
 ## Slurm container image sync
 
 Every Slurm pipeline has a `Sync Container Image` step right after its allocation step. The first `srun --container-image=...` on a node makes pyxis pull and unpack the whole CI image, which can take many minutes on a slow registry or node. Doing that inside the first test stage would spend that stage's timeout before any test runs.

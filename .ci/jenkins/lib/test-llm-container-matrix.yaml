@@ -27,6 +27,7 @@ registry_path: /nixl/base
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
+  activeDeadlineSeconds: 25500
   limits: "{memory: 8Gi, cpu: 4000m}"
   requests: "{memory: 4Gi, cpu: 2000m}"
   privileged: true
