@@ -124,8 +124,7 @@ File, block, object, and key-value storage backends.
 - [CUObject Client Config for S3 Accelerated](../../src/plugins/obj/s3_accel/README.md): Configure CUObject RDMA addresses for accelerated S3 engines and speed up their startup.
 - [Dell ObjectScale S3 Engine](../../src/plugins/obj/s3_accel/dell/README.md): Dell ObjectScale S3-over-RDMA OBJ engine using CUDA CUObject for DRAM and VRAM.
 - [POSIX Plugin](../../src/plugins/posix/README.md): POSIX file backend using Linux AIO, libaio, io_uring, liburing, and FILE_SEG.
-- [Redis Plugin](../../src/plugins/respkv/redis/README.md): Redis key-value backend using hiredis, libevent, connection pooling, asynchronous reads and writes, and queryMem.
-- [RESP KV Plugin Family](../../src/plugins/respkv/README.md): RESP-family local KV backend layout and the shared nixlRespKvEngine base with local-only capability, OBJ_SEG and DRAM_SEG support, no-op connect and unloadMD, and prep validation.
+- [Redis Plugin](../../src/plugins/redis/README.md): Redis key-value backend using hiredis, libevent, connection pooling, asynchronous reads and writes, and queryMem.
 
 ## Telemetry exporter plugins
 Custom exporter development plus DOCA and Prometheus telemetry plugins.
