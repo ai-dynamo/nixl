@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'AIS', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'DAOS', 'GDS', 'GDS_MT', 'AIS', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -339,26 +339,19 @@ if cuda_dep.found()
     endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
-    if nvcc.version().version_compare('>=12.8')
-        doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
-    else
-        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
-        doca_gpunetio_dep = disabler()
-    endif
+    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
 
     # Set the Python CUDA-specific wheel directory
     cuda_version_major = nvcc.version().split('.')[0]
-    if cuda_version_major == '12'
-        cuda_wheel_dir = 'nixl_cu12'
-    elif cuda_version_major == '13'
+    if cuda_version_major == '13'
         cuda_wheel_dir = 'nixl_cu13'
     else
-        error('Unsupported CUDA version: ' + cuda_version_major)
+        error('Unsupported CUDA version: ' + cuda_version_major + ' (NIXL requires CUDA 13)')
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    cuda_wheel_dir = 'nixl_cu12'
+    cuda_wheel_dir = 'nixl_cu13'
 endif
 
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
@@ -632,6 +625,9 @@ utils_inc_dirs = include_directories('src/utils')
 nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
+if get_option('build_nixl_ep')
+  subdir('runtime/ep')
+endif
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif
