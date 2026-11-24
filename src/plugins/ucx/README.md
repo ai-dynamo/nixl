@@ -56,7 +56,7 @@ select network devices.
 | ------ | ------- | ----------- |
 | `num_workers` | `1` | Total shared and dedicated workers. The engine keeps at least one shared worker and assigns shared workers to calling threads round-robin by default. |
 | `device_list` | unset (UCX device selection) | Separate bare device names with the exact delimiter `", "` (comma and space). NIXL appends `:1` to each item when setting `NET_DEVICES`. |
-| `engine_config` | *(empty)* | Comma-separated UCX `KEY=VALUE` settings, such as `MAX_RMA_RAILS=1`. |
+| `engine_config` | *(empty)* | Comma-separated UCX `KEY=VALUE` settings, such as `MAX_RMA_RAILS=1`. Values cannot contain commas. For multiple network devices, use `device_list` or `NIXL_UCX_NET_DEVICES`. |
 | `ucx_num_device_channels` | `4` | Sets the default for `RC_GDA_NUM_CHANNELS` with UCX 1.21 or newer. |
 | `num_threads` | `0` | Number of dedicated transfer threads (enables the thread pool engine). |
 | `split_batch_size` | `4096` with SGL enabled, otherwise `1024` | Minimum descriptor count for splitting a transfer across dedicated workers. The effective threshold is at least `num_threads`. |
