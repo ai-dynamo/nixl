@@ -29,9 +29,7 @@ if enabled_plugins.get('OBJ')
     subdir('obj')
 endif
 
-if enabled_plugins.get('REDIS')
-    subdir('redis')
-endif
+subdir('respkv')
 
 if 'DAOS' in static_plugins and not enabled_plugins.get('DAOS')
     error('DAOS listed in static_plugins must also be enabled')

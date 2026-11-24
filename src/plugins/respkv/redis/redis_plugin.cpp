@@ -22,7 +22,7 @@
 
 using redis_plugin_t = nixlBackendPluginCreator<nixlRedisKVEngine>;
 
-static const nixl_mem_list_t supported_segments = {DRAM_SEG, OBJ_SEG};
+static const nixl_mem_list_t supported_segments = {OBJ_SEG, DRAM_SEG};
 
 namespace {
 [[nodiscard]] nixl_b_params_t

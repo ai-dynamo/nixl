@@ -44,7 +44,16 @@ endif
 
 redis_compile_flags = ['-DHAVE_HIREDIS_ASYNC']
 
-redis_plugin_deps = [nixl_infra, nixl_common_dep, hiredis_async_dep, libevent_dep, libevent_pthreads_dep]
+redis_plugin_deps = [
+    nixl_infra,
+    nixl_common_dep,
+    respkv_engine_dep,
+    hiredis_async_dep,
+    libevent_dep,
+    libevent_pthreads_dep,
+]
+
+respkv_inc = include_directories('..')
 
 if 'REDIS' in static_plugins
     redis_backend_lib = static_library(
@@ -52,7 +61,7 @@ if 'REDIS' in static_plugins
         redis_sources,
         dependencies: redis_plugin_deps,
         cpp_args: redis_compile_flags,
-        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, respkv_inc],
         install: false,
         name_prefix: 'libplugin_')
 else
@@ -61,7 +70,7 @@ else
         redis_sources,
         dependencies: redis_plugin_deps,
         cpp_args: redis_compile_flags + ['-fPIC'],
-        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs, respkv_inc],
         install: true,
         name_prefix: 'libplugin_',
         install_dir: plugin_install_dir,
