@@ -27,8 +27,10 @@ import torch
 
 
 def _deepbind_enabled() -> bool:
-    value = os.getenv("NIXL_UCX_DEEPBIND", "0").strip().lower()
-    return value not in {"0", "false", "no", "off", "disable", "disabled"}
+    # NIXL_UCX_DEEPBIND is the deprecated name; NIXL core warns about it.
+    value = os.getenv("NIXL_PLUGIN_UCX_DEEPBIND", os.getenv("NIXL_UCX_DEEPBIND", "0"))
+    value = value.strip().lower()
+    return value not in {"0", "false", "n", "no", "off", "disable", "disabled"}
 
 
 @contextmanager

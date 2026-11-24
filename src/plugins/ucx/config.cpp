@@ -19,9 +19,11 @@
 #include <algorithm>
 #include <array>
 #include <mutex>
+#include <optional>
 #include <stdexcept>
 #include <string>
 #include <string_view>
+#include <utility>
 
 extern "C" {
 #include <ucs/config/global_opts.h>
@@ -32,6 +34,25 @@ extern "C" {
 #include "common/nixl_log.h"
 
 namespace {
+
+// ucp_config_read() appends "_UCX_" to the prefix, so UCX reads NIXL_UCX_<X>
+// and falls back to UCX_<X>.
+constexpr const char *ucx_env_prefix = "NIXL";
+
+// Same precedence as UCX: the prefixed variable first, then the global one.
+constexpr std::array<std::string_view, 2> ucx_env_var_prefixes = {"NIXL_UCX_", "UCX_"};
+
+// Only the environment is checked: UCX does not read the NIXL config file.
+[[nodiscard]] std::optional<std::pair<std::string, std::string>>
+findUcxEnvVar(std::string_view key) {
+    for (const auto prefix : ucx_env_var_prefixes) {
+        auto name = std::string(prefix) + std::string(key);
+        if (auto value = nixl::config::internal::getenvOptional(name)) {
+            return std::make_pair(std::move(name), std::move(*value));
+        }
+    }
+    return std::nullopt;
+}
 
 bool
 tlsEnablesCudaSupport(std::string_view tls) {
@@ -53,11 +74,8 @@ namespace nixl::ucx {
 
 void
 config::modify(std::string_view key, std::string_view value) const {
-    const auto ucx_key = "UCX_" + std::string(key);
-    const auto env_val = nixl::config::internal::getenvOptional(ucx_key);
-
-    if (env_val) {
-        NIXL_DEBUG << "UCX env var already set: " << ucx_key << "=" << *env_val;
+    if (const auto env_var = findUcxEnvVar(key)) {
+        NIXL_DEBUG << "UCX env var already set: " << env_var->first << "=" << env_var->second;
     } else {
         modifyAlways(key, value);
     }
@@ -78,12 +96,12 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
 
 void
 config::validateTlsCudaSupport() const {
-    const auto tls = nixl::config::getValueOptional<std::string>("UCX_TLS");
-    if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(*tls)) {
+    const auto tls = findUcxEnvVar("TLS");
+    if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(tls->second)) {
         return;
     }
 
-    const std::string error = "Invalid UCX_TLS=" + *tls +
+    const std::string error = "Invalid " + tls->first + "=" + tls->second +
         " for NIXL UCX backend: NVIDIA GPU(s) are present, "
         "but this setting does not enable CUDA memory support. Add cuda_copy for "
         "basic GPU support, or cuda to also include NVLink support.";
@@ -107,7 +125,7 @@ config::readUcpConfig() {
     });
 
     ucp_config_t *config = nullptr;
-    const auto status = ucp_config_read(nullptr, nullptr, &config);
+    const auto status = ucp_config_read(ucx_env_prefix, nullptr, &config);
     if (status != UCS_OK) {
         throw std::runtime_error("Failed to create UCX config: " +
                                  std::string(ucs_status_string(status)));
