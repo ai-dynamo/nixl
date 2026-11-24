@@ -92,15 +92,9 @@ nixl_ep_inc_dirs = [
     torch_inc_dirs,
 ]
 
-# Torch-versioned .so name so multiple torch ABIs coexist in a single
-# wheel. Defined up here because TORCH_EXTENSION_NAME (consumed by
-# pybind11's PYBIND11_MODULE macro to generate the PyInit_<name> symbol)
-# must match the .so filename Python loads, otherwise import fails with
-# "dynamic module does not define module export function".
-torch_ver = run_command(py, '-c',
-    'import torch; print("".join(torch.__version__.split(".")[:2]))',
-    check: true).stdout().strip()
-nixl_ep_ext_name = 'nixl_ep_cpp_torch' + torch_ver
+# .so name; must match TORCH_EXTENSION_NAME (consumed by pybind11's
+# PYBIND11_MODULE macro to generate the PyInit_<name> symbol).
+nixl_ep_ext_name = 'nixl_ep_cpp'
 
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',

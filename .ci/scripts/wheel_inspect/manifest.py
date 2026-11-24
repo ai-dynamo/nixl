@@ -1,8 +1,10 @@
 """build-manifest.json, the provenance record nixl-build-wheel publishes next to a wheel set.
 
 Written by ``.ci/scripts/merge_build_manifest.py``. Schema 1 keys ``base_image`` by CUDA major;
-schema 2 (one CUDA line) carries a single flat ``base_image``. Wheels are matched by file name,
-so nothing here depends on the per-wheel axis fields.
+schemas 2 and 3 (one CUDA line) carry a single flat ``base_image``. Up to schema 2 a wheel's
+``torch`` lists the versions built and skipped; from schema 3 a wheel is built against one torch
+and ``torch`` is its resolved version string. Wheels are matched by file name, so nothing here
+depends on the per-wheel axis fields.
 """
 
 from __future__ import annotations
@@ -12,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 MANIFEST_NAME = "build-manifest.json"
-SCHEMAS = (1, 2)
+SCHEMAS = (1, 2, 3)
 
 
 class ManifestError(Exception):

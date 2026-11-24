@@ -6,9 +6,8 @@ the same environment that built the wheel answers: ``ucx_info -v`` for the
 UCX in the image, ``git rev-parse`` for the NIXL commit, ``uv pip list`` for
 the environment auditwheel ran in. The per-venv toolchain comes from the
 ``uv pip list`` dumps contrib/build-wheel.sh leaves in build-info/
-(``pip-py<ver>-torch<X.Y|base>.json``); refs that predate the dump get
-``null`` there and nothing else degrades. Torch versions built are read off
-the wheel itself (the nixl_ep modules). Every value that cannot be
+(``pip-py<ver>.json``); a missing dump gives ``null`` there and nothing
+else degrades. Every value that cannot be
 determined is ``null``; the keys are always present. Stdlib only.
 """
 
@@ -20,12 +19,11 @@ import json
 import re
 import subprocess
 import sys
-import zipfile
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Optional
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 TOOLCHAIN_PACKAGES = (
     "meson",
     "meson-python",
@@ -40,8 +38,6 @@ _UCX_FIELDS = {
     "configured_with": re.compile(r"^# Configured with: (.*)$", re.M),
 }
 _UCX_GIT = re.compile(r"Git branch '([^']+)', revision ([0-9a-f]+)")
-_EP_MODULE = re.compile(r"^nixl_ep_cu\d+/nixl_ep_cpp_torch(\d)(\d+)\.[^/]+\.so$")
-_DUMP = re.compile(r"^pip-py(?P<py>[0-9.]+)-torch(?P<torch>base|[0-9.]+)\.json$")
 
 
 def parse_wheel_filename(name: str) -> dict[str, Optional[str]]:
@@ -112,32 +108,22 @@ def pip_list_to_versions(text_or_obj: Any) -> dict[str, str]:
     return out
 
 
-def load_dumps(directory: Optional[Path]) -> dict[str, dict[str, str]]:
-    """torch key ('base' or 'X.Y') -> package versions, from the dumps in ``directory``."""
-    dumps: dict[str, dict[str, str]] = {}
-    if directory is None or not directory.is_dir():
-        return dumps
-    for path in sorted(directory.iterdir()):
-        match = _DUMP.match(path.name)
-        if not match:
-            continue
-        try:
-            dumps[match.group("torch")] = pip_list_to_versions(
-                path.read_text(encoding="utf-8")
-            )
-        except (OSError, ValueError):
-            continue
-    return dumps
+def dump_name(python_version: str) -> str:
+    return f"pip-py{python_version}.json"
 
 
-def torch_built_in(wheel: zipfile.ZipFile) -> list[str]:
-    """Torch versions whose nixl_ep module is in the wheel, e.g. torch214 -> 2.14."""
-    found = set()
-    for name in wheel.namelist():
-        match = _EP_MODULE.match(name)
-        if match:
-            found.add(f"{match.group(1)}.{match.group(2)}")
-    return sorted(found, key=lambda v: tuple(int(p) for p in v.split(".")))
+def load_dump(
+    directory: Optional[Path], python_version: str
+) -> Optional[dict[str, str]]:
+    """Package versions of the build venv, from its dump in ``directory``."""
+    if directory is None:
+        return None
+    try:
+        return pip_list_to_versions(
+            (directory / dump_name(python_version)).read_text(encoding="utf-8")
+        )
+    except (OSError, ValueError):
+        return None
 
 
 def build_sidecar(
@@ -146,60 +132,19 @@ def build_sidecar(
     python_version: str,
     platform: str,
     cu_tag: str,
-    torch_requested: list[str],
-    dumps: dict[str, dict[str, str]],
+    venv: Optional[dict[str, str]],
     repair_env: Optional[dict[str, str]],
     ucx_info_text: Optional[str],
     git_commit: Optional[str],
     generated_at: str,
 ) -> dict[str, Any]:
     identity = parse_wheel_filename(wheel_path.name)
-    with zipfile.ZipFile(wheel_path) as zf:
-        built_versions = torch_built_in(zf)
-
-    # The main wheel is built in the first torch venv (build-wheel.sh);
-    # the plain venv only exists for a torch-less build.
-    main_venv = dumps.get(built_versions[0]) if built_versions else dumps.get("base")
     toolchain: dict[str, Optional[str]] = {
-        name: (main_venv or {}).get(name) for name in TOOLCHAIN_PACKAGES
+        name: (venv or {}).get(name) for name in TOOLCHAIN_PACKAGES
     }
     toolchain["auditwheel"] = (repair_env or {}).get("auditwheel")
     toolchain["patchelf_repair"] = (repair_env or {}).get("patchelf")
 
-    built = []
-    resolved_all: list[str] = []
-    for version in built_versions:
-        venv = dumps.get(version) or {}
-        resolved = venv.get("torch")
-        if resolved:
-            resolved_all.append(resolved)
-        built.append(
-            {
-                "version": version,
-                "channel": (
-                    ("nightly" if ".dev" in resolved else "stable")
-                    if resolved
-                    else None
-                ),
-                "resolved": resolved,
-                "toolchain": (
-                    {name: venv.get(name) for name in TOOLCHAIN_PACKAGES}
-                    if venv
-                    else None
-                ),
-            }
-        )
-    # The torch index actually used is in the resolved local version
-    # (2.13.0+cu132); the toolkit tag is only the fallback.
-    index = next((r.split("+", 1)[1] for r in resolved_all if "+" in r), cu_tag)
-    skipped = [
-        {
-            "version": v,
-            "reason": f"no torch {v} wheel on the stable or nightly {index} index for Python {python_version}",
-        }
-        for v in torch_requested
-        if v not in built_versions
-    ]
     return {
         "schema_version": SCHEMA_VERSION,
         "generated_at": generated_at,
@@ -214,18 +159,10 @@ def build_sidecar(
         "cuda": {"cu_tag": cu_tag},
         "nixl": {"commit": git_commit},
         "ucx": parse_ucx_info(ucx_info_text),
-        "torch": {
-            "requested": list(torch_requested),
-            "built": built,
-            "skipped": skipped,
-        },
+        "torch": (venv or {}).get("torch"),
         "toolchain": toolchain,
-        "toolchain_dumps": sorted(dumps),
+        "toolchain_dump": (dump_name(python_version) if venv is not None else None),
     }
-
-
-def _csv(value: Optional[str]) -> list[str]:
-    return [v for v in (value or "").split(",") if v]
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -235,7 +172,6 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser.add_argument("--python-version", required=True)
     parser.add_argument("--platform", required=True)
     parser.add_argument("--cu-tag", required=True)
-    parser.add_argument("--torch-requested", default="", help="comma-separated")
     parser.add_argument(
         "--pip-dumps", type=Path, help="build-info dir with the per-venv pip list dumps"
     )
@@ -253,8 +189,7 @@ def main(argv: Optional[list[str]] = None) -> int:
         python_version=args.python_version,
         platform=args.platform,
         cu_tag=args.cu_tag,
-        torch_requested=_csv(args.torch_requested),
-        dumps=load_dumps(args.pip_dumps),
+        venv=load_dump(args.pip_dumps, args.python_version),
         repair_env=pip_list_to_versions(repair_text) if repair_text else None,
         ucx_info_text=run_capture(["ucx_info", "-v"]),
         git_commit=(

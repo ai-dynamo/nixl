@@ -88,7 +88,7 @@ steps:
       case "$target" in
         nixl)
           # nixl container, debug build. build-container.sh enables EP by default.
-          # debug + EP exercises the EP device link and the torch-version wheel
+          # debug + EP exercises the EP device link and the EP Python
           # packaging - the parts most sensitive to build/packaging changes.
           export UCX_REF="$UCX_VERSION"
           contrib/build-container.sh \

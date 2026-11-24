@@ -48,9 +48,10 @@ def _facts(doc: dict[str, Any]) -> dict[str, Optional[str]]:
             _join(entry.get("image"), entry.get("tag"), sep=":"),
             f"CUDA {entry['cuda_version']}" if entry.get("cuda_version") else None,
         )
-        facts[f"Torch requested {variant}"] = _join(
-            *(entry.get("torch_requested") or [])
-        )
+        if "torch_requested" in entry:  # schemas 1 and 2 only
+            facts[f"Torch requested {variant}"] = _join(
+                *(entry.get("torch_requested") or [])
+            )
     facts["Built by"] = _join(
         _join(jenkins.get("job"), jenkins.get("build"), sep=" #"),
         f"ci_refspec {jenkins['ci_refspec']}" if jenkins.get("ci_refspec") else None,
@@ -67,14 +68,24 @@ def _version_key(version: str) -> tuple[int, ...]:
 
 
 def _torch_rows(side: Side) -> Optional[list[dict[str, str]]]:
-    """Torch versions built into, or skipped for, the binary wheels, folded by cell."""
+    """Torch versions built into, or skipped for, the binary wheels, folded by cell.
+
+    Schema 3 records one resolved torch per wheel (a string); earlier schemas
+    record the versions built and skipped (a dict).
+    """
     if not side.manifest:
         return None
     cells = {wf.name: cell for cell, wf in side.wheelset.binary.items()}
     groups: dict[tuple[str, str, str], set[Cell]] = defaultdict(set)
     for name, entry in manifest_mod.wheel_entries(side.manifest).items():
         torch = entry.get("torch")
-        if name not in cells or not isinstance(torch, dict):
+        if name not in cells:
+            continue
+        if isinstance(torch, str) and torch:
+            version = ".".join(torch.split("+", 1)[0].split(".")[:2])
+            groups[(version, "built", torch)].add(cells[name])
+            continue
+        if not isinstance(torch, dict):
             continue
         for built in torch.get("built") or []:
             detail = _join(built.get("channel"), built.get("resolved"), sep=" ") or ""

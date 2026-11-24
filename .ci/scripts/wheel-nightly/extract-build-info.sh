@@ -34,7 +34,6 @@ if [ -n "${BINARY_WHL}" ]; then
       --python-version "${python_version}" \
       --platform "manylinux_${manylinux}_${arch}" \
       --cu-tag "${CU_TAG}" \
-      --torch-requested "${TORCH_VERSIONS_REQUESTED:-}" \
       --pip-dumps /workspace/nixl/build-info \
       --source-dir /workspace/nixl \
     || echo "WARNING: build-info sidecar not written for ${BINARY_WHL}"

@@ -105,14 +105,14 @@ In the PR CI pipeline, `build-container.sh` is called with `--wheel-base-image` 
   --wheel-base "manylinux_2_28" \
   --python-versions "${python_version}" \
   --arch ${arch} \
-  --torch-versions ${torch_version} \
+  --torch-version ${torch_version} \
   --dockerfile contrib/Dockerfile.manylinux \
   --wheel-base-image "${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}:${CI_IMAGE_TAG}"
 ```
 
 `--wheel-base-image` causes the script to pass `--build-arg wheel_base=<url> --target wheel`, so only the `wheel` stage runs and the pre-built deps are pulled from Artifactory rather than recompiled.
 
-`--torch-versions` limits PR builds to a single torch version. The nightly job builds the Dockerfile's `WHL_TORCH_VERSIONS` list.
+`--torch-version` selects the torch version the wheel is built against.
 
 #### User Usage (Full Build)
 Users can build the complete image locally without specifying a target:
@@ -125,7 +125,7 @@ This builds both stages from scratch without the `--wheel-base-image` override.
 
 #### Standalone Build
 
-The standalone job (`nixl-build-wheel`) builds its own `wheel_base` images per run and leaves `--torch-versions` to the Dockerfile default.
+The standalone job (`nixl-build-wheel`) builds its own `wheel_base` images per run and leaves `--torch-version` to the Dockerfile default.
 
 #### Optional: UCX spcx external plugin
 `build-container.sh --build-ucx-spcx-plugin` opt-in flag fetches the internal `ucx-spcx-plugin` source on the host into the build context, compiles it against the just-built UCX inside the Dockerfile, and installs it into the UCX plugins dir. It works with `contrib/Dockerfile.manylinux` (the wheel build, where `wheel_add_ucx_plugins.py` then bundles the plugin into the wheel like any other UCX module) and with the default `contrib/Dockerfile` (the container build, where the plugin is only installed into the image). It requires two environment variables — neither is hardcoded so the repo location and token stay out of the source and image layers:
@@ -286,7 +286,7 @@ Sets up the podman container runtime and authenticates with Artifactory:
 
 Builds only the `wheel` stage of `Dockerfile.manylinux` by pulling the pre-built `wheel_base` from Artifactory:
 
-- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-versions <torch-versions>`
+- Calls `contrib/build-container.sh` with `--wheel-base-image <artifactory-url>` and `--torch-version <torch-version>`
 - The script invokes `docker build --target wheel --build-arg wheel_base=<url>` (podman), which:
   - Pulls the pre-built `nixl-wheel-base-manylinux_2_28:${CI_IMAGE_TAG}` image (all deps already compiled)
   - Builds NIXL from source with meson/ninja

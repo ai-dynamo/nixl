@@ -50,9 +50,9 @@ sha256, and that the build marked it complete. A manifest that fails this is not
 fails with the reason, and a manifest passed explicitly stops the run.
 
 A usable manifest feeds checks 2 to 4 and the report's **Build provenance** section: NIXL
-commit, UCX declared and measured, SPCX ref and commit, Infinia image, base image and torch list
-per CUDA line, build tool versions, and per wheel which torch versions were built or skipped and
-why. When both sides have one, every row is marked changed or unchanged. PyPI releases have no
+commit, UCX declared and measured, SPCX ref and commit, Infinia image, base image per CUDA
+line, build tool versions, and per wheel the torch it was built against (manifests before schema 3
+also list the requested torch versions and, per wheel, which were built or skipped and why). When both sides have one, every row is marked changed or unchanged. PyPI releases have no
 manifest; for those the tool falls back to what the wheel carries (the `## Build info` block in
 the README, and the UCX release string in `libucp`).
 

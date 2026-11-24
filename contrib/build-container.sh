@@ -140,9 +140,9 @@ get_options() {
                 missing_requirement $1
             fi
             ;;
-        --torch-versions)
+        --torch-version)
             if [ "$2" ]; then
-                WHL_TORCH_VERSIONS=$2
+                WHL_TORCH_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -383,7 +383,7 @@ show_help() {
     echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
-    echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
+    echo "  [--torch-version torch version to build for (default: uses Dockerfile ARG default)]"
     echo "  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
@@ -416,7 +416,7 @@ BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
 BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
-BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
+BUILD_ARGS+="${WHL_TORCH_VERSION:+ --build-arg WHL_TORCH_VERSION=$WHL_TORCH_VERSION}"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"

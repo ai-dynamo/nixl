@@ -281,9 +281,6 @@ def assemble(
         or c["cell"].get("BASE_IMAGE_TAG_DEFAULT"),
     )
     cuda_version = agree("CUDA_VERSION", lambda c: c["cell"].get("CUDA_VERSION"))
-    torch_requested = agree(
-        "TORCH_VERSIONS_REQUESTED", lambda c: c["cell"].get("TORCH_VERSIONS_REQUESTED")
-    )
 
     # Declared (build options) vs measured (ucx_info in the image, git in the image).
     # A tag or sha UCX_REF is checked out detached, so ucx_info reports 'HEAD'; the revision check covers it.
@@ -328,8 +325,6 @@ def assemble(
     unexpected = sorted(n for n in files if n not in all_names and n != MANIFEST_NAME)
 
     wheels: list[dict[str, Any]] = []
-    built_all: list[str] = []
-    skipped_all: list[dict[str, Any]] = []
     tool_sets: dict[str, list[str]] = {}
     for c in cells:
         s = c["sidecar"]
@@ -342,12 +337,10 @@ def assemble(
         art = files.get(wheel_name or "") or {}
         if not s:
             build_info = "missing"
-        elif side(c, "toolchain_dumps"):
+        elif side(c, "toolchain_dump"):
             build_info = "available"
         else:
-            build_info = (
-                "available; toolchain not recorded (built ref predates the pip dump)"
-            )
+            build_info = "available; toolchain not recorded (no pip dump)"
         entry: dict[str, Any] = {
             "name": wheel_name,
             "kind": "binary",
@@ -371,34 +364,13 @@ def assemble(
                 errors.append(
                     f"{wheel_name}: sha256 in Artifactory differs from the file this build produced"
                 )
-            built = side(c, "torch", "built") or []
-            skipped = side(c, "torch", "skipped") or []
-            entry["torch"] = {
-                "built": [
-                    {
-                        "version": b.get("version"),
-                        "channel": b.get("channel"),
-                        "resolved": b.get("resolved"),
-                    }
-                    for b in built
-                ],
-                "skipped": skipped,
-            }
+            entry["torch"] = side(c, "torch")
             entry["toolchain"] = side(c, "toolchain")
             entry["ucx"] = {
                 "release": side(c, "ucx", "release"),
                 "branch": side(c, "ucx", "branch"),
                 "revision": side(c, "ucx", "revision"),
             }
-            built_all.extend(str(b.get("version")) for b in built)
-            skipped_all.extend(
-                {
-                    "version": k.get("version"),
-                    "python": c["cell"].get("PYTHON_VERSION"),
-                    "reason": k.get("reason"),
-                }
-                for k in skipped
-            )
             for tool, value in (side(c, "toolchain") or {}).items():
                 tool_sets.setdefault(tool, [])
                 if value is not None:
@@ -418,7 +390,7 @@ def assemble(
 
     publish_dir = os.environ.get("PUBLISH_DIR") or "verification"
     doc = {
-        "schema_version": 2,
+        "schema_version": 3,
         "generated_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
         "complete": not errors,
         "errors": errors,
@@ -446,9 +418,7 @@ def assemble(
             "image": base_image,
             "tag": base_tag,
             "cuda_version": cuda_version,
-            "torch_requested": [t for t in (torch_requested or "").split(",") if t],
         },
-        "torch": {"built": sorted(set(built_all)), "skipped": skipped_all},
         "toolchain": {
             tool: sorted(set(vals)) for tool, vals in sorted(tool_sets.items())
         },

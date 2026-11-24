@@ -12,14 +12,12 @@ set -x
 # Infinia is always bundled in the nightly; the built source ref's
 # build-container.sh pins the image. The spcx plugin is not built here -
 # it was compiled against the same wheel_base and comes off the PVC.
-# The torch versions are only for NIXL EP. Dockerfile.manylinux builds its
-# WHL_TORCH_VERSIONS; nothing is passed for it here, the list is only
-# recorded in cell.env for the manifest.
+# The torch version is only for NIXL EP. Dockerfile.manylinux builds its
+# WHL_TORCH_VERSION; nothing is passed for it here.
 dockerfile_arg_default() {
   sed -n "s/^ARG $1=\"\{0,1\}\([^\"]*\)\"\{0,1\}.*/\1/p" contrib/Dockerfile.manylinux | head -1
 }
 
-TORCH_VERSIONS="2.14,2.15,2.16"
 export DOCKER_BUILD_EXTRA_ARGS="--secret id=ghconfig,src=/tmp/ghconfig"
 WHEEL_BASE_IMAGE="${registry_host}${registry_path}/${arch}/${WHEEL_BASE_IMAGE_NAME}-cu13:${WHEEL_BASE_TAG}"
 CELL_KEY="${manylinux}_${arch}_py${python_version}"
@@ -52,7 +50,6 @@ fi
   echo "ARCH=${arch}"
   echo "PYTHON_VERSION=${python_version}"
   echo "MANYLINUX=${manylinux}"
-  echo "TORCH_VERSIONS_REQUESTED=${TORCH_VERSIONS}"
   echo "WHEEL_BASE_IMAGE=${WHEEL_BASE_IMAGE}"
   echo "UCX_SPCX_PLUGIN_REF=${UCX_SPCX_PLUGIN_REF}"
   echo "UCX_SPCX_PLUGIN_COMMIT=${UCX_SPCX_PLUGIN_COMMIT}"
