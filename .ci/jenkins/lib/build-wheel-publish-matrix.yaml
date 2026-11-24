@@ -333,10 +333,11 @@ pipeline_stop:
                     passwordVariable: 'ARTIFACTORY_TOKEN')]) {
                 def rc = sh(returnStatus: true, script: '.ci/scripts/wheel-nightly/inspect-wheels.sh')
                 def status = fileExists('wheel-inspection/status.txt') ? readFile('wheel-inspection/status.txt').trim() : ''
+                // Keep the evidence with the build; only a failed run may have none.
+                archiveArtifacts artifacts: 'wheel-inspection/wheel-inspection.*', allowEmptyArchive: rc != 0
                 if (rc != 0) {
                     throw new Exception(status ?: "inspect-wheels.sh exited ${rc}")
                 }
-                archiveArtifacts artifacts: 'wheel-inspection/wheel-inspection.*'
                 if (params.MAIL_TO) {
                     mail(
                         from: env.MAIL_FROM,
