@@ -110,6 +110,13 @@ else
     echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
 fi
 
+# The AFD reference exercises asymmetric and interleaved assignments on these four GPUs.
+(
+    unset UCX_NET_DEVICES
+    export UCX_TLS=^rc_gda
+    "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd.py --perf-repeats 0
+)
+
 echo "==== nixl_ep elastic tests done ===="
 
 echo "==== Running vLLM Elastic EP test ===="

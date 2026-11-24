@@ -115,6 +115,13 @@ struct CompletionUsageState {
     unsigned long long combined_consumed;
 };
 
+struct AFDTopology {
+    int num_ffn_ranks;
+    ScaleupMask attention_mask, ffn_mask;
+    // A logical expert's owner quotient indexes this table of sorted NVLink positions.
+    int ffn_ranks[kNumMaxScaleupRanksCap];
+};
+
 // Device-resident topology descriptor (`EPTopology`): written by the host between launches, read by every adaptive kernel block at entry
 // The live world is the product of the live domains (`scaleout_mask`, bit d) and the live positions of a domain
 // (`scaleup_mask`, bit k): rank (d, k) takes part iff both bits are set; `num_scaleout_ranks` / `num_scaleup_ranks`
@@ -135,6 +142,7 @@ struct alignas(128) EPTopology {
     const nixl::NIXLDeviceContext* transport;
     // Local CQ usage, indexed by peer domain and NIXL channel.
     CompletionUsageState* completion_usage;
+    const AFDTopology* afd;
 
     __device__ __host__ __forceinline__ bool is_scaleout_live(const int& idx) const {
         return idx >= 0 and idx < num_scaleout_ranks and ((scaleout_mask >> idx) & 1u);
@@ -173,6 +181,7 @@ __device__ __forceinline__ bool is_scaleup_live(const EPTopology& topo, const in
 
 // The kernels read the topology descriptor (`EPTopology`) once per block, field by field through the read-only
 // path into registers; a whole-struct copy is materialised in local memory and read back from the stack
+template <bool kLoadAFD = false>
 __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
 #if defined(__CUDA_ARCH__)
     EPTopology topo;
@@ -188,6 +197,8 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
         topo.scaleup_mask.words[i] = __ldg(reinterpret_cast<const unsigned long long*>(&ptr->scaleup_mask.words[i]));
     topo.transport = reinterpret_cast<const nixl::NIXLDeviceContext*>(__ldg(reinterpret_cast<const unsigned long long*>(&ptr->transport)));
     topo.completion_usage = reinterpret_cast<CompletionUsageState*>(__ldg(reinterpret_cast<const unsigned long long*>(&ptr->completion_usage)));
+    if constexpr (kLoadAFD)
+        topo.afd = reinterpret_cast<const AFDTopology*>(__ldg(reinterpret_cast<const unsigned long long*>(&ptr->afd)));
     return topo;
 #else
     return *ptr;
@@ -197,6 +208,8 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
 }  // namespace nixl_ep_v2::elastic::topology
 
 namespace nixl_ep_v2::elastic::adaptive {
+
+enum Direction { kFused, kSend, kRecv };
 
 // Compile-time channel maxima: the block shape and the channel slack of the buffers follow the fixed grid.
 constexpr int kNumMaxChannelsPerSM = 8;

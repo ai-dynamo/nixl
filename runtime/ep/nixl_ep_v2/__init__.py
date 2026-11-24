@@ -126,7 +126,7 @@ init_jit()
 from ._C import topk_idx_t  # noqa: F401,E402
 
 # Import APIs after initialization
-from .buffers.elastic import ElasticBuffer, EPHandle  # noqa: F401,E402
+from .buffers.elastic import AFDRole, ElasticBuffer, EPHandle  # noqa: F401,E402
 from .utils.envs import (  # noqa: F401,E402
     get_logical_domain_size,
     get_physical_domain_size,

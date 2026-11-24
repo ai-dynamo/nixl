@@ -46,6 +46,7 @@ public:
         int num_hidden_bytes, num_sf_packs;
         int num_experts_per_rank, num_topk, expert_alignment;
         int64_t num_timeout_cycles;
+        int direction;
 
         // Parameters
         void* x; sf_pack_t* sf; topk_idx_t* topk_idx; float* topk_weights;
@@ -78,7 +79,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
             args.do_cpu_sync, args.zero_copy,
@@ -87,7 +88,7 @@ static void __instantiate_kernel() {{
             args.num_max_scaleout_ranks, args.num_max_scaleup_ranks,
             args.num_hidden_bytes, args.num_sf_packs,
             args.num_experts_per_rank, args.num_topk, args.expert_alignment,
-            args.num_timeout_cycles);
+            args.num_timeout_cycles, args.direction);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -183,7 +184,7 @@ static void launch_dispatch(void* x, void* sf,
                             int* zc_count_matrix, const int& zc_count_row_stride, const int& zc_count_matrix_rows,
                             const int& zc_slot_idx,
                             const bool& dynamic_take,
-                            const at::cuda::CUDAStream& stream) {
+                            const at::cuda::CUDAStream& stream, int direction = kFused) {
     EP_HOST_ASSERT(num_max_scaleout_ranks <= kNumMaxScaleoutRanksCap and num_max_scaleup_ranks <= kNumMaxScaleupRanksCap);
     EP_HOST_ASSERT(1 <= num_channels_per_sm and num_channels_per_sm <= kNumMaxChannelsPerSM);
 
@@ -211,6 +212,7 @@ static void launch_dispatch(void* x, void* sf,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,
         .num_timeout_cycles = num_timeout_cycles,
+        .direction = direction,
         .x = x, .sf = static_cast<sf_pack_t*>(sf), .topk_idx = topk_idx, .topk_weights = topk_weights,
         .copied_topk_idx = copied_topk_idx,
         .cumulative_local_expert_recv_stats = cumulative_local_expert_recv_stats,

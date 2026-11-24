@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/impls/adaptive/afd.cuh>
 #include <nixl_ep_v2/common/layout.cuh>
 #include <nixl_ep_v2/common/math.cuh>
 #include <nixl_ep_v2/common/nixl_transport.cuh>
@@ -200,7 +200,7 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumMaxScaleoutRanks, int kNumMaxScaleupRanks,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
-          int64_t kNumTimeoutCycles,
+          int64_t kNumTimeoutCycles, int kDirection = kFused,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleupUpdateInterval = 3,
           int kNumScaleupWarps = kNumChannelsPerSM,
@@ -229,7 +229,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     const auto sm_idx = static_cast<int>(blockIdx.x);
     const auto thread_idx = static_cast<int>(threadIdx.x);
     // Topology: uniform per block, read once
-    const auto topo = topology::load(topology_ptr);
+    auto topo = topology::load<kDirection != kFused>(topology_ptr);
 
     // Surplus blocks of the fixed grid release their SM at once
     if (sm_idx >= topo.num_active_sms)
@@ -244,6 +244,8 @@ adaptive_combine_impl(nv_bfloat16* x,
     const int num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
     EP_DEVICE_ASSERT(num_scaleout_ranks <= kNumMaxScaleoutRanks and num_scaleup_ranks <= kNumMaxScaleupRanks);
     EP_DEVICE_ASSERT(topo.is_participant() and "A rank outside the live world must not launch");
+    if constexpr (kDirection != kFused)
+        topo.scaleup_mask = kDirection == kRecv ? topo.afd->ffn_mask : topo.afd->attention_mask;
 
     // Dense rank ids of our peers
     const auto scaleup_peer_id = [=](const int& k) { return topology::rank_id(scaleout_rank_idx, k, kNumMaxScaleupRanks); };
@@ -269,7 +271,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     EP_PROFILE_STAMP(workspace_layout, 14);  // combine main: entry
 
     // We should assign the real number of received tokens if without CPU sync
-    if (num_reduced_tokens < 0)
+    if (kDirection != kRecv && num_reduced_tokens < 0)
         num_reduced_tokens = __ldg(psum_num_recv_tokens_per_scaleup_rank + kNumMaxScaleupRanks);
 
     // Token layouts
@@ -306,12 +308,13 @@ adaptive_combine_impl(nv_bfloat16* x,
     // Global parallel barriers for scale-out subteam and scale-up subteam
     // NOTES: the hybrid roles need a grid sync first, as there are channel scale-up tail cleaning before;
     // the direct path has no such cleaning and starts like DeepSeek's direct kernel (no start sync)
-    const bool is_direct = topo.mode == topology::kModeDirect;
+    const bool is_direct = kDirection != kFused || topo.mode == topology::kModeDirect;
     // Direct mode: per-peer ready/arrived signalling instead of the two full-team barriers (`comm::kPeerReadyWord`): SM 0 publishes
     // our READY now, every remote row write below sits behind its writer's acquire of the destination's READY, and the grid's
     // last block exchanges the ARRIVED words at the end
     if (is_direct) {
-        comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
+        if constexpr (kDirection != kSend)
+            comm::peer_ready_publish_rt<kNumThreads, kNumMaxScaleupRanks>(transport, workspace_layout, topo, sm_idx, thread_idx);
     } else {
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridCombineTag0, kNumMaxScaleupRanks, false, true, true>(
             transport, workspace_layout, topo, sm_idx, thread_idx);
@@ -331,66 +334,71 @@ adaptive_combine_impl(nv_bfloat16* x,
     // (`src_global_token_idx / num_max_tokens_per_rank`); its NVLink peer is its position `rank % num_scaleup_ranks`.
     EP_DEVICE_ASSERT(not is_direct or topo.num_live_scaleout_ranks() == 1);
     if (is_direct) {
-        // Rotate the warp index by the rank so that peers spread their writes (as DeepSeek's direct kernel does)
-        const auto rotated_warp_idx = (warp_idx + scaleup_rank_idx) % kNumWarps;
-        const auto global_warp_idx = comm::cross_sm_warp_idx(sm_idx, rotated_warp_idx, topo.num_active_sms);
+        if constexpr (kDirection != kRecv) {
+            // Rotate the warp index by the rank so that peers spread their writes (as DeepSeek's direct kernel does)
+            const auto rotated_warp_idx = (warp_idx + scaleup_rank_idx) % kNumWarps;
+            const auto global_warp_idx = comm::cross_sm_warp_idx(sm_idx, rotated_warp_idx, topo.num_active_sms);
 
-        // Expanding send mode must not be backward
-        if constexpr (kDoExpandedSend)
-            EP_DEVICE_ASSERT(topk_weights == nullptr);
+            // Expanding send mode must not be backward
+            if constexpr (kDoExpandedSend)
+                EP_DEVICE_ASSERT(topk_weights == nullptr);
 
-        // The source rank's address of one of our symmetric pointers (direct mode: every peer reachable with stores)
-        const auto peer_ptr = [&](void* ptr, const int& src_rank_idx) {
-            const auto dst_ptr = transport.get_p2p_ptr(ptr, scaleup_peer_id(src_rank_idx % num_scaleup_ranks));
-            EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");
-            return dst_ptr;
-        };
+            // The source rank's address of one of our symmetric pointers (direct mode: every peer reachable with stores)
+            const auto peer_ptr = [&](void* ptr, const int& src_rank_idx) {
+                if constexpr (kDirection == kSend)
+                    EP_DEVICE_ASSERT(src_rank_idx >= 0 && src_rank_idx / num_scaleup_ranks == scaleout_rank_idx &&
+                                     topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, src_rank_idx % num_scaleup_ranks));
+                const auto dst_ptr = transport.get_p2p_ptr(ptr, scaleup_peer_id(src_rank_idx % num_scaleup_ranks));
+                EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");
+                return dst_ptr;
+            };
 
-        // Do TMA writes into the remote buffers. Static partition (`dynamic_take` off): one contiguous chunk of
-        // ceil(N / W) rows per warp over the W active warps, as before. Dynamic take: chunks of `chunk_rows` rows
-        // (a quarter of a warp's share, 1 to kNumMaxChunkRows), the first chunk per warp static, the rest from a
-        // rank-wide counter when the previous chunk's stores are committed; the chunk sequence is interleaved over
-        // the source-rank regions of the received rows (rows are grouped by source position) and rotated per rank,
-        // so a rank's writes spread over all its destinations at every moment and peers start on different ones.
-        // Chunks that fit one wave take no atomic. The counter is zero at rest (zeroed by the end sequence below)
-        constexpr int kNumMaxChunkRows = 8, kNumChunkWaves = 4;
-        const int num_total_warps = topo.num_active_sms * kNumWarps;
-        const int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, num_total_warps);
-        const int dyn_chunk_rows = max(1, min(kNumMaxChunkRows, num_reduced_tokens / (kNumChunkWaves * num_total_warps)));
-        const int dyn_num_chunks = math::ceil_div(num_reduced_tokens, dyn_chunk_rows);
-        const bool take_chunks = dynamic_take and dyn_num_chunks > num_total_warps;
-        const int chunk_rows = take_chunks ? dyn_chunk_rows : num_tokens_per_warp;
-        const int num_chunks = chunk_rows > 0 ? math::ceil_div(num_reduced_tokens, chunk_rows) : 0;
-        // Interleaving: the chunk sequence index `c` maps to region (c + rank) mod G, chunk c / G inside it, G = positions;
-        // indices past the last chunk (an uneven last region) are skipped, so the sequence runs to G x per-region chunks
-        const int num_regions = take_chunks ? num_scaleup_ranks : 1;
-        const int chunks_per_region = math::ceil_div(num_chunks, num_regions);
-        const int num_sequence = num_regions * chunks_per_region;
-        const auto next_chunk = [&]() {
-            if (not take_chunks)
-                return num_sequence;   // the static form: one chunk per warp
-            int next = 0;
-            if (lane_idx == 0)
-                next = num_total_warps + static_cast<int>(atomicAdd(workspace_layout.get_take_counter_ptr(1), 1u));
-            return __shfl_sync(0xffffffff, next, 0);
-        };
-        // The positions whose READY this warp has acquired (every lane acquires: the lanes that store weights and the elected
-        // lane that stores the row are all behind their own acquire)
-        comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
-        const auto acquire_ready = [&](const int& pos) {
-            comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
-        };
-        for (int chunk = global_warp_idx; chunk < num_sequence; chunk = next_chunk()) {
-            const int mapped_chunk = take_chunks ?
-                ((chunk % num_regions + scaleup_rank_idx) % num_regions) * chunks_per_region + chunk / num_regions : chunk;
-            if (mapped_chunk >= num_chunks)
-                continue;
-            const int token_start_idx = mapped_chunk * chunk_rows;
-            const int token_end_idx = min(token_start_idx + chunk_rows, num_reduced_tokens);
-            write_direct_combine_replies<kUseExpandedLayout, kAllowMultipleReduction, kHidden, kNumHiddenBytes, kNumTopk>(
-                x, topk_weights, src_metadata, scaleup_buffer, tma_buffer, mbarrier_ptr, phase,
-                token_start_idx, token_end_idx, num_max_tokens_per_rank, num_scaleup_ranks, scaleup_rank_idx,
-                use_scaleup_rank_layout, lane_idx, peer_ptr, acquire_ready);
+            // Do TMA writes into the remote buffers. Static partition (`dynamic_take` off): one contiguous chunk of
+            // ceil(N / W) rows per warp over the W active warps, as before. Dynamic take: chunks of `chunk_rows` rows
+            // (a quarter of a warp's share, 1 to kNumMaxChunkRows), the first chunk per warp static, the rest from a
+            // rank-wide counter when the previous chunk's stores are committed; the chunk sequence is interleaved over
+            // the source-rank regions of the received rows (rows are grouped by source position) and rotated per rank,
+            // so a rank's writes spread over all its destinations at every moment and peers start on different ones.
+            // Chunks that fit one wave take no atomic. The counter is zero at rest (zeroed by the end sequence below)
+            constexpr int kNumMaxChunkRows = 8, kNumChunkWaves = 4;
+            const int num_total_warps = topo.num_active_sms * kNumWarps;
+            const int num_tokens_per_warp = math::ceil_div(num_reduced_tokens, num_total_warps);
+            const int dyn_chunk_rows = max(1, min(kNumMaxChunkRows, num_reduced_tokens / (kNumChunkWaves * num_total_warps)));
+            const int dyn_num_chunks = math::ceil_div(num_reduced_tokens, dyn_chunk_rows);
+            const bool take_chunks = dynamic_take and dyn_num_chunks > num_total_warps;
+            const int chunk_rows = take_chunks ? dyn_chunk_rows : num_tokens_per_warp;
+            const int num_chunks = chunk_rows > 0 ? math::ceil_div(num_reduced_tokens, chunk_rows) : 0;
+            // Interleaving: the chunk sequence index `c` maps to region (c + rank) mod G, chunk c / G inside it, G = positions;
+            // indices past the last chunk (an uneven last region) are skipped, so the sequence runs to G x per-region chunks
+            const int num_regions = take_chunks ? num_scaleup_ranks : 1;
+            const int chunks_per_region = math::ceil_div(num_chunks, num_regions);
+            const int num_sequence = num_regions * chunks_per_region;
+            const auto next_chunk = [&]() {
+                if (not take_chunks)
+                    return num_sequence;   // the static form: one chunk per warp
+                int next = 0;
+                if (lane_idx == 0)
+                    next = num_total_warps + static_cast<int>(atomicAdd(workspace_layout.get_take_counter_ptr(1), 1u));
+                return __shfl_sync(0xffffffff, next, 0);
+            };
+            // The positions whose READY this warp has acquired (every lane acquires: the lanes that store weights and the elected
+            // lane that stores the row are all behind their own acquire)
+            comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
+            const auto acquire_ready = [&](const int& pos) {
+                comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
+            };
+            for (int chunk = global_warp_idx; chunk < num_sequence; chunk = next_chunk()) {
+                const int mapped_chunk = take_chunks ?
+                    ((chunk % num_regions + scaleup_rank_idx) % num_regions) * chunks_per_region + chunk / num_regions : chunk;
+                if (mapped_chunk >= num_chunks)
+                    continue;
+                const int token_start_idx = mapped_chunk * chunk_rows;
+                const int token_end_idx = min(token_start_idx + chunk_rows, num_reduced_tokens);
+                write_direct_combine_replies<kUseExpandedLayout, kAllowMultipleReduction, kHidden, kNumHiddenBytes, kNumTopk>(
+                    x, topk_weights, src_metadata, scaleup_buffer, tma_buffer, mbarrier_ptr, phase,
+                    token_start_idx, token_end_idx, num_max_tokens_per_rank, num_scaleup_ranks, scaleup_rank_idx,
+                    use_scaleup_rank_layout, lane_idx, peer_ptr, acquire_ready);
+            }
         }
 
         // End sequence: the block's flush and grid arrival; the last block's first warp zeroes the take counter, exchanges the
@@ -400,7 +408,7 @@ adaptive_combine_impl(nv_bfloat16* x,
             // Every block has arrived (every take is behind it): the row-chunk take counter back to zero for the next launch
             if (lane_idx == 0)
                 *workspace_layout.get_take_counter_ptr(1) = 0u;
-            comm::peer_arrived_exchange_rt<kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
+            finish_direct_exchange<kDirection, kNumTimeoutCycles, comm::kDirectCombineTag, kNumMaxScaleupRanks>(transport, workspace_layout, topo, lane_idx);
             // Trigger the reduce epilogue only now: every peer's row has arrived, so no epilogue block parks on an SM while the
             // peers are still writing (the hybrid combine keeps its implicit trigger at kernel exit)
             cudaTriggerProgrammaticLaunchCompletion();

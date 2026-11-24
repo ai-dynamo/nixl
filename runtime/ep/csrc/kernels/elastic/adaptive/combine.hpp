@@ -43,6 +43,7 @@ public:
         int num_experts_per_rank;
         int num_topk;
         int64_t num_timeout_cycles;
+        int direction;
 
         // Parameters
         nv_bfloat16* x;
@@ -68,7 +69,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.use_expanded_layout, args.allow_multiple_reduction,
@@ -78,7 +79,7 @@ static void __instantiate_kernel() {{
                            args.hidden,
                            args.num_experts_per_rank,
                            args.num_topk,
-                           args.num_timeout_cycles);
+                           args.num_timeout_cycles, args.direction);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -114,7 +115,7 @@ static void launch_combine(void* x,
                            const int& num_smem_bytes,
                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                            const bool& dynamic_take,
-                           const at::cuda::CUDAStream& stream) {
+                           const at::cuda::CUDAStream& stream, int direction = kFused) {
     // Each channel owns one scale-up warp and one forward warp; the block shape is fixed with the buffer
     const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
     EP_HOST_ASSERT(1 <= num_channels_per_sm and num_channels_per_sm <= kNumMaxChannelsPerSM);
@@ -135,6 +136,7 @@ static void launch_combine(void* x,
         .num_experts_per_rank = num_experts_per_rank,
         .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
+        .direction = direction,
         .x = static_cast<nv_bfloat16*>(x),
         .topk_weights = static_cast<float*>(topk_weights),
         .src_metadata = src_metadata,
@@ -163,6 +165,7 @@ public:
         int hidden;
         int num_experts_per_rank, num_topk;
         int64_t num_timeout_cycles;
+        int direction;
 
         // Parameters
         nv_bfloat16* combined_x;
@@ -188,7 +191,7 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",                        args.use_expanded_layout, args.allow_multiple_reduction,
                            args.launch_args.grid_dim.first,
@@ -196,7 +199,7 @@ static void __instantiate_kernel() {{
                            args.num_channels_per_sm, args.num_nixl_channels,
                            args.hidden,
                            args.num_experts_per_rank, args.num_topk,
-                           args.num_timeout_cycles);
+                           args.num_timeout_cycles, args.direction);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -231,7 +234,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            const int& num_channels_per_sm,
                                            const int num_nixl_channels,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
-                                           const at::cuda::CUDAStream& stream) {
+                                           const at::cuda::CUDAStream& stream, int direction = kFused) {
     // Maximize shared memory utilization
     // Too many warps may cause performance degrade, so we limit into 1024
     const auto token_layout = layout::TokenLayout(hidden * sizeof(nv_bfloat16), 0, 0, false);
@@ -247,6 +250,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
         .hidden = hidden,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk,
         .num_timeout_cycles = num_timeout_cycles,
+        .direction = direction,
         .combined_x = static_cast<nv_bfloat16*>(combined_x),
         .combined_topk_weights = combined_topk_weights,
         .combined_topk_idx = combined_topk_idx,

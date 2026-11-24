@@ -42,7 +42,11 @@ static auto get_shape(const torch::Tensor& t) {
     }(std::make_index_sequence<kNumDims>());
 }
 
-template <typename dtype_t = void>
+static void* get_data_ptr(const std::optional<torch::Tensor>& t) {
+    return t.has_value() ? t->data_ptr() : nullptr;
+}
+
+template <typename dtype_t>
 static dtype_t* get_data_ptr(const std::optional<torch::Tensor>& t) {
     return t.has_value() ? t->data_ptr<dtype_t>() : nullptr;
 }

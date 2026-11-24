@@ -45,6 +45,7 @@ class NixlBootstrap:
         namespace: str,
         num_scaleup_ranks=None,
         timeout_seconds=300,
+        afd_config=None,
     ):
         if (
             type(world) is not int
@@ -73,12 +74,13 @@ class NixlBootstrap:
         except Exception as error:
             record = {"error": f"{type(error).__name__}: {error}"}
         configurations = self._all_gather(
-            "topology", (world, num_scaleup_ranks, record)
+            "topology", (world, num_scaleup_ranks, record, afd_config)
         )
         if any(config[:2] != (world, num_scaleup_ranks) for config in configurations):
             raise ValueError(
                 "Constructor cohort disagrees on world or num_scaleup_ranks"
             )
+        self.afd_configs = tuple(config[3] for config in configurations)
         self.topology_records = tuple(config[2] for config in configurations)
         self.num_scaleout_ranks, self.num_scaleup_ranks = validate_topology_records(
             self.topology_records, num_scaleup_ranks

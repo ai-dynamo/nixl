@@ -22,7 +22,7 @@
 
 #pragma once
 
-#include <nixl_ep_v2/common/comm.cuh>
+#include <nixl_ep_v2/impls/adaptive/afd.cuh>
 #include <nixl_ep_v2/common/compiled.cuh>
 #include <nixl_ep_v2/common/ptx.cuh>
 #include <nixl_ep_v2/common/layout.cuh>
@@ -38,7 +38,7 @@ template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
           int kNumSMs, int kNumWarps, int kNumChannelsPerSM, int kNumNixlChannels,
           int kHidden,
           int kNumExpertsPerRank, int kNumTopk,
-          int64_t kNumTimeoutCycles,
+          int64_t kNumTimeoutCycles, int kDirection = kFused,
           int kNumThreads = kNumWarps * 32,
           int kNumHiddenBytes = kHidden * sizeof(nv_bfloat16)>
 __global__ void __launch_bounds__(kNumThreads, 1)
@@ -54,7 +54,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                              const int num_max_tokens_per_rank,
                              const int num_max_scaleup_ranks) {
     // Topology
-    const auto topo = topology::load(topology_ptr);
+    const auto topo = topology::load<kDirection != kFused>(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
     const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
@@ -67,7 +67,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     //   hybrid: the scale-out receive rows, indexed by the scale-out rank (domain) owning the expert
     //   direct: the scale-up rows (the direct receive buffer), indexed by the POSITION of the rank owning the expert
     //           (the one live domain need not be domain 0, so an owner's global rank is not its position)
-    const bool is_direct = topo.mode == topology::kModeDirect;
+    const bool is_direct = kDirection != kFused || topo.mode == topology::kModeDirect;
     const int num_reduce_ranks = is_direct ? num_scaleup_ranks : num_scaleout_ranks;
     const bool use_rank_layout = kAllowMultipleReduction and num_reduce_ranks <= kNumTopk;
     const int num_tokens_in_layout = use_rank_layout ? num_reduce_ranks : kNumTopk;
@@ -110,7 +110,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
         int stored_dst_rank_idx = -1, stored_dst_expert_idx = -1;
         EP_STATIC_ASSERT(kNumTopk <= 32, "Too many top-k selections");
         if (lane_idx < kNumTopk) {
-            stored_dst_expert_idx = static_cast<int>(combined_topk_idx[token_idx * kNumTopk + lane_idx]);
+            stored_dst_expert_idx = physical_expert<kDirection, kNumExpertsPerRank>(topo, combined_topk_idx[token_idx * kNumTopk + lane_idx]);
             // A selection of a masked rank's expert was dropped at dispatch: no row to reduce, weight zero
             const int owner = stored_dst_expert_idx >= 0 ? stored_dst_expert_idx / num_experts_per_rank : -1;
             if (owner >= 0 and not topo.is_live(owner / num_scaleup_ranks, owner % num_scaleup_ranks))

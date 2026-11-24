@@ -23,6 +23,7 @@
 #pragma once
 
 #include <cuda_runtime.h>
+#include <limits>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -91,6 +92,34 @@ class ElasticBuffer {
     topology::EPTopology topology_host{}, staged_topology{};
     bool has_staged_topology = false;
     mutable std::optional<int> adaptive_num_channels_per_sm;
+
+    using DispatchResult = std::tuple<
+        std::optional<torch::Tensor>, std::optional<torch::Tensor>,
+        std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>,
+        int, int, std::vector<int>,
+        std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>,
+        std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<torch::Tensor>,
+        std::optional<EventHandle>>;
+    using CombineResult = std::tuple<std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>;
+
+    enum class AFDRole { Attention, FFN };
+
+    struct AFDConfig {
+        int hidden, num_topk, token_capacity, num_attention_ranks;
+        AFDRole role;
+        topology::ScaleupMask live_mask;
+        torch::Tensor topology_tensor;
+    };
+    std::optional<AFDConfig> afd;
+
+    void require_regular_ep() const {
+        EP_HOST_ASSERT(not afd and "An AFD buffer uses the directional operations");
+    }
+
+    void require_afd_role(AFDRole role) const {
+        EP_HOST_ASSERT(afd and topology_host.afd and "Configure and activate AFD before launching");
+        EP_HOST_ASSERT(afd->role == role and "Wrong AFD role");
+    }
 
     // Zero copy: the output arena at the end of the registered region, at the same offsets on every rank
     struct ZeroCopyArena {
@@ -202,7 +231,7 @@ public:
     }
 
     ~ElasticBuffer() noexcept(false) {
-        if (not explicitly_destroy)
+        if (not explicitly_destroy and not destroyed)
             destroy();
 
         if (not destroyed) {
@@ -243,6 +272,56 @@ public:
     // Two-step and collective: `stage_topology_masks` validates a world on the host, `commit_topology` writes it to the device
     // with one stream-ordered copy (after the transport's view swap when peers changed). Membership: see `topology.cuh`
 
+    void configure_afd(const std::vector<int>& attention_ranks, const std::vector<int>& ffn_ranks,
+                       int hidden, int num_topk, int token_capacity) {
+        EP_HOST_ASSERT(not afd and not adaptive_num_channels_per_sm and "AFD membership is configured once before dispatch");
+        EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
+                       "Configure AFD outside CUDA graph capture");
+        EP_HOST_ASSERT(not attention_ranks.empty() and not ffn_ranks.empty() and
+                       attention_ranks.size() + ffn_ranks.size() <= static_cast<size_t>(max_num_scaleup_ranks) and
+                       "AFD needs both roles in one NVLink domain");
+        EP_HOST_ASSERT(num_experts_per_rank > 0 and num_topk > 0 and num_topk <= 32 and "Invalid AFD expert or top-k count");
+        EP_HOST_ASSERT(hidden > 0 and hidden <= jit::device_runtime->get_num_smem_bytes() / sizeof(nv_bfloat16) and
+                       hidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0 and "Invalid AFD BF16 hidden size");
+        EP_HOST_ASSERT(token_capacity > 0 and
+                       static_cast<int64_t>(token_capacity) + kNumMaxChannels <=
+                           std::numeric_limits<int>::max() / (max_num_scaleout_ranks * max_num_scaleup_ranks) and
+                       "Invalid AFD token capacity");
+        EP_HOST_ASSERT(num_zero_copy_bytes == 0 and "AFD supports ordinary-copy buffers");
+
+        topology::AFDTopology device_topology{};
+        auto live_mask = topology::ScaleupMask{};
+        const auto add_role = [&](const std::vector<int>& ranks, topology::ScaleupMask& role_mask) {
+            for (int rid : ranks) {
+                EP_HOST_ASSERT(rid >= 0 and rid / max_num_scaleup_ranks == scaleout_rank_idx and
+                               nixl_context->is_connected(rid) and "AFD ranks must be connected in one NVLink domain");
+                const int pos = rid % max_num_scaleup_ranks;
+                EP_HOST_ASSERT(not live_mask.test(pos) and "Each AFD rank must belong to exactly one role");
+                const uint64_t bit = 1ull << (pos % 64);
+                live_mask.words[pos / 64] |= bit;
+                role_mask.words[pos / 64] |= bit;
+            }
+        };
+        add_role(attention_ranks, device_topology.attention_mask);
+        add_role(ffn_ranks, device_topology.ffn_mask);
+        EP_HOST_ASSERT(live_mask.test(scaleup_rank_idx) and "This rank must have an AFD role");
+        device_topology.num_ffn_ranks = static_cast<int>(ffn_ranks.size());
+        for (int i = 0; i < device_topology.num_ffn_ranks; ++i)
+            device_topology.ffn_ranks[i] = ffn_ranks[i] % max_num_scaleup_ranks;
+        std::sort(device_topology.ffn_ranks, device_topology.ffn_ranks + device_topology.num_ffn_ranks);
+
+        // Every connected peer's registration covers this symmetric arena (checked by the transport at connect).
+        const auto [recv_bytes, dispatch_send_bytes, combine_send_bytes] = get_buffer_arena(
+            token_capacity, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
+        EP_HOST_ASSERT(recv_bytes + dispatch_send_bytes + combine_send_bytes <= num_buffer_bytes and
+                       "The registered token arena is too small for AFD");
+        auto descriptor = torch::empty({static_cast<int64_t>(sizeof(device_topology))}, topology_tensor.options());
+        CUDA_RUNTIME_CHECK(cudaMemcpy(descriptor.data_ptr(), &device_topology, sizeof(device_topology), cudaMemcpyHostToDevice));
+        const auto role = device_topology.attention_mask.test(scaleup_rank_idx) ? AFDRole::Attention : AFDRole::FFN;
+        afd.emplace(AFDConfig{hidden, num_topk, token_capacity, static_cast<int>(attention_ranks.size()),
+                              role, live_mask, std::move(descriptor)});
+    }
+
     // Python-facing: the position mask as 64-bit words, least significant first (missing words are zero)
     void stage_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
                               const int& num_active_sms) {
@@ -260,6 +339,12 @@ public:
         EP_HOST_ASSERT((mode == topology::kModeHybrid or __builtin_popcount(scaleout_mask) == 1) and
                        "Direct mode needs one flat NVLink team (exactly one live NVLink domain)");
         EP_HOST_ASSERT(2 <= num_active_sms and num_active_sms <= topology::get_num_launch_sms() and num_active_sms % 2 == 0);
+        if (afd) {
+            EP_HOST_ASSERT(mode == topology::kModeDirect and scaleout_mask == (1u << scaleout_rank_idx) and
+                           "AFD needs one NVLink domain");
+            for (int i = 0; i < topology::kNumScaleupMaskWords; ++i)
+                EP_HOST_ASSERT(scaleup_mask.words[i] == afd->live_mask.words[i] and "AFD membership is fixed");
+        }
 
         // A participant's kernels address every live peer (a rank outside the live world launches nothing and may stage anything)
         if (((scaleout_mask >> scaleout_rank_idx) & 1u) and scaleup_mask.test(scaleup_rank_idx))
@@ -268,6 +353,7 @@ public:
                                 nixl_context->is_connected(topology::rank_id(d, k, max_num_scaleup_ranks))) and "A live rank is not connected: call `connect_ranks` first");
         staged_topology.transport = nixl_context->get_device_context_ptr();
         staged_topology.completion_usage = static_cast<topology::CompletionUsageState*>(completion_usage_tensor.data_ptr());
+        staged_topology.afd = afd ? static_cast<const topology::AFDTopology*>(afd->topology_tensor.data_ptr()) : nullptr;
 
         staged_topology.mode = static_cast<topology::Mode>(mode);
         staged_topology.num_scaleout_ranks = num_scaleout_ranks;
@@ -714,6 +800,115 @@ public:
              const bool& do_expand, const bool& do_zero_padding,
              const bool& use_tma_aligned_col_major_sf,
              const bool& zero_copy, const int& zero_copy_slot) const {
+        require_regular_ep();
+        auto [recv_x, recv_sf, recv_topk_idx, recv_topk_weights, copied_topk_idx, num_recv_tokens,
+              num_expanded_tokens, counts, psum_rank, psum_expert, unaligned_expert,
+              recv_src_metadata, token_metadata_at_forward, channel_linked_list, event] = dispatch_internal(
+            x, sf, topk_idx, topk_weights, cumulative_local_expert_recv_stats,
+            num_max_tokens_per_rank, expert_alignment, num_sms, previous_event, previous_event_before_epilogue,
+            async_with_compute_stream, allocate_on_comm_stream, do_handle_copy, do_cpu_sync,
+            do_expand, do_zero_padding, use_tma_aligned_col_major_sf, zero_copy, zero_copy_slot, kFused);
+        return {std::move(*recv_x), std::move(recv_sf), std::move(recv_topk_idx), std::move(recv_topk_weights),
+                std::move(copied_topk_idx), num_recv_tokens, num_expanded_tokens, std::move(counts),
+                std::move(*psum_rank), std::move(*psum_expert), std::move(*unaligned_expert),
+                std::move(*recv_src_metadata), std::move(*token_metadata_at_forward), std::move(*channel_linked_list),
+                std::move(event)};
+    }
+
+    DispatchResult dispatch_send(const torch::Tensor& x, const torch::Tensor& topk_idx,
+                                 const std::optional<torch::Tensor>& topk_weights,
+                                 int num_max_tokens_per_rank, int expert_alignment, int num_sms) const {
+        require_afd_role(AFDRole::Attention);
+        return dispatch_internal(
+            x, std::nullopt, topk_idx, topk_weights, std::nullopt, num_max_tokens_per_rank, expert_alignment, num_sms,
+            std::nullopt, std::nullopt, false, false, true, false, false, false, false, false, 0, kSend);
+    }
+
+    DispatchResult dispatch_recv(int num_max_tokens_per_rank, int expert_alignment, int num_sms,
+                                 bool do_cpu_sync, bool with_weights = false) const {
+        require_afd_role(AFDRole::FFN);
+        return dispatch_internal(
+            std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
+            num_max_tokens_per_rank, expert_alignment, num_sms, std::nullopt, std::nullopt,
+            false, false, false, do_cpu_sync, false, false, false, false, 0, kRecv, with_weights);
+    }
+
+    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
+    combine(const torch::Tensor& x,
+            const std::optional<torch::Tensor>& topk_weights,
+            const std::optional<torch::Tensor>& bias_0,
+            const std::optional<torch::Tensor>& bias_1,
+            const torch::Tensor& src_metadata,
+            const torch::Tensor& combined_topk_idx,
+            const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
+            const torch::Tensor& token_metadata_at_forward,
+            const torch::Tensor& channel_linked_list,
+            const bool& recv_count_is_exact,
+            const int& num_max_tokens_per_rank,
+            const int& num_sms,
+            const std::optional<EventHandle>& previous_event,
+            const std::optional<EventHandle>& previous_event_before_epilogue,
+            const bool& async_with_compute_stream,
+            const bool& allocate_on_comm_stream,
+            const bool& use_expanded_layout) const {
+        require_regular_ep();
+        auto [combined_x, combined_topk_weights, event] = combine_internal(
+            x, topk_weights, bias_0, bias_1, src_metadata, combined_topk_idx, psum_num_recv_tokens_per_scaleup_rank,
+            token_metadata_at_forward, channel_linked_list, recv_count_is_exact, num_max_tokens_per_rank, num_sms,
+            previous_event, previous_event_before_epilogue, async_with_compute_stream, allocate_on_comm_stream,
+            use_expanded_layout, kFused);
+        return {std::move(*combined_x), std::move(combined_topk_weights), std::move(event)};
+    }
+
+    CombineResult combine_send(const torch::Tensor& x, const torch::Tensor& src_metadata,
+                               const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
+                               bool recv_count_is_exact, int num_max_tokens_per_rank, int num_sms) const {
+        require_afd_role(AFDRole::FFN);
+        return combine_internal(
+            x, std::nullopt, std::nullopt, std::nullopt, src_metadata, std::nullopt,
+            psum_num_recv_tokens_per_scaleup_rank, std::nullopt, std::nullopt, recv_count_is_exact,
+            num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, false, kSend);
+    }
+
+    CombineResult combine_recv(const torch::Tensor& combined_topk_idx, const std::optional<torch::Tensor>& bias_0,
+                               const std::optional<torch::Tensor>& bias_1, int num_max_tokens_per_rank, int num_sms) const {
+        require_afd_role(AFDRole::Attention);
+        return combine_internal(
+            std::nullopt, std::nullopt, bias_0, bias_1, std::nullopt, combined_topk_idx, std::nullopt, std::nullopt,
+            std::nullopt, false, num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, false, kRecv);
+    }
+
+private:
+    DispatchResult dispatch_internal(
+        const std::optional<torch::Tensor>& x,
+        const std::optional<torch::Tensor>& sf,
+        const std::optional<torch::Tensor>& topk_idx,
+        const std::optional<torch::Tensor>& topk_weights,
+        const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
+        const int& num_max_tokens_per_rank,
+        const int& expert_alignment,
+        const int& num_sms,
+        const std::optional<EventHandle>& previous_event,
+        const std::optional<EventHandle>& previous_event_before_epilogue,
+        const bool& async_with_compute_stream,
+        const bool& allocate_on_comm_stream,
+        const bool& do_handle_copy, const bool& do_cpu_sync,
+        const bool& do_expand, const bool& do_zero_padding,
+        const bool& use_tma_aligned_col_major_sf,
+        const bool& zero_copy, const int& zero_copy_slot, Direction direction, bool with_weights = false) const {
+        const bool is_send = direction == kSend;
+        const bool is_recv = direction == kRecv;
+        EP_HOST_ASSERT(x.has_value() == (not is_recv) and topk_idx.has_value() == (not is_recv));
+        if (afd) {
+            EP_HOST_ASSERT(not do_expand and not do_zero_padding and not zero_copy and not sf and
+                           not use_tma_aligned_col_major_sf and "AFD dispatch uses compact, ordinary-copy BF16");
+            EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
+            EP_HOST_ASSERT(expert_alignment == 1 and "Compact AFD dispatch requires expert_alignment=1");
+            EP_HOST_ASSERT(not is_recv or not topk_weights);
+            EP_HOST_ASSERT(not is_send or (do_handle_copy and not do_cpu_sync and not cumulative_local_expert_recv_stats) and "Invalid AFD dispatch send options");
+        }
+        // AFD endpoints may choose different call buckets. Writes and source-token IDs use the shared capacity.
+        const int wire_token_capacity = afd ? afd->token_capacity : num_max_tokens_per_rank;
         // Check SM count
         EP_HOST_ASSERT(num_sms > 0);
 
@@ -736,23 +931,34 @@ public:
         // Check data tensor
         // NVFP4 wire: `x` holds two e2m1 codes per byte (`[tokens, hidden / 2]` uint8) and `sf` one e4m3 scale per 16 elements
         // as int32 packs of four (`[tokens, hidden / 64]`); the model hidden sizes the arena and the combine layout
-        const auto [num_tokens, num_cols] = get_shape<2>(x);
-        const bool nvfp4 = x.scalar_type() == torch::kByte;
+        const auto [num_tokens, num_cols] = is_recv ? std::make_tuple(0, afd->hidden) : get_shape<2>(*x);
+        const bool nvfp4 = x and x->scalar_type() == torch::kByte;
         const int hidden = nvfp4 ? 2 * num_cols : num_cols;
-        const auto num_hidden_bytes = num_cols * static_cast<int>(x.element_size());
+        const int num_hidden_bytes = num_cols * (is_recv ? sizeof(nv_bfloat16) : x->element_size());
         EP_HOST_ASSERT((not nvfp4 or (sf.has_value() and hidden % 64 == 0)) and "NVFP4 dispatch takes (codes [tokens, hidden / 2] uint8, scales [tokens, hidden / 64] int32 packs) with hidden % 64 == 0");
         EP_HOST_ASSERT(not (nvfp4 and use_tma_aligned_col_major_sf) and "NVFP4 scales are returned row-major only");
         // Fixed slots: the expert count of the live world is its rank count times the slots per rank
         EP_HOST_ASSERT(num_experts_per_rank > 0 and "Dispatch needs `num_experts_per_rank` at buffer construction");
         const int num_experts = topo.num_scaleout_ranks * topo.num_scaleup_ranks * num_experts_per_rank;
         const auto num_local_experts = num_experts_per_rank;
-        EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
-        EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
-        EP_HOST_ASSERT(num_tokens <= num_max_tokens_per_rank);
+        if (x) {
+            EP_HOST_ASSERT(x->is_cuda() and x->is_contiguous());
+            EP_HOST_ASSERT((x->size(1) * x->element_size()) % sizeof(int4) == 0);
+            EP_HOST_ASSERT(num_tokens <= num_max_tokens_per_rank);
+            if (is_send) {
+                EP_HOST_ASSERT(x->scalar_type() == torch::kBFloat16 and hidden == afd->hidden and
+                               x->get_device() == comm_stream.device_index() and "Invalid AFD dispatch payload");
+            }
+        }
 
         // Capacities of the handle tensors: the maximum world, every expert local, the whole launch grid
         const int max_num_ranks = max_num_scaleout_ranks * max_num_scaleup_ranks;
         const int num_max_channels = topology::get_num_launch_sms() * kNumMaxChannelsPerSM;
+        if (afd) {
+            const int64_t max_compact_rows = static_cast<int64_t>(wire_token_capacity) * afd->num_attention_ranks;
+            const int64_t max_expanded_rows = max_compact_rows * std::min(afd->num_topk, num_local_experts);
+            EP_HOST_ASSERT(max_expanded_rows <= std::numeric_limits<int>::max() and "AFD receive counters exceed int32");
+        }
 
         // Check SF stuffs
         int num_sf_packs = 0;
@@ -772,10 +978,13 @@ public:
         }
 
         // Check top-k stuffs
-        const auto [num_tokens_, num_topk] = get_shape<2>(topk_idx);
-        EP_HOST_ASSERT(num_tokens == num_tokens_);
-        EP_HOST_ASSERT(topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
-        EP_HOST_ASSERT(topk_idx.is_cuda() and topk_idx.is_contiguous());
+        const auto [num_routed_tokens, num_topk] = is_recv ? std::make_tuple(0, afd->num_topk) : get_shape<2>(*topk_idx);
+        if (topk_idx) {
+            EP_HOST_ASSERT(num_tokens == num_routed_tokens);
+            EP_HOST_ASSERT(topk_idx->scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
+            EP_HOST_ASSERT(topk_idx->is_cuda() and topk_idx->is_contiguous());
+            EP_HOST_ASSERT(not is_send or (num_topk == afd->num_topk and topk_idx->get_device() == x->get_device()));
+        }
 
         // Weights are optional for training backward
         float* topk_weights_ptr = nullptr;
@@ -783,6 +992,7 @@ public:
             const auto [num_tokens__, num_topk_] = get_shape<2>(topk_weights.value());
             EP_HOST_ASSERT(num_tokens == num_tokens__);
             EP_HOST_ASSERT(topk_weights->is_cuda() and topk_weights->is_contiguous());
+            EP_HOST_ASSERT(not is_send or (num_topk_ == num_topk and topk_weights->get_device() == x->get_device()));
             topk_weights_ptr = topk_weights->data_ptr<float>();
         }
 
@@ -794,6 +1004,7 @@ public:
                            cumulative_local_expert_recv_stats->is_contiguous());
             EP_HOST_ASSERT(num_local_experts_ >= num_local_experts and
                            "`cumulative_local_expert_recv_stats` must hold the rank's expert slots");
+            EP_HOST_ASSERT(not is_recv or cumulative_local_expert_recv_stats->get_device() == comm_stream.device_index());
             cumulative_local_expert_recv_stats_ptr = cumulative_local_expert_recv_stats->data_ptr<int>();
         }
 
@@ -877,36 +1088,40 @@ public:
             static_cast<int>(topo.num_scaleout_ranks), static_cast<int>(num_max_tokens_per_channel), static_cast<int>(num_topk)};
         const auto max_forward_metadata_rows = max_linked_list_len - num_max_channels + static_cast<int64_t>(num_max_channels) *
             layout::ForwardMetadataLayout<>{static_cast<int>(max_num_scaleout_ranks), 0, static_cast<int>(num_topk)}.num_footer_rows();
-        auto token_metadata_at_forward = alloc_flat(
-            max_forward_metadata_rows * forward_metadata.num_dims(),
-            static_cast<int64_t>(num_channels) * forward_metadata.num_words_per_channel(),
-            {num_channels, forward_metadata.num_rows(), forward_metadata.num_dims()});
-        int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
+        auto token_metadata_at_forward = std::optional<torch::Tensor>();
+        if (direction == kFused)
+            token_metadata_at_forward = alloc_flat(
+                max_forward_metadata_rows * forward_metadata.num_dims(),
+                static_cast<int64_t>(num_channels) * forward_metadata.num_words_per_channel(),
+                {num_channels, forward_metadata.num_rows(), forward_metadata.num_dims()});
+        int* token_metadata_at_forward_ptr = get_data_ptr<int>(token_metadata_at_forward);
 
         // Per-scaleup-peer-per-channel linked list
         // `[i, j, k]` means: from channel i from scaleup peer k, the j-th token's index in the combine's input
-        auto channel_linked_list = alloc_flat(
-            // Index 0 of the list means the starting item
-            max_linked_list_len * max_num_scaleup_ranks,
-            static_cast<int64_t>(num_channels) * num_max_forwarded_tokens * topo.num_scaleup_ranks,
-            {num_channels, num_max_forwarded_tokens, topo.num_scaleup_ranks});
-        int* channel_linked_list_ptr = channel_linked_list.data_ptr<int>();
+        auto channel_linked_list = std::optional<torch::Tensor>();
+        if (direction == kFused)
+            channel_linked_list = alloc_flat(
+                // Index 0 of the list means the starting item
+                max_linked_list_len * max_num_scaleup_ranks,
+                static_cast<int64_t>(num_channels) * num_max_forwarded_tokens * topo.num_scaleup_ranks,
+                {num_channels, num_max_forwarded_tokens, topo.num_scaleup_ranks});
+        int* channel_linked_list_ptr = get_data_ptr<int>(channel_linked_list);
 
         // Clone `topk_idx` for saving in the handle (to prevent users' modification)
         auto copied_topk_idx = std::optional<torch::Tensor>();
         topk_idx_t* copied_topk_idx_ptr = nullptr;
-        if (do_handle_copy) {
-            copied_topk_idx = torch::empty_like(topk_idx);
+        if (do_handle_copy and topk_idx) {
+            copied_topk_idx = torch::empty_like(*topk_idx);
             copied_topk_idx_ptr = copied_topk_idx->data_ptr<topk_idx_t>();
         }
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
+            wire_token_capacity, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
                        "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
         const auto [num_wire_recv_bytes, num_wire_send_bytes] = get_dispatch_buffer_size(
-                       num_max_tokens_per_rank, num_hidden_bytes, num_sf_packs, num_topk,
+                       wire_token_capacity, num_hidden_bytes, num_sf_packs, num_topk,
                        max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_wire_recv_bytes <= num_buffer_bytes - num_dispatch_send_bytes - num_combine_send_bytes and
                        num_wire_send_bytes <= num_dispatch_send_bytes);
@@ -942,15 +1157,15 @@ public:
 
         // Do dispatch into the buffers (with SM limitation)
         EP_HOST_ASSERT(num_sms <= jit::device_runtime->get_num_sms());
-        launch_dispatch(x.data_ptr(), sf_ptr,
-                        topk_idx.data_ptr<topk_idx_t>(), topk_weights_ptr,
+        launch_dispatch(get_data_ptr(x), sf_ptr,
+                        get_data_ptr<topk_idx_t>(topk_idx), topk_weights_ptr,
                         copied_topk_idx_ptr,
                         cumulative_local_expert_recv_stats_ptr,
                         psum_num_recv_tokens_per_scaleup_rank.data_ptr<int>(),
                         psum_num_recv_tokens_per_expert.data_ptr<int>(),
                         num_unaligned_recv_tokens_per_expert_ptr,
                         token_metadata_at_forward_ptr,
-                        num_tokens, num_max_tokens_per_rank,
+                        num_tokens, wire_token_capacity,
                         num_hidden_bytes,
                         num_sf_packs, sf_token_stride, sf_hidden_stride,
                         num_experts_per_rank, num_topk, expert_alignment,
@@ -969,7 +1184,17 @@ public:
                         zc_count_matrix_ptr, zero_copy ? zc.count_row_stride : 0, zero_copy ? zc.count_matrix_rows : 0,
                         zero_copy ? zero_copy_slot : 0,
                         resolve_dynamic_take(),
-                        comm_stream);
+                        comm_stream, direction);
+
+        if (is_send) {
+            stream_control_before_epilogue(previous_event_before_epilogue);
+            const auto event = stream_control_epilogue(
+                {x, topk_idx, topk_weights, copied_topk_idx, psum_num_recv_tokens_per_scaleup_rank,
+                 psum_num_recv_tokens_per_expert, num_unaligned_recv_tokens_per_expert},
+                compute_stream, allocate_on_comm_stream, async_with_compute_stream);
+            return {std::nullopt, std::nullopt, std::nullopt, std::nullopt, copied_topk_idx, 0, 0, {},
+                    std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt, event};
+        }
 
         // Received token counters
         int num_recv_tokens = 0, num_expanded_tokens = 0;
@@ -1027,9 +1252,8 @@ public:
                     throw EPExceptionWithLineInfo("Dispatch CPU wait", get_buffer_info());
             }
         } else {
-            // Without CPU sync, allocate for the worst case of the declared maximum world: every source token of every
-            // rank in every local slot it may select (at most `num_topk`), plus the alignment slack of the fixed local slots
-            num_recv_tokens = num_max_tokens_per_rank * max_num_ranks;
+            // Without CPU sync, reserve for every possible source row, regardless of a local AFD receive bucket.
+            num_recv_tokens = wire_token_capacity * (is_recv ? afd->num_attention_ranks : max_num_ranks);
             num_expanded_tokens = num_recv_tokens * std::min(num_topk, num_local_experts);
             num_expanded_tokens += (expert_alignment - 1) * num_local_experts;
             num_expanded_tokens = math::align(num_expanded_tokens, expert_alignment);
@@ -1039,6 +1263,8 @@ public:
         // `recv_src_metadata` includes source token indices and buffer slot indices
         // Zero copy: views of the slot (`from_blob`, no deleter: the slot rule protects them), sliced to the count
         const auto num_allocated_tokens = do_expand ? num_expanded_tokens : num_recv_tokens;
+        const auto x_options = x ? x->options() : int_options.dtype(torch::kBFloat16);
+        const auto index_options = topk_idx ? topk_idx->options() : int_options.dtype(c10::CppTypeToScalarType<topk_idx_t>::value);
         torch::Tensor recv_x, recv_src_metadata;
         auto recv_sf = std::optional<torch::Tensor>();
         auto recv_topk_idx = std::optional<torch::Tensor>();
@@ -1051,7 +1277,7 @@ public:
         int recv_sf_token_stride = 0, recv_sf_hidden_stride = 0;
         if (zero_copy) {
             EP_HOST_ASSERT(num_allocated_tokens <= zc.num_rows and num_recv_tokens <= zc.num_compact_rows and "The receive count exceeds the zero-copy slot");
-            recv_x = torch::from_blob(zc_recv_x_ptr, {zc.num_rows, static_cast<int64_t>(num_cols)}, x.options())
+            recv_x = torch::from_blob(zc_recv_x_ptr, {zc.num_rows, static_cast<int64_t>(num_cols)}, x_options)
                 .slice(0, 0, num_allocated_tokens);
             recv_src_metadata = torch::from_blob(zc_recv_src_metadata_ptr, {zc.num_compact_rows, static_cast<int64_t>(num_topk + 2)}, int_options)
                 .slice(0, 0, num_recv_tokens);
@@ -1063,7 +1289,7 @@ public:
                     .slice(0, 0, num_allocated_tokens);
                 recv_sf_ptr = zc_recv_sf_ptr;
             }
-            recv_topk_idx = torch::from_blob(zc_recv_topk_idx_ptr, {zc.num_compact_rows, static_cast<int64_t>(num_topk)}, topk_idx.options())
+            recv_topk_idx = torch::from_blob(zc_recv_topk_idx_ptr, {zc.num_compact_rows, static_cast<int64_t>(num_topk)}, index_options)
                 .slice(0, 0, num_allocated_tokens);
             recv_topk_idx_ptr = zc_recv_topk_idx_ptr;
             if (topk_weights.has_value()) {
@@ -1072,7 +1298,7 @@ public:
                 recv_topk_weights_ptr = zc_recv_topk_weights_ptr;
             }
         } else {
-            recv_x = torch::empty({num_allocated_tokens, num_cols}, x.options());
+            recv_x = torch::empty({num_allocated_tokens, num_cols}, x_options);
             recv_src_metadata = torch::empty({num_recv_tokens, num_topk + 2},
                                              torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
             if (sf.has_value()) {
@@ -1088,13 +1314,14 @@ public:
                 recv_sf_ptr = recv_sf->data_ptr();
             }
             if (not do_expand) {
-                recv_topk_idx = torch::empty({num_allocated_tokens, num_topk}, topk_idx.options());
+                recv_topk_idx = torch::empty({num_allocated_tokens, num_topk}, index_options);
                 recv_topk_idx_ptr = recv_topk_idx->data_ptr<topk_idx_t>();
             }
-            if (topk_weights.has_value()) {
+            if (is_recv ? with_weights : topk_weights.has_value()) {
+                const auto weight_options = topk_weights ? topk_weights->options() : int_options.dtype(torch::kFloat);
                 recv_topk_weights = do_expand ?
-                    torch::empty({num_allocated_tokens}, topk_weights->options()) :
-                    torch::empty({num_allocated_tokens, num_topk}, topk_weights->options());
+                    torch::empty({num_allocated_tokens}, weight_options) :
+                    torch::empty({num_allocated_tokens, num_topk}, weight_options);
                 recv_topk_weights_ptr = recv_topk_weights->data_ptr<float>();
             }
         }
@@ -1121,7 +1348,7 @@ public:
                                       recv_src_metadata.data_ptr<int>(),
                                       channel_linked_list_ptr,
                                       num_unaligned_recv_tokens_per_expert_ptr,
-                                      do_cpu_sync ? num_recv_tokens : -1, max_num_scaleup_ranks, num_max_tokens_per_rank,
+                                      do_cpu_sync ? num_recv_tokens : -1, max_num_scaleup_ranks, wire_token_capacity,
                                       num_hidden_bytes,
                                       num_sf_packs, recv_sf_token_stride, recv_sf_hidden_stride,
                                       num_experts_per_rank, num_topk, expert_alignment,
@@ -1161,24 +1388,35 @@ public:
                 event};
     }
 
-    std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
-    combine(const torch::Tensor& x,
-            const std::optional<torch::Tensor>& topk_weights,
-            const std::optional<torch::Tensor>& bias_0,
-            const std::optional<torch::Tensor>& bias_1,
-            const torch::Tensor& src_metadata,
-            const torch::Tensor& combined_topk_idx,
-            const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
-            const torch::Tensor& token_metadata_at_forward,
-            const torch::Tensor& channel_linked_list,
-            const bool& recv_count_is_exact,
-            const int& num_max_tokens_per_rank,
-            const int& num_sms,
-            const std::optional<EventHandle>& previous_event,
-            const std::optional<EventHandle>& previous_event_before_epilogue,
-            const bool& async_with_compute_stream,
-            const bool& allocate_on_comm_stream,
-            const bool& use_expanded_layout) const {
+    CombineResult combine_internal(
+        const std::optional<torch::Tensor>& x,
+        const std::optional<torch::Tensor>& topk_weights,
+        const std::optional<torch::Tensor>& bias_0,
+        const std::optional<torch::Tensor>& bias_1,
+        const std::optional<torch::Tensor>& src_metadata,
+        const std::optional<torch::Tensor>& combined_topk_idx,
+        const std::optional<torch::Tensor>& psum_num_recv_tokens_per_scaleup_rank,
+        const std::optional<torch::Tensor>& token_metadata_at_forward,
+        const std::optional<torch::Tensor>& channel_linked_list,
+        const bool& recv_count_is_exact,
+        const int& num_max_tokens_per_rank,
+        const int& num_sms,
+        const std::optional<EventHandle>& previous_event,
+        const std::optional<EventHandle>& previous_event_before_epilogue,
+        const bool& async_with_compute_stream,
+        const bool& allocate_on_comm_stream,
+        const bool& use_expanded_layout, Direction direction) const {
+        const bool is_send = direction == kSend;
+        const bool is_recv = direction == kRecv;
+        EP_HOST_ASSERT(x.has_value() == (not is_recv) and src_metadata.has_value() == (not is_recv) and
+                       psum_num_recv_tokens_per_scaleup_rank.has_value() == (not is_recv) and
+                       combined_topk_idx.has_value() == (not is_send));
+        if (afd) {
+            EP_HOST_ASSERT(not use_expanded_layout and not topk_weights and "AFD combine uses compact BF16 replies");
+            EP_HOST_ASSERT(not is_send or (not bias_0 and not bias_1));
+            EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
+        }
+        const int wire_token_capacity = afd ? afd->token_capacity : num_max_tokens_per_rank;
         // Check SM count
         EP_HOST_ASSERT(num_sms > 0);
 
@@ -1188,28 +1426,39 @@ public:
 
         // Check data
         EP_HOST_ASSERT(num_experts_per_rank > 0 and "Combine needs `num_experts_per_rank` at buffer construction");
-        const auto [num_tokens, hidden] = get_shape<2>(x);
-        EP_HOST_ASSERT(x.is_cuda() and x.is_contiguous());
-        EP_HOST_ASSERT(x.scalar_type() == torch::kBFloat16);
-        EP_HOST_ASSERT((x.size(1) * x.element_size()) % sizeof(int4) == 0);
+        const auto [num_tokens, hidden] = is_recv ? std::make_tuple(0, afd->hidden) : get_shape<2>(*x);
+        if (x) {
+            EP_HOST_ASSERT(x->is_cuda() and x->is_contiguous());
+            EP_HOST_ASSERT(x->scalar_type() == torch::kBFloat16);
+            EP_HOST_ASSERT((x->size(1) * x->element_size()) % sizeof(int4) == 0);
+            EP_HOST_ASSERT(not is_send or (x->get_device() == comm_stream.device_index() and hidden == afd->hidden));
+        }
 
-        // Check tensors at dispatch
-        const auto [num_combined_tokens, num_topk] = get_shape<2>(combined_topk_idx);
-        const auto [num_psum_slots] = get_shape<1>(psum_num_recv_tokens_per_scaleup_rank);
-        EP_HOST_ASSERT(combined_topk_idx.is_cuda() and combined_topk_idx.is_contiguous());
-        EP_HOST_ASSERT(combined_topk_idx.scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
-        EP_HOST_ASSERT(num_psum_slots == max_num_scaleup_ranks + 1);
-        EP_HOST_ASSERT(psum_num_recv_tokens_per_scaleup_rank.is_cuda() and psum_num_recv_tokens_per_scaleup_rank.is_contiguous());
-        EP_HOST_ASSERT(psum_num_recv_tokens_per_scaleup_rank.scalar_type() == torch::kInt);
-        EP_HOST_ASSERT(num_combined_tokens <= num_max_tokens_per_rank);
+        // Attention supplies the original routes. FFN instead supplies the dispatch receive metadata.
+        const auto [num_combined_tokens, num_topk] = is_send ? std::make_tuple(0, afd->num_topk) : get_shape<2>(*combined_topk_idx);
+        if (combined_topk_idx) {
+            EP_HOST_ASSERT(combined_topk_idx->is_cuda() and combined_topk_idx->is_contiguous());
+            EP_HOST_ASSERT(combined_topk_idx->scalar_type() == c10::CppTypeToScalarType<topk_idx_t>::value);
+            EP_HOST_ASSERT(num_combined_tokens <= num_max_tokens_per_rank);
+            EP_HOST_ASSERT(not is_recv or (num_topk == afd->num_topk and combined_topk_idx->get_device() == comm_stream.device_index()));
+        }
 
-        // Check metadata
-        // For reduction mode, `num_tokens_` means the number of unexpanded tokens
-        const auto [num_reduced_tokens, num_topk_p2] = get_shape<2>(src_metadata);
-        EP_HOST_ASSERT(num_reduced_tokens == (use_expanded_layout ? num_reduced_tokens : num_tokens));
-        EP_HOST_ASSERT(num_topk_p2 == num_topk + 2);
-        EP_HOST_ASSERT(src_metadata.is_cuda() and src_metadata.is_contiguous());
-        EP_HOST_ASSERT(src_metadata.scalar_type() == torch::kInt);
+        int num_reduced_tokens = 0;
+        if (src_metadata) {
+            const auto [num_psum_slots] = get_shape<1>(*psum_num_recv_tokens_per_scaleup_rank);
+            EP_HOST_ASSERT(num_psum_slots == max_num_scaleup_ranks + 1);
+            EP_HOST_ASSERT(psum_num_recv_tokens_per_scaleup_rank->is_cuda() and psum_num_recv_tokens_per_scaleup_rank->is_contiguous());
+            EP_HOST_ASSERT(psum_num_recv_tokens_per_scaleup_rank->scalar_type() == torch::kInt);
+            const auto [num_metadata_rows, num_topk_p2] = get_shape<2>(*src_metadata);
+            EP_HOST_ASSERT(use_expanded_layout or num_metadata_rows == num_tokens);
+            EP_HOST_ASSERT(num_topk_p2 == num_topk + 2);
+            EP_HOST_ASSERT(src_metadata->is_cuda() and src_metadata->is_contiguous());
+            EP_HOST_ASSERT(src_metadata->scalar_type() == torch::kInt);
+            EP_HOST_ASSERT(not is_send or (src_metadata->get_device() == x->get_device() and
+                           psum_num_recv_tokens_per_scaleup_rank->get_device() == x->get_device() and
+                           num_metadata_rows <= afd->num_attention_ranks * wire_token_capacity));
+            num_reduced_tokens = num_metadata_rows;
+        }
 
         // Check optional tensors
         if (topk_weights.has_value()) {
@@ -1230,7 +1479,8 @@ public:
             if (bias_opts[i].has_value()) {
                 auto bias = bias_opts[i].value();
                 EP_HOST_ASSERT(bias.dim() == 2 and bias.is_contiguous());
-                EP_HOST_ASSERT(bias.scalar_type() == x.scalar_type());
+                EP_HOST_ASSERT(bias.scalar_type() == torch::kBFloat16);
+                EP_HOST_ASSERT(not is_recv or (bias.is_cuda() and bias.get_device() == comm_stream.device_index()));
                 EP_HOST_ASSERT(bias.size(0) == num_combined_tokens and bias.size(1) == hidden);
                 bias_ptrs[i] = bias.data_ptr();
             }
@@ -1242,47 +1492,42 @@ public:
 
         // Check buffer size
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
+            wire_token_capacity, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
         EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
                        "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
 
-        // The forwarding metadata of the dispatch handle
-        // The token metadata during forward
-        const auto [num_channels_, d1, d2] = get_shape<3>(token_metadata_at_forward);
-        const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels_);
-        const int num_channels = num_channels_;
-        int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
-        const auto forward_metadata = layout::ForwardMetadataLayout<>{
-            static_cast<int>(topo.num_scaleout_ranks), static_cast<int>(num_max_tokens_per_channel), static_cast<int>(num_topk)};
-        EP_HOST_ASSERT(d1 == forward_metadata.num_rows());
-        EP_HOST_ASSERT(d2 == forward_metadata.num_dims());
-        EP_HOST_ASSERT(token_metadata_at_forward.is_cuda() and token_metadata_at_forward.is_contiguous());
-        EP_HOST_ASSERT(token_metadata_at_forward.scalar_type() == torch::kInt);
-
-        // Per-scaleup-peer-per-channel linked list
-        const auto [num_channels__, d1_, d2_] = get_shape<3>(channel_linked_list);
-        int* channel_linked_list_ptr = channel_linked_list.data_ptr<int>();
-        EP_HOST_ASSERT(num_channels == num_channels__);
-        EP_HOST_ASSERT(d1_ == topo.num_scaleout_ranks * num_max_tokens_per_channel + 1);
-        EP_HOST_ASSERT(d2_ == topo.num_scaleup_ranks);
-        EP_HOST_ASSERT(channel_linked_list.is_cuda() and channel_linked_list.is_contiguous());
-        EP_HOST_ASSERT(channel_linked_list.scalar_type() == torch::kInt);
-
-        // Push data into remote buffers
-        // NOTES: we don't use `num_hidden_bytes` due to enable later quantization possibility
         EP_HOST_ASSERT(adaptive_num_channels_per_sm.has_value() and "Combine before any dispatch");
-        EP_HOST_ASSERT(num_channels == *adaptive_num_channels_per_sm * topology_host.num_active_sms and
-                       "The handle was produced with another active SM count");
+        if (direction == kFused) {
+            EP_HOST_ASSERT(token_metadata_at_forward and channel_linked_list);
+            // The forwarding metadata of the dispatch handle is used by regular EP.
+            const auto [num_channels, d1, d2] = get_shape<3>(*token_metadata_at_forward);
+            const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
+            const auto forward_metadata = layout::ForwardMetadataLayout<>{
+                topo.num_scaleout_ranks, num_max_tokens_per_channel, num_topk};
+            EP_HOST_ASSERT(d1 == forward_metadata.num_rows());
+            EP_HOST_ASSERT(d2 == forward_metadata.num_dims());
+            EP_HOST_ASSERT(token_metadata_at_forward->is_cuda() and token_metadata_at_forward->is_contiguous());
+            EP_HOST_ASSERT(token_metadata_at_forward->scalar_type() == torch::kInt);
+
+            const auto [linked_channels, linked_rows, linked_ranks] = get_shape<3>(*channel_linked_list);
+            EP_HOST_ASSERT(num_channels == linked_channels);
+            EP_HOST_ASSERT(linked_rows == topo.num_scaleout_ranks * num_max_tokens_per_channel + 1);
+            EP_HOST_ASSERT(linked_ranks == topo.num_scaleup_ranks);
+            EP_HOST_ASSERT(channel_linked_list->is_cuda() and channel_linked_list->is_contiguous());
+            EP_HOST_ASSERT(channel_linked_list->scalar_type() == torch::kInt);
+            EP_HOST_ASSERT(num_channels == *adaptive_num_channels_per_sm * topology_host.num_active_sms and
+                           "The handle was produced with another active SM count");
+        }
+
         launch_combine(
-            x.data_ptr(),
-            topk_weights.has_value() ? topk_weights->data_ptr() : nullptr,
-            src_metadata.data_ptr<int>(),
-            psum_num_recv_tokens_per_scaleup_rank.data_ptr<int>(),
-            token_metadata_at_forward_ptr,
-            channel_linked_list_ptr,
+            get_data_ptr(x), get_data_ptr(topk_weights),
+            get_data_ptr<int>(src_metadata),
+            get_data_ptr<int>(psum_num_recv_tokens_per_scaleup_rank),
+            get_data_ptr<int>(token_metadata_at_forward),
+            get_data_ptr<int>(channel_linked_list),
             buffer, math::advance_ptr(buffer, num_buffer_bytes - num_combine_send_bytes), workspace,
             get_topology_ptr(),
-            recv_count_is_exact ? num_reduced_tokens : -1, num_max_tokens_per_rank,
+            recv_count_is_exact or is_recv ? num_reduced_tokens : -1, wire_token_capacity,
             hidden, num_experts_per_rank, num_topk,
             num_gpu_timeout_cycles,
             max_num_scaleout_ranks, max_num_scaleup_ranks,
@@ -1290,25 +1535,34 @@ public:
             jit::device_runtime->get_num_smem_bytes(),
             use_expanded_layout, allow_multiple_reduction,
             resolve_dynamic_take(),
-            comm_stream);
+            comm_stream, direction);
+        if (is_send) {
+            stream_control_before_epilogue(previous_event_before_epilogue);
+            const auto event = stream_control_epilogue(
+                {x, src_metadata, psum_num_recv_tokens_per_scaleup_rank},
+                compute_stream, allocate_on_comm_stream, async_with_compute_stream);
+            return {std::nullopt, std::nullopt, event};
+        }
+
         // Allocate output tensors
-        auto combined_x = torch::empty({num_combined_tokens, hidden}, x.options());
+        const auto x_options = x ? x->options() : combined_topk_idx->options().dtype(torch::kBFloat16);
+        auto combined_x = torch::empty({num_combined_tokens, hidden}, x_options);
         auto combined_topk_weights = std::optional<torch::Tensor>();
         float* combined_topk_weights_ptr = nullptr;
         if (topk_weights.has_value()) {
             combined_topk_weights = torch::empty({num_combined_tokens, num_topk}, topk_weights->options());
             combined_topk_weights_ptr = combined_topk_weights->data_ptr<float>();
         }
-        auto token_result_imm_completions = torch::empty({num_combined_tokens}, x.options().dtype(torch::kByte));
+        auto token_result_imm_completions = torch::empty({num_combined_tokens}, x_options.dtype(torch::kByte));
 
         // Combine pushed data: the reduce epilogue derives the rows to reduce from the topology descriptor
         // (`EPTopology`, its `mode` and rank counts) and takes the buffer base
         stream_control_before_epilogue(previous_event_before_epilogue);
         launch_combine_reduce_epilogue(combined_x.data_ptr(),
                                        combined_topk_weights_ptr,
-                                       combined_topk_idx.data_ptr<topk_idx_t>(),
+                                       combined_topk_idx->data_ptr<topk_idx_t>(),
                                        token_result_imm_completions.data_ptr<uint8_t>(),
-                                       num_combined_tokens, num_max_tokens_per_rank,
+                                       num_combined_tokens, wire_token_capacity,
                                        hidden,
                                        num_experts_per_rank, num_topk,
                                        num_gpu_timeout_cycles,
@@ -1321,7 +1575,7 @@ public:
                                        *adaptive_num_channels_per_sm,
                                        nixl_context->num_channels,
                                        use_expanded_layout, allow_multiple_reduction,
-                                       comm_stream);
+                                       comm_stream, direction);
 
         // Stream control
         const auto event = stream_control_epilogue(
@@ -1350,6 +1604,7 @@ static void register_apis(pybind11::module_& m) {
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("get_physical_domain_size", &ElasticBuffer::get_physical_domain_size)
         .def("get_logical_domain_size", &ElasticBuffer::get_logical_domain_size)
+        .def("configure_afd", &ElasticBuffer::configure_afd)
         .def("stage_topology_masks", &ElasticBuffer::stage_topology_masks)
         .def("commit_topology", &ElasticBuffer::commit_topology)
         .def("set_topology", &ElasticBuffer::set_topology)
@@ -1368,7 +1623,13 @@ static void register_apis(pybind11::module_& m) {
         .def("has_zero_copy", &ElasticBuffer::has_zero_copy)
         .def("get_zero_copy_num_slots", &ElasticBuffer::get_zero_copy_num_slots)
         .def("dispatch", &ElasticBuffer::dispatch)
-        .def("combine", &ElasticBuffer::combine);
+        .def("dispatch_send", &ElasticBuffer::dispatch_send)
+        .def("dispatch_recv", &ElasticBuffer::dispatch_recv,
+             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
+             pybind11::arg("do_cpu_sync"), pybind11::arg("with_weights") = false)
+        .def("combine", &ElasticBuffer::combine)
+        .def("combine_send", &ElasticBuffer::combine_send)
+        .def("combine_recv", &ElasticBuffer::combine_recv);
     m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
     m.def("calculate_zero_copy_arena_size", &ElasticBuffer::calculate_zero_copy_arena_size);
     m.def("get_elastic_buffer_alignment", [=]() {
