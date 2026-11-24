@@ -832,7 +832,7 @@ TEST(UcxTraceContextWire, SampledBaggageRoundTrips) {
 
     EXPECT_EQ(notif.msg, "msg");
     EXPECT_TRUE(notif.trace.active());
-    EXPECT_EQ(notif.baggage, "tenant=a,job=7");
+    EXPECT_EQ(notif.trace.baggage(), "tenant=a,job=7");
 }
 
 TEST(UcxTraceContextWire, UnsampledRequestWritesNoBaggage) {
@@ -855,7 +855,7 @@ TEST(UcxTraceContextWire, BaggageNixlCannotCarryIsDropped) {
             handBuiltNotif({{"tctx", record}, {"tbag", baggage}}), &sink);
         EXPECT_EQ(notif.msg, "msg");
         EXPECT_TRUE(notif.trace.active());
-        EXPECT_TRUE(notif.baggage.empty());
+        EXPECT_TRUE(notif.trace.baggage().empty());
     }
 }
 

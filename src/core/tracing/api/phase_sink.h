@@ -492,6 +492,73 @@ recordNotifReceived(const nixlBackendPostTrace &,
 
 #if defined(NIXL_TRACE_ENABLED)
 
+class nixlBackendNotifTrace {
+public:
+    nixlBackendNotifTrace() = default;
+
+    nixlBackendNotifTrace(nixlSerDes &ser_des, nixlBackendTraceSink *sink) {
+        if (const auto identity = nixl::trace::getTraceTags(ser_des, sink)) {
+            trace_ = nixlBackendPostTrace{sink, *identity};
+            baggage_ = nixl::trace::getTraceBaggage(ser_des, sink);
+        }
+    }
+
+    [[nodiscard]] bool
+    active() const noexcept {
+        return trace_.active();
+    }
+
+    [[nodiscard]] const nixl::trace::TraceIdentity &
+    identity() const noexcept {
+        return trace_.identity();
+    }
+
+    [[nodiscard]] std::string_view
+    baggage() const noexcept {
+        return baggage_;
+    }
+
+    void
+    recordReceived(std::string_view remote_agent) const noexcept {
+        nixl::trace::recordNotifReceived(trace_, remote_agent, baggage_);
+    }
+
+private:
+    nixlBackendPostTrace trace_;
+    std::string baggage_;
+};
+
+#else
+
+class nixlBackendNotifTrace {
+public:
+    nixlBackendNotifTrace() = default;
+
+    nixlBackendNotifTrace(nixlSerDes &, nixlBackendTraceSink *) noexcept {}
+
+    [[nodiscard]] constexpr bool
+    active() const noexcept {
+        return false;
+    }
+
+    [[nodiscard]] nixl::trace::TraceIdentity
+    identity() const noexcept {
+        return {};
+    }
+
+    [[nodiscard]] constexpr std::string_view
+    baggage() const noexcept {
+        return {};
+    }
+
+    void
+    recordReceived(std::string_view) const noexcept {}
+};
+
+#endif
+
+#if defined(NIXL_TRACE_ENABLED)
+
 /**
  * @brief The phases of one post, for a backend to record where it sees them:
  *        SUBMIT and WIRE_SUBMITTED when it posts, WIRE_COMPLETED with the

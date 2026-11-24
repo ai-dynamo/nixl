@@ -39,8 +39,7 @@ namespace nixl::ucx {
 struct notifMessage {
     std::string agent;
     std::string msg;
-    nixlBackendPostTrace trace;
-    std::string baggage;
+    nixlBackendNotifTrace trace;
 };
 
 [[nodiscard]] std::string
