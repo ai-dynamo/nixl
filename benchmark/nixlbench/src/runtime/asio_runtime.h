@@ -145,6 +145,14 @@ public:
         return 0;
     }
 
+    // The I/O thread stores an exception once the connection fails, e.g. on EOF after the
+    // peer died, so the target's notification polling can stop instead of waiting forever.
+    [[nodiscard]] bool
+    areAllPeersAlive() override {
+        const std::unique_lock lock(mutex_);
+        return !exception_;
+    }
+
 private:
     static constexpr std::size_t typeShift_ = 24;
     static constexpr std::uint32_t sizeMask_ = 0x00ffffff;
