@@ -91,8 +91,14 @@ proxyMemViewManager::createView(const DlistT &dlist,
 
 nixl_status_t
 proxyMemViewManager::prepLocal(const nixl_meta_dlist_t &dlist, proxy_view_handle_t &out) {
+    std::vector<void *> direct_ptrs;
+    if (dlist.getType() == VRAM_SEG) {
+        for (const auto &desc : dlist) {
+            direct_ptrs.push_back(reinterpret_cast<void *>(desc.addr));
+        }
+    }
     proxyHostView *host_view = nullptr;
-    const nixl_status_t status = createView(dlist, {}, {}, host_view);
+    const nixl_status_t status = createView(dlist, direct_ptrs, {}, host_view);
     if (status != NIXL_SUCCESS) {
         return status;
     }

@@ -134,6 +134,7 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
+    gtest_sources += 'ucx_config_test.cpp'
     if nixl_trace_enabled
         gtest_sources += 'ucx_trace_context_test.cpp'
         gtest_sources += 'ucx_split_failure_trace_test.cpp'
@@ -142,6 +143,7 @@ if ucx_dep.found() and is_variable('ucx_backend_interface')
     endif
     gtest_sources += 'ucx_request_release_test.cpp'
     gtest_sources += 'ucx_split_failure_test.cpp'
+    gtest_sources += 'ucx_notif_test.cpp'
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
