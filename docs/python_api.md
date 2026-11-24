@@ -35,20 +35,16 @@ pip install .
 
 ## Waiting for notifications
 
-On Linux, notification monitors expose a pollable file descriptor. They need a
-backend that delivers notifications from its own threads, which
-`agent.get_notif_callback_support()` reports as
-`nixl_notif_callback_support_t.NIXL_NOTIF_CALLBACK_BACKGROUND`, also available as
-`nixl.NIXL_NOTIF_CALLBACK_BACKGROUND`. Without it, `add_notif_monitor()` raises
-`nixlNotSupportedError`. With UCX, `enable_prog_thread=True` on the receiving
-agent provides background progress and is the `nixl_agent_config` default. When
-using `device_proxy=true`, the proxy provides background progress and the
-receiving agent must use `enable_prog_thread=False`.
+On Linux, notification monitors expose a pollable file descriptor. You can
+register a monitor before creating any backend. Delivery depends on the receiving
+backend's callback support and progress. `wait_any()` waits on the monitor
+queue. For a backend that relies on application-driven progress, use an agent
+call that progresses receives, such as `get_new_notifs()` with UCX.
 
 ```python
 from nixl import nixl_notification_monitor
 
-# After creating the agents and exchanging metadata:
+# After exchanging metadata, with background progress on the target:
 with nixl_notification_monitor() as incoming:
     target.add_notif_monitor(incoming, b"kv:")
     source.send_notif(target.name, b"kv:ready")

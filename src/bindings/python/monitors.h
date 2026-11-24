@@ -201,9 +201,6 @@ public:
         if (!inbox_) {
             throw MonitorClosed();
         }
-        if (agent.getNotifCallbackSupport() != nixl_notif_callback_support_t::BACKGROUND) {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
         pruneDestroyedAgents();
         // Make room before publishing a callback. A failed subscription can
         // roll back without leaving a registered callback behind.

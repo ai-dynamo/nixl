@@ -114,9 +114,6 @@ class nixlAgentData final : public nixlMetadataContext {
                     nixl_mem_t mem_type);
         void
         warnAboutEfaHardwareMismatch();
-        // Caller holds the agent lock.
-        [[nodiscard]] nixl_notif_callback_support_t
-        notifCallbackSupport() const noexcept;
         void
         warnIfTraceContextUnsupported(const nixlBackendEngine &backend,
                                       const nixl::trace::TraceContext &context) noexcept;

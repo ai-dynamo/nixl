@@ -57,7 +57,6 @@ TEST(NotifCallbacks, ValidatesAndReusesPrefixes) {
         ASSERT_EQ(receiving.registerNotifCallback("prefix", consume, automatic), NIXL_SUCCESS);
     }
     EXPECT_EQ(receiving.registerNotifCallback("prefix", consume, second), NIXL_SUCCESS);
-    EXPECT_EQ(receiving.getNotifCallbackSupport(), nixl_notif_callback_support_t::NONE);
 }
 
 TEST(NotifCallbacks, DeclinedAndThrowingCallbacksLeavePayloadAvailable) {
@@ -281,7 +280,6 @@ TEST(NotifCallbacks, UcxRoutesDynamicRegistrationsAndFallsBackAfterRemoval) {
     nixlAgent agent(name, cfg);
     nixlBackendH *backend = nullptr;
     ASSERT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
-    EXPECT_EQ(agent.getNotifCallbackSupport(), nixl_notif_callback_support_t::BACKGROUND);
     const auto receive_fallback = [&] {
         nixl_notifs_t pending;
         const auto deadline = std::chrono::steady_clock::now() + 5s;

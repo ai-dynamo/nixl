@@ -324,15 +324,6 @@ PYBIND11_MODULE(_bindings, m) {
         .value("NIXL_COST_ANALYTICAL_BACKEND", nixl_cost_t::ANALYTICAL_BACKEND)
         .export_values();
 
-    py::enum_<nixl_notif_callback_support_t>(
-        m,
-        "nixl_notif_callback_support_t",
-        "Best notification callback support among an agent's loaded backends.")
-        .value("NIXL_NOTIF_CALLBACK_NONE", nixl_notif_callback_support_t::NONE)
-        .value("NIXL_NOTIF_CALLBACK_ON_PROGRESS", nixl_notif_callback_support_t::ON_PROGRESS)
-        .value("NIXL_NOTIF_CALLBACK_BACKGROUND", nixl_notif_callback_support_t::BACKGROUND)
-        .export_values();
-
     py::enum_<nixl_status_t>(m, "nixl_status_t")
         .value("NIXL_IN_PROG", NIXL_IN_PROG)
         .value("NIXL_SUCCESS", NIXL_SUCCESS)
@@ -1041,9 +1032,6 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::arg("monitor"),
             py::arg("prefix"))
-        .def("getNotifCallbackSupport",
-             &nixlAgent::getNotifCallbackSupport,
-             py::call_guard<py::gil_scoped_release>())
         .def(
             "getNotifs",
             [](nixlAgent &agent,

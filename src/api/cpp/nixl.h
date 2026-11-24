@@ -505,15 +505,6 @@ class nixlAgent {
         deregisterNotifCallback(nixlNotifRegistration &registration) noexcept;
 
         /**
-         * @brief Best notification callback support among the loaded backends.
-         *
-         * BACKGROUND means callbacks can run without application calls. Notifications
-         * received through a backend without callback support still go to getNotifs().
-         */
-        [[nodiscard]] nixl_notif_callback_support_t
-        getNotifCallbackSupport() const;
-
-        /**
          * @brief  Add entries to the input notifications list (can be non-empty), which is a map
          *         from agent name to a list of notification received from that agent. Elements
          *         are released within the agent after this call. Optionally, a list of backends

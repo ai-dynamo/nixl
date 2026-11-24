@@ -15,12 +15,7 @@ import weakref
 import pytest
 
 import nixl._bindings as bindings
-from nixl import (
-    nixl_agent,
-    nixl_agent_config,
-    nixl_notif_callback_support_t,
-    nixl_notification_monitor,
-)
+from nixl import nixl_agent, nixl_agent_config, nixl_notification_monitor
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="requires Linux eventfd"
@@ -49,25 +44,45 @@ def _legacy_notifications(target, source, count):
     return received
 
 
-def test_add_requires_background_callback_support(ucx_peers):
-    source, _ = ucx_peers
-    level = nixl_notif_callback_support_t
-    support = source.get_notif_callback_support()
-    assert support == level.NIXL_NOTIF_CALLBACK_BACKGROUND
-    # The module-level constant is the same enum value.
-    assert support == bindings.NIXL_NOTIF_CALLBACK_BACKGROUND
-
-    bare = nixl_agent(f"bare-{uuid.uuid4()}", nixl_agent_config(backends=[]))
-    assert bare.get_notif_callback_support() == level.NIXL_NOTIF_CALLBACK_NONE
-
-    polled = nixl_agent(
-        f"polled-{uuid.uuid4()}",
-        nixl_agent_config(enable_prog_thread=False, backends=["UCX"]),
+@pytest.mark.parametrize(
+    "enable_prog_thread",
+    [True, False],
+    ids=["before-backend-creation", "manual-progress"],
+)
+def test_add_notif_monitor_without_background_progress(enable_prog_thread):
+    target = nixl_agent(
+        f"target-{uuid.uuid4()}",
+        nixl_agent_config(enable_prog_thread=enable_prog_thread, backends=[]),
     )
-    assert polled.get_notif_callback_support() == level.NIXL_NOTIF_CALLBACK_ON_PROGRESS
+    if "UCX" not in target.get_plugin_list():
+        pytest.skip("UCX is unavailable")
+    source = nixl_agent(f"source-{uuid.uuid4()}")
+    if not enable_prog_thread:
+        target.create_backend("UCX")
+
     with nixl_notification_monitor() as monitor:
-        with pytest.raises(bindings.nixlNotSupportedError):
-            polled.add_notif_monitor(monitor, b"watch:")
+        target.add_notif_monitor(monitor, b"watch:")
+        if enable_prog_thread:
+            target.create_backend("UCX")
+        source.add_remote_agent(target.get_agent_metadata())
+        message = b"watch:ready"
+        source.send_notif(target.name, message)
+
+        if enable_prog_thread:
+            received = monitor.wait_any(timeout_ms=WAIT_MS)
+        else:
+            # Reading the monitor does not drive UCX. The separate source agent
+            # can make send progress, but the target has no progress thread.
+            assert monitor.wait_any(timeout_ms=0) == []
+            received = []
+            deadline = time.monotonic() + WAIT_MS / 1000
+            while not received and time.monotonic() < deadline:
+                assert target.get_new_notifs() == {}
+                received = monitor.wait_any(timeout_ms=0)
+                if not received:
+                    time.sleep(0.001)
+
+        assert received == [(target.name, source.name, message)]
 
 
 def test_notification_fd_and_legacy_fallback(ucx_peers):

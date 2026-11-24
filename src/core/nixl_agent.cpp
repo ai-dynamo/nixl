@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <chrono>
@@ -1644,23 +1645,6 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     return NIXL_SUCCESS;
 }
 
-nixl_notif_callback_support_t
-nixlAgentData::notifCallbackSupport() const noexcept {
-    auto support = nixl_notif_callback_support_t::NONE;
-    // All loaded backends, since a local-only backend may also deliver notifications.
-    for (const auto &[type, engine] : backendEngines_) {
-        // Background progress only matters for a backend that invokes callbacks.
-        if (!engine->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK)) {
-            continue;
-        }
-        if (engine->supportsCapability(nixl_backend_capability_t::NOTIF_BACKGROUND_PROGRESS)) {
-            return nixl_notif_callback_support_t::BACKGROUND;
-        }
-        support = nixl_notif_callback_support_t::ON_PROGRESS;
-    }
-    return support;
-}
-
 nixl_status_t
 nixlAgent::registerNotifCallback(std::string_view prefix,
                                  nixl_notif_callback_t callback,
@@ -1672,8 +1656,11 @@ nixlAgent::registerNotifCallback(std::string_view prefix,
 
     // Registration before any backend is loaded is allowed and stays silent.
     NIXL_SHARED_LOCK_GUARD(data->lock);
-    if (!data->backendEngines_.empty() &&
-        data->notifCallbackSupport() == nixl_notif_callback_support_t::NONE) {
+    const auto &backends = data->backendEngines_;
+    const auto supports_callback = [](const auto &backend) {
+        return backend.second->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK);
+    };
+    if (!backends.empty() && std::none_of(backends.begin(), backends.end(), supports_callback)) {
         NIXL_WARN << "Agent '" << data->name_
                   << "' registered a notification callback, but no loaded backend supports it";
     }
@@ -1683,12 +1670,6 @@ nixlAgent::registerNotifCallback(std::string_view prefix,
 nixl_status_t
 nixlAgent::deregisterNotifCallback(nixlNotifRegistration &registration) noexcept {
     return data->notifDispatcher_->remove(registration);
-}
-
-nixl_notif_callback_support_t
-nixlAgent::getNotifCallbackSupport() const {
-    NIXL_SHARED_LOCK_GUARD(data->lock);
-    return data->notifCallbackSupport();
 }
 
 nixl_status_t

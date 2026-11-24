@@ -182,18 +182,6 @@ class nixl_notification_monitor(nixlBind.nixlNotificationMonitor):
         return notifications
 
 
-if TYPE_CHECKING:
-
-    class nixl_notif_callback_support_t(Enum):
-        NIXL_NOTIF_CALLBACK_NONE = 0
-        NIXL_NOTIF_CALLBACK_ON_PROGRESS = 1
-        NIXL_NOTIF_CALLBACK_BACKGROUND = 2
-
-else:
-    # Keep the runtime enum identical to the type exported by the native bindings.
-    nixl_notif_callback_support_t = nixlBind.nixl_notif_callback_support_t
-
-
 class nixl_thread_sync_t(Enum):
     """Enumeration of supported thread synchronization modes."""
 
@@ -887,11 +875,13 @@ class nixl_agent:
     ) -> None:
         """Route notifications matching a byte prefix to the given monitor.
 
-        Requires NIXL_NOTIF_CALLBACK_BACKGROUND from get_notif_callback_support(),
-        and raises nixlNotSupportedError otherwise. Prefixes of an agent must be
-        disjoint, and b"" adds the default route for messages with no matching
-        prefix. A prefix that overlaps an existing one, or a second default, raises
-        nixlInvalidParamError; remove the existing subscription first.
+        Registration can happen before backend creation. Delivery depends on
+        the receiving backend's callback support and progress.
+
+        Prefixes of an agent must be disjoint, and b"" adds the default route for
+        messages with no matching prefix. A prefix that overlaps an existing one,
+        or a second default, raises nixlInvalidParamError. Remove the existing
+        subscription first to replace it.
         Closing or dropping the monitor removes all its subscriptions.
         """
         self.agent.addNotifMonitor(monitor, self.name, prefix)
@@ -905,14 +895,6 @@ class nixl_agent:
         notifications remain available on the monitor.
         """
         return self.agent.removeNotifMonitor(monitor, prefix)
-
-    def get_notif_callback_support(self) -> nixl_notif_callback_support_t:
-        """Return the best notification callback support among the loaded backends.
-
-        add_notif_monitor() requires NIXL_NOTIF_CALLBACK_BACKGROUND, where a backend
-        delivers notifications from its own threads.
-        """
-        return self.agent.getNotifCallbackSupport()
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.
