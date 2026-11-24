@@ -34,6 +34,8 @@
 #include <cstring>
 #include <iostream>
 #include <string>
+#include <vector>
+#include <vector>
 
 #include "nixl.h"
 #include "nixl_descriptors.h"
@@ -252,19 +254,84 @@ runDramSemanticsTests(nixlAgent &agent,
     return failures;
 }
 
+nixl_status_t
+pollXferToDone(nixlAgent &agent, nixlXferReqH *req) {
+    nixl_status_t status = agent.getXferStatus(req);
+    constexpr int k_max_polls = 1000000;
+    int polls = 0;
+    while (status == NIXL_IN_PROG) {
+        if (++polls > k_max_polls) {
+            std::cerr << "ODM async test: poll timeout" << std::endl;
+            return NIXL_ERR_BACKEND;
+        }
+        status = agent.getXferStatus(req);
+    }
+    return status;
+}
+
+/*
+ * Zero the GPU buffer, READ it back from ODM and check the pattern. As in the main
+ * round-trip, the VRAM list is local and the ODM list is remote for both directions;
+ * the plugin derives the DMA direction from the local side.
+ */
+bool
+readBackAndValidate(nixlAgent &agent,
+                    nixl_opt_args_t &extra,
+                    const nixl_xfer_dlist_t &vram_side,
+                    const nixl_xfer_dlist_t &odm_side,
+                    void *gpu_buf,
+                    void *host_scratch,
+                    size_t len,
+                    unsigned char pattern) {
+    if (cudaMemset(gpu_buf, 0, len) != cudaSuccess) {
+        std::cerr << "ODM async test: cudaMemset failed" << std::endl;
+        return false;
+    }
+    nixlXferReqH *rd_req = nullptr;
+    nixl_status_t st =
+        agent.createXferReq(NIXL_READ, vram_side, odm_side, kAgentName, rd_req, &extra);
+    if (st != NIXL_SUCCESS) {
+        std::cerr << "ODM async test: createXferReq(READ) failed: " << st << std::endl;
+        return false;
+    }
+    st = agent.postXferReq(rd_req);
+    if (st == NIXL_IN_PROG) {
+        st = pollXferToDone(agent, rd_req);
+    }
+    agent.releaseXferReq(rd_req);
+    if (st != NIXL_SUCCESS) {
+        std::cerr << "ODM async test: READ failed with status " << st << std::endl;
+        return false;
+    }
+    if (cudaMemcpy(host_scratch, gpu_buf, len, cudaMemcpyDeviceToHost) != cudaSuccess ||
+        !validatePattern(host_scratch, len, pattern)) {
+        std::cerr << "ODM async test: data validation after read-back FAILED" << std::endl;
+        return false;
+    }
+    return true;
+}
+
 int
 runAsyncPostPollAndReleaseTests(nixlAgent &agent,
                                 nixlBackendH *backend,
                                 bool multi_queue,
-                                bool use_io_uring) {
-    if (!multi_queue || use_io_uring) {
+                                bool use_io_uring,
+                                unsigned char test_pattern) {
+    if (!multi_queue && !use_io_uring) {
         return 0;
     }
     (void)backend;
-    constexpr size_t kAsyncXferSize = 8u * 1024u * 1024u;
+    constexpr size_t k_async_xfer_size = 8u * 1024u * 1024u;
     void *gpu_buf = nullptr;
-    if (cudaMalloc(&gpu_buf, kAsyncXferSize) != cudaSuccess) {
+    if (cudaMalloc(&gpu_buf, k_async_xfer_size) != cudaSuccess) {
         std::cerr << "ODM async test: cudaMalloc failed" << std::endl;
+        return 1;
+    }
+
+    void *host_scratch = nullptr;
+    const size_t page_size = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    if (posix_memalign(&host_scratch, page_size, k_async_xfer_size) != 0) {
+        cudaFree(gpu_buf);
         return 1;
     }
 
@@ -274,11 +341,11 @@ runAsyncPostPollAndReleaseTests(nixlAgent &agent,
     nixl_reg_dlist_t odm_list(DRAM_SEG);
     nixlBlobDesc blob_vram;
     blob_vram.addr = reinterpret_cast<uintptr_t>(gpu_buf);
-    blob_vram.len = kAsyncXferSize;
+    blob_vram.len = k_async_xfer_size;
     blob_vram.devId = 0;
     nixlBlobDesc blob_odm;
     blob_odm.addr = 0;
-    blob_odm.len = kAsyncXferSize;
+    blob_odm.len = k_async_xfer_size;
     blob_odm.devId = 0;
     vram_list.addDesc(blob_vram);
     odm_list.addDesc(blob_odm);
@@ -296,11 +363,19 @@ runAsyncPostPollAndReleaseTests(nixlAgent &agent,
     }
 
     int failures = 0;
+    nixlXferReqH *req = nullptr;
     nixl_xfer_dlist_t src_list = vram_list.trim();
     nixl_xfer_dlist_t dst_list = odm_list.trim();
 
-    std::cout << "Phase 5: async postXfer poll (multi-queue worker pool)" << std::endl;
-    nixlXferReqH *req = nullptr;
+    fillPattern(host_scratch, k_async_xfer_size, test_pattern);
+    if (cudaMemcpy(gpu_buf, host_scratch, k_async_xfer_size, cudaMemcpyHostToDevice) !=
+        cudaSuccess) {
+        failures = 1;
+        goto cleanup;
+    }
+
+    std::cout << "Phase 5: async postXfer poll"
+              << (use_io_uring ? " (io_uring)" : " (multi-queue worker pool)") << std::endl;
     ret = agent.createXferReq(NIXL_WRITE, src_list, dst_list, kAgentName, req, &extra);
     if (ret != NIXL_SUCCESS) {
         failures = 1;
@@ -313,25 +388,27 @@ runAsyncPostPollAndReleaseTests(nixlAgent &agent,
         failures = 1;
         goto cleanup;
     }
-    {
-        constexpr int kMaxPolls = 1000000;
-        int polls = 0;
-        nixl_status_t status = ret;
-        while (status == NIXL_IN_PROG) {
-            if (++polls > kMaxPolls) {
-                std::cerr << "ODM async test: poll timeout" << std::endl;
-                failures = 1;
-                break;
-            }
-            status = agent.getXferStatus(req);
-        }
-        if (failures == 0 && status != NIXL_SUCCESS) {
-            std::cerr << "ODM async test: transfer failed with status " << status << std::endl;
-            failures = 1;
-        }
+    ret = pollXferToDone(agent, req);
+    if (ret != NIXL_SUCCESS) {
+        failures = 1;
+        agent.releaseXferReq(req);
+        req = nullptr;
+        goto cleanup;
     }
     agent.releaseXferReq(req);
     req = nullptr;
+
+    if (!readBackAndValidate(agent,
+                             extra,
+                             src_list,
+                             dst_list,
+                             gpu_buf,
+                             host_scratch,
+                             k_async_xfer_size,
+                             test_pattern)) {
+        failures = 1;
+        goto cleanup;
+    }
 
     if (failures == 0) {
         std::cout << "Phase 6: release while in progress" << std::endl;
@@ -341,13 +418,135 @@ runAsyncPostPollAndReleaseTests(nixlAgent &agent,
             goto cleanup;
         }
         ret = agent.postXferReq(req);
-        if (ret == NIXL_IN_PROG || ret == NIXL_SUCCESS) {
-            agent.releaseXferReq(req);
-            req = nullptr;
-        } else {
+        if (ret != NIXL_IN_PROG && ret != NIXL_SUCCESS) {
             std::cerr << "ODM async test: postXferReq failed for release test" << std::endl;
             agent.releaseXferReq(req);
             failures = 1;
+            goto cleanup;
+        }
+        const nixl_status_t rel_st = agent.releaseXferReq(req);
+        if (rel_st == NIXL_ERR_REPOST_ACTIVE) {
+            ret = pollXferToDone(agent, req);
+            if (ret != NIXL_SUCCESS) {
+                failures = 1;
+            }
+            agent.releaseXferReq(req);
+        } else if (rel_st != NIXL_SUCCESS) {
+            std::cerr << "ODM async test: unexpected releaseXferReq status " << rel_st << std::endl;
+            failures = 1;
+        }
+        req = nullptr;
+    }
+
+    if (failures == 0) {
+        std::cout << "Phase 6b: data written by the released transfer is intact" << std::endl;
+        if (!readBackAndValidate(agent,
+                                 extra,
+                                 src_list,
+                                 dst_list,
+                                 gpu_buf,
+                                 host_scratch,
+                                 k_async_xfer_size,
+                                 test_pattern)) {
+            failures = 1;
+        }
+    }
+
+    if (failures == 0 && use_io_uring) {
+        std::cout << "Phase 7: io_uring ring depth (>32 non-contiguous chunks)" << std::endl;
+        constexpr size_t k_slice = 64u * 1024u;
+        constexpr size_t k_stride = 128u * 1024u;
+        constexpr int k_num_slices = 48;
+        nixl_xfer_dlist_t slice_src(VRAM_SEG);
+        nixl_xfer_dlist_t slice_dst(DRAM_SEG);
+        for (int i = 0; i < k_num_slices; ++i) {
+            nixlBlobDesc vb;
+            vb.addr = reinterpret_cast<uintptr_t>(gpu_buf) + static_cast<size_t>(i) * k_stride;
+            vb.len = k_slice;
+            vb.devId = 0;
+            slice_src.addDesc(vb);
+            nixlBlobDesc db;
+            /* Offset within the auto-allocated ODM region (registered at addr 0). */
+            db.addr = static_cast<uintptr_t>(i) * k_stride;
+            db.len = k_slice;
+            db.devId = 0;
+            slice_dst.addDesc(db);
+        }
+        fillPattern(host_scratch, k_async_xfer_size, test_pattern);
+        if (cudaMemcpy(gpu_buf, host_scratch, k_async_xfer_size, cudaMemcpyHostToDevice) !=
+            cudaSuccess) {
+            failures = 1;
+            goto cleanup;
+        }
+        ret = agent.createXferReq(
+            NIXL_WRITE, slice_src.trim(), slice_dst.trim(), kAgentName, req, &extra);
+        if (ret != NIXL_SUCCESS) {
+            failures = 1;
+            goto cleanup;
+        }
+        ret = agent.postXferReq(req);
+        if (ret != NIXL_IN_PROG && ret != NIXL_SUCCESS) {
+            failures = 1;
+            agent.releaseXferReq(req);
+            req = nullptr;
+            goto cleanup;
+        }
+        ret = pollXferToDone(agent, req);
+        agent.releaseXferReq(req);
+        req = nullptr;
+        if (ret != NIXL_SUCCESS) {
+            failures = 1;
+            goto cleanup;
+        }
+        if (cudaMemset(gpu_buf, 0, k_async_xfer_size) != cudaSuccess) {
+            failures = 1;
+            goto cleanup;
+        }
+        ret = agent.createXferReq(
+            NIXL_READ, slice_src.trim(), slice_dst.trim(), kAgentName, req, &extra);
+        if (ret != NIXL_SUCCESS) {
+            failures = 1;
+            goto cleanup;
+        }
+        ret = agent.postXferReq(req);
+        if (ret != NIXL_IN_PROG && ret != NIXL_SUCCESS) {
+            failures = 1;
+            agent.releaseXferReq(req);
+            req = nullptr;
+            goto cleanup;
+        }
+        ret = pollXferToDone(agent, req);
+        agent.releaseXferReq(req);
+        req = nullptr;
+        if (ret != NIXL_SUCCESS) {
+            failures = 1;
+            goto cleanup;
+        }
+        if (cudaMemcpy(host_scratch, gpu_buf, k_async_xfer_size, cudaMemcpyDeviceToHost) !=
+            cudaSuccess) {
+            failures = 1;
+            goto cleanup;
+        }
+        auto *host_bytes = static_cast<unsigned char *>(host_scratch);
+        for (int i = 0; i < k_num_slices && failures == 0; ++i) {
+            const size_t off = static_cast<size_t>(i) * k_stride;
+            for (size_t j = 0; j < k_slice; ++j) {
+                if (host_bytes[off + j] != test_pattern) {
+                    std::cerr << "ODM async test: slice " << i << " data mismatch" << std::endl;
+                    failures = 1;
+                    break;
+                }
+            }
+            if (i + 1 < k_num_slices) {
+                for (size_t g = off + k_slice; g < off + k_stride; ++g) {
+                    if (host_bytes[g] != 0) {
+                        std::cerr << "ODM async test: gap not zero after D2H at offset " << g
+                                  << std::endl;
+                        failures = 1;
+                        break;
+                    }
+                }
+            }
         }
     }
 
@@ -358,6 +557,7 @@ cleanup:
     agent.deregisterMem(vram_list, &extra);
     agent.deregisterMem(odm_list, &extra);
     cudaFree(gpu_buf);
+    free(host_scratch);
     if (failures == 0) {
         std::cout << "ODM async post/poll/release tests PASSED" << std::endl;
     }
@@ -715,8 +915,8 @@ main(int argc, char **argv) {
                 q_start = 0;
                 q_end = 0;
             }
-            result +=
-                runAsyncPostPollAndReleaseTests(agent, backend, q_end > q_start, use_io_uring);
+            result += runAsyncPostPollAndReleaseTests(
+                agent, backend, q_end > q_start, use_io_uring, test_pattern);
         }
     }
 

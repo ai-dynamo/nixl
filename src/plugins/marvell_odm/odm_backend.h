@@ -135,13 +135,26 @@ struct OdmBatch {
 };
 #endif
 
+class nixlOdmBackendReqH;
+
+#ifdef HAVE_CUDA
+#ifdef HAVE_ODM_IO_URING
+/** One in-flight io_uring SQE (dma-buf chunk); CQE user_data points here. */
+struct OdmUringChunk {
+    OdmBatch *batch{nullptr};
+    uint64_t gpu_va{0};
+    uint64_t len{0};
+};
+#endif
+#endif
+
 /**
  * @class nixlOdmBackendReqH
  * @brief Per-transfer request handle.
  *
- * Transfers are synchronous when the worker pool is off (single queue, io_uring,
- * or enableProgTh false). With the pool enabled, postXfer may return NIXL_IN_PROG
- * and checkXfer polls async_batch until completion.
+ * With the worker pool or io_uring async submit, postXfer may return NIXL_IN_PROG
+ * and checkXfer polls async_batch until completion. Synchronous paths include
+ * single-queue ioctl (no pool) and host-VA when the pool is off.
  */
 class nixlOdmBackendReqH : public nixlBackendReqH {
 public:
@@ -154,6 +167,10 @@ public:
     nixl_status_t status;
 #ifdef HAVE_CUDA
     OdmBatch async_batch_;
+#ifdef HAVE_ODM_IO_URING
+    bool uring_async_{false}; /* SQEs submitted; reap in checkXfer / release */
+    std::deque<OdmUringChunk> uring_chunks_;
+#endif
 #endif
 
     nixlOdmBackendReqH()
@@ -352,12 +369,28 @@ private:
     postOdmHostVa(nixlOdmBackendReqH *req) const;
     nixl_status_t
     odmDoHostVaWork(nixlOdmBackendReqH *req, uint16_t req_qid) const;
-    void
+    /** @return true when the request is fully drained; false on fatal uring drain failure. */
+    bool
     waitReqAsyncComplete(nixlOdmBackendReqH *req) const;
 
 #ifdef HAVE_ODM_IO_URING
+    static constexpr unsigned k_uring_ring_entries = 32;
     nixl_status_t
     postOdmDmabufUring(nixlOdmBackendReqH *req) const;
+    /*
+     * Reap CQEs from the shared ring and credit each one to the request that owns it
+     * (a CQE for request A may be reaped while servicing request B). With block==true,
+     * wait until at least one CQE is reaped or nothing is in flight, polling with a
+     * short backoff so uring_mtx_ is never held across a wait.
+     * @return false only after a fatal ring error.
+     */
+    bool
+    odmUringReap(bool block) const;
+    /* @return number of CQEs consumed; caller must hold uring_mtx_. */
+    unsigned
+    odmUringReapPeekableLocked() const;
+    bool
+    odmUringCqeConsumeLocked(struct io_uring_cqe *cqe) const;
     void
     odmUringInit();
     void
@@ -369,10 +402,11 @@ private:
     mutable bool uring_initialized_{false};
     mutable std::atomic<bool> use_io_uring_{false};
     mutable std::atomic<bool> warned_uring_host_{false};
+    mutable size_t uring_inflight_{0};
+    mutable std::atomic<bool> uring_ring_fatal_{false};
     /*
-     * liburing rings are not thread-safe. nixlbench posts from many threads on
-     * one engine; without this gate concurrent submit/wait corrupts the ring
-     * and surfaces as uring_cmd EBADF under multi-thread block-size sweeps.
+     * liburing rings are not thread-safe; this mutex gates SQ/CQ operations only
+     * (submit and peek), not CUDA export or blocking kernel waits.
      */
     mutable std::mutex uring_mtx_;
 #endif

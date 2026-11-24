@@ -49,8 +49,9 @@ Host DRAM uses a non-zero userspace `addr` and empty `metaInfo`.
 
 ## io_uring / SQE128
 
-The plugin supports an optional io_uring `uring_cmd` submit path when the ODM
-kernel module is loaded with `odm_use_io_uring=1`:
+The plugin supports an optional io_uring `uring_cmd` async submit path when the ODM
+kernel module is loaded with `odm_use_io_uring=1`. Submits return `NIXL_IN_PROG`
+and completions are polled via `checkXfer`:
 
 ```bash
 export ODM_USE_IO_URING=1
@@ -72,9 +73,9 @@ and the ODM kernel module loaded with `odm_use_io_uring=1`. Without SQE128,
 
 Agent `enableProgTh` (nixlbench `--enable_pt=1`) starts the internal multi-queue
 worker pool when `odm_qid_end > odm_qid_start` and io_uring is off. With the
-pool running, `postXfer` may return `NIXL_IN_PROG` and completions are polled
-via `checkXfer`. Single-queue, io_uring, and `enableProgTh=false` paths complete
-synchronously inside `postXfer`.
+pool or io_uring async submit, `postXfer` may return `NIXL_IN_PROG` and
+completions are polled via `checkXfer`. Single-queue ioctl (no pool, no io_uring)
+and `enableProgTh=false` host-VA paths still complete inside `postXfer`.
 
 ## nixlbench
 
