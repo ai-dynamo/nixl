@@ -156,7 +156,7 @@ namespace {
     // A request may be posted again once it is done, and each post must write the buffer content
     // at the time of that post.
     int
-    runRepostTest(const std::string &test_files_dir_path) {
+    runRepostTest(const std::string &test_files_dir_path, nixlTime::us_t wait_time, int max_waits) {
         constexpr int num_transfers = 16;
         constexpr size_t transfer_size = 128 * 1024;
         const std::string agent_name = "HF3FSRepostTester";
@@ -224,9 +224,15 @@ namespace {
             return 1;
         }
 
-        auto post_and_wait = [&agent](nixlXferReqH *req) {
+        auto post_and_wait = [&agent, wait_time, max_waits](nixlXferReqH *req) {
             nixl_status_t status = agent.postXferReq(req);
-            while (status == NIXL_IN_PROG) {
+            for (int num_waits = 0; status == NIXL_IN_PROG; num_waits++) {
+                if (num_waits >= max_waits) {
+                    std::cerr << "Transfer timed out after " << max_waits << " retries"
+                              << std::endl;
+                    break;
+                }
+                usleep(wait_time);
                 status = agent.getXferStatus(req);
             }
             return status;
@@ -786,5 +792,5 @@ int main(int argc, char *argv[])
     std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
     std::cout << line_str << std::endl;
 
-    return runRepostTest(test_files_dir_path);
+    return runRepostTest(test_files_dir_path, wait_time, max_waits);
 }
