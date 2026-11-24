@@ -32,6 +32,166 @@
 
 namespace nixl_ep_v2::elastic::adaptive {
 
+template <int kNumHiddenBytes, int kNumTopk>
+__device__ __forceinline__ void reduce_local_combine_row(
+    nv_bfloat16* x, void* shared_row, int lane_idx, int stored_topk_slot_idx, unsigned reduce_valid_mask) {
+    using combine_vec_t = typename CombineVecTraits<kNumHiddenBytes>::vec_t;
+    constexpr int kHiddenVec = kNumHiddenBytes / sizeof(combine_vec_t);
+
+    // Sort valid top-k indices to front
+    int topk_slot_idx[kNumTopk];
+    compute_topk_slots(
+        topk_slot_idx, reduce_valid_mask,
+        [=](const int& idx) {
+            return ptx::exchange(stored_topk_slot_idx, idx);
+        }
+    );
+
+    // Reduce into shared memory
+    constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
+    combine_reduce<kHiddenVec, kUnrollFactor, 1>(
+        lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(shared_row),
+        /* Get source base */ [=](const int& slot_idx) {
+            return math::advance_ptr<combine_vec_t>(
+                x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
+        },
+        /* Wait buffer release */ [=]() {
+            ptx::tma_store_wait();
+            __syncwarp();
+        }
+    );
+    ptx::tma_store_fence();
+    __syncwarp();
+}
+
+template <int kNumHiddenBytes, int kNumTopk, typename PeerPtr>
+__device__ __forceinline__ void write_expanded_combine_replies(
+    nv_bfloat16* x, const layout::BufferLayout<false>& scaleup_buffer, const layout::TokenLayout& tma_buffer,
+    ptx::mbarrier* mbarrier_ptr, ptx::arrival_phase& phase, int stored_topk_slot_idx,
+    int src_token_idx, int src_rank_idx, const PeerPtr& peer_ptr) {
+    #pragma unroll
+    for (int k = 0; k < kNumTopk; ++ k) {
+        const auto slot_idx = ptx::exchange(stored_topk_slot_idx, k);
+        if (slot_idx >= 0) {
+            const auto src_token_ptr = math::advance_ptr<int4>(x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
+            const auto token_buffer = scaleup_buffer.get_rank_buffer(k).get_token_buffer(src_token_idx);
+            if (ptx::elect_one_sync()) {
+                ptx::tma_store_wait();
+                ptx::tma_load_1d(tma_buffer.get_base_ptr(), src_token_ptr, mbarrier_ptr, kNumHiddenBytes);
+                ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
+                ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
+                ptx::tma_store_1d(peer_ptr(token_buffer.get_base_ptr(), src_rank_idx),
+                                  tma_buffer.get_base_ptr(), kNumHiddenBytes);
+                ptx::tma_store_commit();
+            }
+            __syncwarp();
+        }
+    }
+}
+
+template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
+          int kHidden, int kNumHiddenBytes, int kNumTopk,
+          typename PeerPtr, typename AcquireReady>
+__device__ __forceinline__ void write_direct_combine_replies(
+    nv_bfloat16* x, float* topk_weights, int* src_metadata,
+    const layout::BufferLayout<false>& scaleup_buffer, const layout::TokenLayout& tma_buffer,
+    ptx::mbarrier* mbarrier_ptr, ptx::arrival_phase& phase,
+    int token_start_idx, int token_end_idx, int num_max_tokens_per_rank, int num_scaleup_ranks,
+    int scaleup_rank_idx, bool use_scaleup_rank_layout, int lane_idx,
+    const PeerPtr& peer_ptr, const AcquireReady& acquire_ready) {
+    constexpr bool kDoExpandedSend = not kAllowMultipleReduction and kUseExpandedLayout;
+
+    for (int i = token_start_idx; i < token_end_idx; ++ i) {
+        // Source token: rank from the global index, master top-k lane from the slot-relative field
+        constexpr int kMetadataStride = 2 + kNumTopk;
+        const int src_global_token_idx = __ldg(src_metadata + i * kMetadataStride);
+        const int src_token_idx = src_global_token_idx % num_max_tokens_per_rank;
+        const int src_rank_idx = src_global_token_idx / num_max_tokens_per_rank;
+        const int src_topk_idx = __ldg(src_metadata + i * kMetadataStride + 1) % kNumTopk;
+
+        // The destination's NVLink position: every remote store of this row sits behind `acquire_ready(dst_pos)` (all lanes of
+        // the warp, uniform); the no-reduce and reduce arms issue it after the row's local work so the wait overlaps it
+        const int dst_pos = src_rank_idx % num_scaleup_ranks;
+
+        // Destination row in the source rank's receive rows, addressed over NVLink
+        auto master_token_buffer = scaleup_buffer
+            .get_rank_buffer(use_scaleup_rank_layout ? scaleup_rank_idx : src_topk_idx)
+            .get_token_buffer(src_token_idx);
+        master_token_buffer.set_base_ptr(peer_ptr(master_token_buffer.get_base_ptr(), src_rank_idx));
+
+        // Hidden requirements
+        EP_STATIC_ASSERT(kHidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0, "Invalid hidden");
+
+        // Read source indices for expand mode
+        int stored_topk_slot_idx = -1;
+        if constexpr (kUseExpandedLayout) {
+            if (lane_idx < kNumTopk)
+                stored_topk_slot_idx = __ldg(src_metadata + i * kMetadataStride + (2 + lane_idx));
+            __syncwarp();
+        }
+
+        // 3 cases:
+        //  - no expand + no reduce, or expand + no reduce
+        //  - expand + reduce
+        //  - expand + send all
+        auto reduce_valid_mask = ptx::gather(stored_topk_slot_idx >= 0);
+        auto no_local_reduce = not kUseExpandedLayout or (kAllowMultipleReduction and __popc(reduce_valid_mask) == 1);
+        if (no_local_reduce) {
+            int token_idx_in_tensor = i;
+            if constexpr (kUseExpandedLayout)
+                token_idx_in_tensor = ptx::exchange(stored_topk_slot_idx, ptx::get_master_lane_idx(reduce_valid_mask));
+
+            // No reduce: the local payload load is issued first, the destination's ready is acquired while it lands,
+            // and only then does the elected lane (behind its own acquire) store the row
+            const bool is_elected = ptx::elect_one_sync();
+            if (is_elected) {
+                const auto load_ptr =
+                    math::advance_ptr(x, static_cast<int64_t>(token_idx_in_tensor) * kNumHiddenBytes);
+                ptx::tma_store_wait();
+                ptx::tma_load_1d(tma_buffer.get_base_ptr(), load_ptr, mbarrier_ptr, kNumHiddenBytes);
+                ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
+            }
+            acquire_ready(dst_pos);
+            if (is_elected) {
+                ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
+                ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
+                ptx::tma_store_commit();
+            }
+            __syncwarp();
+        } else if constexpr (kAllowMultipleReduction) {
+            reduce_local_combine_row<kNumHiddenBytes, kNumTopk>(
+                x, tma_buffer.get_base_ptr(), lane_idx, stored_topk_slot_idx, reduce_valid_mask);
+
+            // Issue TMA stores
+            acquire_ready(dst_pos);
+            if (ptx::elect_one_sync()) {
+                ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
+                ptx::tma_store_commit();
+            }
+            __syncwarp();
+        } else {
+            // No local reduction, send all data (expanded send)
+            acquire_ready(dst_pos);
+            write_expanded_combine_replies<kNumHiddenBytes, kNumTopk>(
+                x, scaleup_buffer, tma_buffer, mbarrier_ptr, phase,
+                stored_topk_slot_idx, src_token_idx, src_rank_idx, peer_ptr);
+        }
+
+        // Write topk weights
+        if (not kDoExpandedSend and topk_weights != nullptr and lane_idx < kNumTopk) {
+            float value = 0;
+            if constexpr (kUseExpandedLayout) {
+                if (stored_topk_slot_idx >= 0)
+                    value = __ldg(topk_weights + stored_topk_slot_idx);
+            } else {
+                value = __ldg(topk_weights + (i * kNumTopk + lane_idx));
+            }
+            master_token_buffer.get_topk_weights_ptr()[lane_idx] = value;
+        }
+        __syncwarp();
+    }
+}
+
 // DeepSeek's hybrid combine on a fixed grid; rank decomposition and active block count come from the topology descriptor (`EPTopology`)
 // Elastic on the NIXL transport: masked positions have no linked list and get no tails, masked domains are not sent to (see `topology.cuh`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
@@ -227,133 +387,10 @@ adaptive_combine_impl(nv_bfloat16* x,
                 continue;
             const int token_start_idx = mapped_chunk * chunk_rows;
             const int token_end_idx = min(token_start_idx + chunk_rows, num_reduced_tokens);
-            for (int i = token_start_idx; i < token_end_idx; ++ i) {
-                // Source token: rank from the global index, master top-k lane from the slot-relative field
-                constexpr int kMetadataStride = 2 + kNumTopk;
-                const int src_global_token_idx = __ldg(src_metadata + i * kMetadataStride);
-                const int src_token_idx = src_global_token_idx % num_max_tokens_per_rank;
-                const int src_rank_idx = src_global_token_idx / num_max_tokens_per_rank;
-                const int src_topk_idx = __ldg(src_metadata + i * kMetadataStride + 1) % kNumTopk;
-
-                // The destination's NVLink position: every remote store of this row sits behind `acquire_ready(dst_pos)` (all lanes of
-                // the warp, uniform); the no-reduce and reduce arms issue it after the row's local work so the wait overlaps it
-                const int dst_pos = src_rank_idx % num_scaleup_ranks;
-
-                // Destination row in the source rank's receive rows, addressed over NVLink
-                auto master_token_buffer = scaleup_buffer
-                    .get_rank_buffer(use_scaleup_rank_layout ? scaleup_rank_idx : src_topk_idx)
-                    .get_token_buffer(src_token_idx);
-                master_token_buffer.set_base_ptr(peer_ptr(master_token_buffer.get_base_ptr(), src_rank_idx));
-
-                // Hidden requirements
-                EP_STATIC_ASSERT(kHidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0, "Invalid hidden");
-
-                // Read source indices for expand mode
-                int stored_topk_slot_idx = -1;
-                if constexpr (kUseExpandedLayout) {
-                    if (lane_idx < kNumTopk)
-                        stored_topk_slot_idx = __ldg(src_metadata + i * kMetadataStride + (2 + lane_idx));
-                    __syncwarp();
-                }
-
-                // 3 cases:
-                //  - no expand + no reduce, or expand + no reduce
-                //  - expand + reduce
-                //  - expand + send all
-                auto reduce_valid_mask = ptx::gather(stored_topk_slot_idx >= 0);
-                auto no_local_reduce = not kUseExpandedLayout or (kAllowMultipleReduction and __popc(reduce_valid_mask) == 1);
-                if (no_local_reduce) {
-                    int token_idx_in_tensor = i;
-                    if constexpr (kUseExpandedLayout)
-                        token_idx_in_tensor = ptx::exchange(stored_topk_slot_idx, ptx::get_master_lane_idx(reduce_valid_mask));
-
-                    // No reduce: the local payload load is issued first, the destination's ready is acquired while it lands,
-                    // and only then does the elected lane (behind its own acquire) store the row
-                    const bool is_elected = ptx::elect_one_sync();
-                    if (is_elected) {
-                        const auto load_ptr =
-                            math::advance_ptr(x, static_cast<int64_t>(token_idx_in_tensor) * kNumHiddenBytes);
-                        ptx::tma_store_wait();
-                        ptx::tma_load_1d(tma_buffer.get_base_ptr(), load_ptr, mbarrier_ptr, kNumHiddenBytes);
-                        ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
-                    }
-                    acquire_ready(dst_pos);
-                    if (is_elected) {
-                        ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
-                        ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
-                        ptx::tma_store_commit();
-                    }
-                    __syncwarp();
-                } else if constexpr (kAllowMultipleReduction) {
-                    // Do local reduction
-                    // Sort valid top-k indices to front
-                    int topk_slot_idx[kNumTopk];
-                    compute_topk_slots(
-                        topk_slot_idx, reduce_valid_mask,
-                        [=](const int& idx) {
-                            return ptx::exchange(stored_topk_slot_idx, idx);
-                        }
-                    );
-
-                    // Reduce into shared memory
-                    constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
-                    combine_reduce<kHiddenVec, kUnrollFactor, 1>(
-                        lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-                        /* Get source base */ [=](const int& slot_idx) {
-                            return math::advance_ptr<combine_vec_t>(
-                                x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
-                        },
-                        /* Wait buffer release */ [=]() {
-                            ptx::tma_store_wait();
-                            __syncwarp();
-                        }
-                    );
-                    ptx::tma_store_fence();
-                    __syncwarp();
-
-                    // Issue TMA stores
-                    acquire_ready(dst_pos);
-                    if (ptx::elect_one_sync()) {
-                        ptx::tma_store_1d(master_token_buffer.get_base_ptr(), tma_buffer.get_base_ptr(), kNumHiddenBytes);
-                        ptx::tma_store_commit();
-                    }
-                    __syncwarp();
-                } else {
-                    // No local reduction, send all data (expanded send)
-                    acquire_ready(dst_pos);
-                    #pragma unroll
-                    for (int k = 0; k < kNumTopk; ++ k) {
-                        const auto slot_idx = ptx::exchange(stored_topk_slot_idx, k);
-                        if (slot_idx >= 0) {
-                            const auto src_token_ptr = math::advance_ptr<int4>(x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
-                            const auto token_buffer = scaleup_buffer.get_rank_buffer(k).get_token_buffer(src_token_idx);
-                            if (ptx::elect_one_sync()) {
-                                ptx::tma_store_wait();
-                                ptx::tma_load_1d(tma_buffer.get_base_ptr(), src_token_ptr, mbarrier_ptr, kNumHiddenBytes);
-                                ptx::mbarrier_arrive_and_set_tx(mbarrier_ptr, kNumHiddenBytes);
-                                ptx::mbarrier_wait_and_flip_phase(mbarrier_ptr, phase);
-                                ptx::tma_store_1d(peer_ptr(token_buffer.get_base_ptr(), src_rank_idx),
-                                                  tma_buffer.get_base_ptr(), kNumHiddenBytes);
-                                ptx::tma_store_commit();
-                            }
-                            __syncwarp();
-                        }
-                    }
-                }
-
-                // Write topk weights
-                if (not kDoExpandedSend and topk_weights != nullptr and lane_idx < kNumTopk) {
-                    float value = 0;
-                    if constexpr (kUseExpandedLayout) {
-                        if (stored_topk_slot_idx >= 0)
-                            value = __ldg(topk_weights + stored_topk_slot_idx);
-                    } else {
-                        value = __ldg(topk_weights + (i * kNumTopk + lane_idx));
-                    }
-                    master_token_buffer.get_topk_weights_ptr()[lane_idx] = value;
-                }
-                __syncwarp();
-            }
+            write_direct_combine_replies<kUseExpandedLayout, kAllowMultipleReduction, kHidden, kNumHiddenBytes, kNumTopk>(
+                x, topk_weights, src_metadata, scaleup_buffer, tma_buffer, mbarrier_ptr, phase,
+                token_start_idx, token_end_idx, num_max_tokens_per_rank, num_scaleup_ranks, scaleup_rank_idx,
+                use_scaleup_rank_layout, lane_idx, peer_ptr, acquire_ready);
         }
 
         // End sequence: the block's flush and grid arrival; the last block's first warp zeroes the take counter, exchanges the
@@ -567,31 +604,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                     }
                     __syncwarp();
                 } else if constexpr (kAllowMultipleReduction) {
-                    // Do local reduction
-                    // Sort valid top-k indices to front
-                    int topk_slot_idx[kNumTopk];
-                    compute_topk_slots(
-                        topk_slot_idx, reduce_valid_mask,
-                        [=](const int& idx) {
-                            return ptx::exchange(stored_topk_slot_idx, idx);
-                        }
-                    );
-
-                    // Reduce into shared memory
-                    constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
-                    combine_reduce<kHiddenVec, kUnrollFactor, 1>(
-                        lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-                        /* Get source base */ [=](const int& slot_idx) {
-                            return math::advance_ptr<combine_vec_t>(
-                                x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
-                        },
-                        /* Wait buffer release */ [=]() {
-                            ptx::tma_store_wait();
-                            __syncwarp();
-                        }
-                    );
-                    ptx::tma_store_fence();
-                    __syncwarp();
+                    reduce_local_combine_row<kNumHiddenBytes, kNumTopk>(
+                        x, tma_buffer.get_base_ptr(), lane_idx, stored_topk_slot_idx, reduce_valid_mask);
                 } else {
                     // No local reduction, send all data (expanded send)
                     #pragma unroll

@@ -34,6 +34,232 @@
 
 namespace nixl_ep_v2::elastic::adaptive {
 
+template <int kNumMaxScaleupRanks>
+__device__ __forceinline__ bool is_dispatch_rank_live(const topology::EPTopology& topo, int rank) {
+    return topo.is_scaleout_live(rank / topo.num_scaleup_ranks)
+        and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, rank % topo.num_scaleup_ranks);
+}
+
+template <int kNumExpertsPerRank, int kNumMaxScaleupRanks, int kNumNotifyThreads, int64_t kNumTimeoutCycles>
+__device__ __forceinline__ void write_direct_dispatch_counts(
+    const nixl::NIXLTransport& transport, const topology::EPTopology& topo, const layout::WorkspaceLayout& workspace_layout,
+    int thread_idx, int rank_idx, const int* rank_count, const int* expert_count) {
+    // The writer's position indexes rank slots. Its global rank indexes expert slots,
+    // including when the direct domain has a nonzero scale-out index.
+    // Acquire each destination's READY before the first store from this lane.
+    comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
+    const auto acquire_peer = [&](int pos) {
+        comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
+        return topology::rank_id(topo.scaleout_rank_idx, pos, kNumMaxScaleupRanks);
+    };
+    for (int i = thread_idx; i < topo.num_scaleup_ranks; i += kNumNotifyThreads) {
+        if (not topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i))
+            continue;
+        const auto peer = acquire_peer(i);
+        const auto dst_rank_counter = workspace_layout.get_scaleup_rank_count_ptr<false>() + topo.scaleup_rank_idx;
+        const auto count = rank_count[topo.scaleout_rank_idx * topo.num_scaleup_ranks + i];   // the count of our domain's rank at position `i`
+        transport.put_value<int64_t>(dst_rank_counter, static_cast<int64_t>(count), peer);
+    }
+    __syncwarp();
+
+    // Issue scaleup expert count writes to peers
+    if constexpr (kNumExpertsPerRank % 2 == 0) {
+        // Packed: two experts (two 64-bit slots, 16 bytes, 16-byte aligned since the slot index is even and the
+        // slot array is 16-byte aligned) per vector store; a pair never straddles two ranks. The receiver polls each
+        // element on its own, so only the per-element values matter (the high word is the sign extension).
+        // The storing lane acquires its destination's READY itself (`acquire_peer`)
+        for (int j = thread_idx; j < workspace_layout.num_experts / 2; j += kNumNotifyThreads) {
+            const int i = j * 2;
+            const auto dst_rank = i / kNumExpertsPerRank;
+            if (not is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, dst_rank))
+                continue;
+            const int v0 = expert_count[i], v1 = expert_count[i + 1];
+            const auto idx = kNumExpertsPerRank * rank_idx + (i % kNumExpertsPerRank);
+            const auto peer = acquire_peer(dst_rank % topo.num_scaleup_ranks);
+            transport.put_value(reinterpret_cast<int4*>(workspace_layout.get_scaleup_expert_count_ptr<false>() + idx),
+                                make_int4(v0, v0 >> 31, v1, v1 >> 31), peer);
+        }
+    } else {
+        for (int i = thread_idx; i < workspace_layout.num_experts; i += kNumNotifyThreads) {
+            const auto dst_rank = i / kNumExpertsPerRank;
+            if (not is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, dst_rank))
+                continue;
+            const auto idx = kNumExpertsPerRank * rank_idx + (i % kNumExpertsPerRank);
+            const auto peer = acquire_peer(dst_rank % topo.num_scaleup_ranks);
+            transport.put_value<int64_t>(
+                workspace_layout.get_scaleup_expert_count_ptr<false>() + idx,
+                static_cast<int64_t>(expert_count[i]), peer);
+        }
+    }
+}
+
+template <int kNumExpertsPerRank, int kNumMaxScaleupRanks, int kNumNotifyThreads, int64_t kNumTimeoutCycles>
+__device__ __forceinline__ void receive_direct_dispatch_counts(
+    const topology::EPTopology& topo, const layout::WorkspaceLayout& workspace_layout,
+    int thread_idx, int rank_idx, int* rank_count, int* expert_count) {
+    // Wait for rank and expert count: `num_scaleup_ranks` rank slots (writer = position `i`), then the
+    // `num_experts` expert slots (writer = the global rank owning expert `i - num_scaleup_ranks`)
+    const auto start_clock = clock64();
+    if constexpr (kNumExpertsPerRank % 2 == 0) {
+        // Polled in 16-byte chunks of two 64-bit slots: every element is checked on its own (a chunk is retried until
+        // all its live elements read as written; a vector load need not be atomic), then the chunk is zeroed for the next call
+        const int num_rank_chunks = (topo.num_scaleup_ranks + 1) / 2, num_expert_chunks = workspace_layout.num_experts / 2;
+        for (int c = thread_idx; c < num_rank_chunks + num_expert_chunks; c += kNumNotifyThreads) {
+            const bool is_rank_chunk = c < num_rank_chunks;
+            const int e0 = is_rank_chunk ? c * 2 : (c - num_rank_chunks) * 2;
+            int64_t* chunk_ptr = is_rank_chunk ? workspace_layout.get_scaleup_rank_count_ptr<false>() + e0
+                                               : workspace_layout.get_scaleup_expert_count_ptr<false>() + e0;
+            // Element liveness (a rank chunk's second element may lie past the live positions)
+            bool live[2];
+            #pragma unroll
+            for (int k = 0; k < 2; ++ k) {
+                const int e = e0 + k;
+                live[k] = is_rank_chunk ? (e < topo.num_scaleup_ranks and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, e))
+                                        : is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, e / kNumExpertsPerRank);
+            }
+            int* smem_dst = is_rank_chunk ? rank_count + e0 : expert_count + e0;
+            int decoded[2] = {0, 0};
+            if (live[0] or live[1]) {
+                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                    // NOTES: the low word of each 64-bit slot carries the (encoded) count
+                    const auto v = ptx::ld_volatile_int4(chunk_ptr);
+                    const int d0 = math::encode_decode_positive(v.x), d1 = math::encode_decode_positive(v.z);
+                    if ((not live[0] or math::is_decoded_positive_ready(d0)) and (not live[1] or math::is_decoded_positive_ready(d1))) {
+                        decoded[0] = d0, decoded[1] = d1;
+                        return true;
+                    }
+
+                    if (is_last_check)
+                        printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, %s chunk: %d, counts: %d %d\n",
+                               rank_idx, is_rank_chunk ? "rank" : "expert", e0, d0, d1);
+                    return false;
+                }, start_clock);
+                // Clean for the next call
+                ptx::st_relaxed_sys(chunk_ptr, make_int4(0, 0, 0, 0));
+            }
+            // A rank chunk stays inside the bound: slot `num_scaleup_ranks` (an odd count's pad) is `expert_count[0]`
+            // when the live domain is domain 0, else an unused rank slot
+            #pragma unroll
+            for (int k = 0; k < 2; ++ k)
+                if (not is_rank_chunk or e0 + k < topo.num_scaleup_ranks)
+                    smem_dst[k] = live[k] ? decoded[k] : 0;
+        }
+    } else {
+        for (int i = thread_idx; i < topo.num_scaleup_ranks + workspace_layout.num_experts; i += kNumNotifyThreads) {
+            const bool is_rank_slot = i < topo.num_scaleup_ranks;
+            const int expert_slot = i - topo.num_scaleup_ranks;
+            const bool live = is_rank_slot ? topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i)
+                                           : is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, expert_slot / kNumExpertsPerRank);
+            int* smem_dst = is_rank_slot ? rank_count + i : expert_count + expert_slot;
+            if (not live) {
+                *smem_dst = 0;
+                continue;
+            }
+            const auto slot_ptr = workspace_layout.get_scaleup_count_ptr<false>(i, topo.num_scaleup_ranks);
+            comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+                // NOTES: the global memory type has 64 bits
+                const auto count = static_cast<int>(ptx::ld_volatile<int64_t>(slot_ptr));
+                const auto decoded = math::encode_decode_positive(count);
+                if (math::is_decoded_positive_ready(decoded)) {
+                    *slot_ptr = 0;
+                    *smem_dst = decoded;
+                    return true;
+                }
+
+                if (is_last_check)
+                    printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
+                return false;
+            }, start_clock);
+        }
+    }
+}
+
+template <bool kZeroCopy, int kNumHiddenBytes, int kNumSFPacks>
+__device__ __forceinline__ void pack_direct_payload(
+    const layout::TokenLayout& tma_buffer, ptx::mbarrier* mbarrier_ptr, void* x, sf_pack_t* sf,
+    int64_t token_idx, int sf_token_stride, int sf_hidden_stride, int lane_idx) {
+    // Wait TMA store arrivals
+    if constexpr (kZeroCopy) {
+        ptx::tma_store_wait_read();
+    } else {
+        ptx::tma_store_wait();
+    }
+    __syncwarp();
+
+    // Issue data TMA
+    if (ptx::elect_one_sync()) {
+        ptx::tma_load_1d(tma_buffer.get_hidden_ptr(), math::advance_ptr(x, token_idx * kNumHiddenBytes),
+                         mbarrier_ptr, kNumHiddenBytes);
+    }
+    __syncwarp();
+
+    // Issue SF `cp.async`
+    if constexpr (kNumSFPacks > 0) {
+        EP_STATIC_ASSERT(sizeof(sf_pack_t) % 4 == 0, "Unaligned SF element type");
+        const auto gmem_src_ptr = math::advance_ptr<sf_pack_t>(sf, token_idx * sf_token_stride * sizeof(sf_pack_t));
+        const auto smem_dst_ptr = tma_buffer.get_sf_ptr();
+
+        constexpr auto kNumFullIters = kNumSFPacks / 32;
+        #pragma unroll
+        for (int k = 0; k < kNumFullIters; ++ k) {
+            ptx::cp_async_ca(gmem_src_ptr + (k * 32 + lane_idx) * sf_hidden_stride,
+                             smem_dst_ptr + k * 32 + lane_idx);
+        }
+        if (kNumFullIters * 32 + lane_idx < kNumSFPacks) {
+            ptx::cp_async_ca(gmem_src_ptr + (kNumFullIters * 32 + lane_idx) * sf_hidden_stride,
+                             smem_dst_ptr + kNumFullIters * 32 + lane_idx);
+        }
+        ptx::cp_async_mbarrier_arrive(mbarrier_ptr);
+        __syncwarp();
+    }
+}
+
+struct DirectDispatchRoute {
+    int rank = -1;
+    int expert = -1;
+    float weight = 0.0f;
+};
+
+template <bool kZeroCopy, int kNumTopk, int kNumExpertsPerRank, int kNumMaxScaleupRanks>
+__device__ __forceinline__ DirectDispatchRoute pack_direct_route(
+    const topology::EPTopology& topo, const layout::TokenLayout& tma_buffer, const topk_idx_t* topk_idx,
+    const float* topk_weights, topk_idx_t* copied_topk_idx, int token_idx, int lane_idx) {
+    EP_STATIC_ASSERT(kNumTopk <= 32, "Insufficient lanes for loading top-k indices");
+    DirectDispatchRoute route;
+    if (lane_idx < kNumTopk) {
+        const auto uncasted_dst_expert_idx = __ldg(topk_idx + token_idx * kNumTopk + lane_idx);
+        const auto dst_expert_idx = static_cast<int>(uncasted_dst_expert_idx);
+        route.rank = dst_expert_idx >= 0 ? dst_expert_idx / kNumExpertsPerRank : -1;   // global rank
+        if (route.rank >= 0 and not is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, route.rank))
+            route.rank = -1;
+        if constexpr (kZeroCopy) {
+            route.expert = dst_expert_idx;
+            if (topk_weights != nullptr)
+                route.weight = __ldg(topk_weights + token_idx * kNumTopk + lane_idx);
+        } else {
+            tma_buffer.get_topk_idx_ptr()[lane_idx] = dst_expert_idx;
+            if (topk_weights != nullptr)
+                tma_buffer.get_topk_weights_ptr()[lane_idx] = __ldg(topk_weights + token_idx * kNumTopk + lane_idx);
+        }
+        if (copied_topk_idx != nullptr)
+            copied_topk_idx[token_idx * kNumTopk + lane_idx] = uncasted_dst_expert_idx;
+    }
+    return route;
+}
+
+template <int kNumMaxScaleupRanks>
+__device__ __forceinline__ void write_direct_token(
+    const nixl::NIXLTransport& transport, const topology::EPTopology& topo, const layout::BufferLayout<false>& recv_buffer,
+    const layout::TokenLayout& tma_buffer, int dst_rank_idx, int dst_slot_idx) {
+    const auto dst_ptr = dst_slot_idx >= 0 ?
+        transport.get_p2p_ptr(recv_buffer.get_token_buffer(dst_slot_idx).get_base_ptr(),
+                              topology::rank_id(topo.scaleout_rank_idx, dst_rank_idx % topo.num_scaleup_ranks, kNumMaxScaleupRanks)) :
+        nullptr;
+    EP_DEVICE_ASSERT((dst_slot_idx < 0 or dst_ptr != nullptr) and "Direct mode needs every live peer reachable with stores");
+    if (dst_ptr != nullptr)
+        ptx::tma_store_1d(dst_ptr, tma_buffer.get_base_ptr(), tma_buffer.get_num_bytes<false>());
+}
+
 // DeepSeek's hybrid dispatch on a fixed grid; rank decomposition and active block count come from the topology descriptor (`EPTopology`)
 // Elastic on the NIXL transport: the live world is the mask product of `topology.cuh`; masked peers are not counted, written, signalled or waited for
 // `kZeroCopy` (compact): the outputs live in each destination's arena slot, written in place on one NVLink domain (`topo.mode` direct)
@@ -130,7 +356,7 @@ adaptive_dispatch_impl(
 
     // Whether a (global) rank is live, and its position in its NVLink domain
     const auto is_rank_live = [=](const int& rank) {
-        return topo.is_scaleout_live(rank / num_scaleup_ranks) and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, rank % num_scaleup_ranks);
+        return is_dispatch_rank_live<kNumMaxScaleupRanks>(topo, rank);
     };
     const auto position_of = [=](const int& rank) { return rank % num_scaleup_ranks; };
     // Whether the rank owning a (global) expert is live; a selection of a dead expert is dropped
@@ -516,58 +742,8 @@ adaptive_dispatch_impl(
                                             layout::WorkspaceLayout::encode_zc_base(zc_fresh_call_index, base));
                     }
                 } else {
-                    // Direct mode: DeepSeek's direct kernel's single-stage exchange over the flat NVLink team. Every
-                    // rank writes its (encoded) per-rank and per-expert counts into its own slots of every peer,
-                    // waits for all peers' slots, and reduces the expert counts locally. No release atomics.
-                    // The one live domain need not be domain 0: rank counts travel in POSITION space (slot = the writer's
-                    // position, which the prefix sum, the copy epilogue and the host read), expert counts in GLOBAL space
-                    // (slot = the writer's global rank times the slots per rank + the expert, reduced over every rank below)
-                    // Issue scaleup rank count writes to peers
-                    // Peer-signalled mode (this branch: direct, not zero copy): a storing thread acquires its destination's READY before
-                    // its first store to it
-                    comm::AcquiredReadyMask<kNumMaxScaleupRanks> acquired_ready;
-                    const auto acquire_ready = [&](const int& pos) {
-                        comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(acquired_ready, workspace_layout, topo, pos);
-                    };
-                    for (int i = thread_idx; i < num_scaleup_ranks; i += kNumNotifyThreads) {
-                        if (not topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i))
-                            continue;
-                        acquire_ready(i);
-                        const auto dst_rank_counter = workspace_layout.get_scaleup_rank_count_ptr<false>() + scaleup_rank_idx;
-                        const auto count = rank_count[scaleout_rank_idx * num_scaleup_ranks + i];   // the count of our domain's rank at position `i`
-                        transport.put_value<int64_t>(dst_rank_counter, static_cast<int64_t>(count), scaleup_peer_id(i));
-                    }
-                    __syncwarp();
-
-                    // Issue scaleup expert count writes to peers
-                    if constexpr (kNumExpertsPerRank % 2 == 0) {
-                        // Packed: two experts (two 64-bit slots, 16 bytes, 16-byte aligned since the slot index is even and the
-                        // slot array is 16-byte aligned) per vector store; a pair never straddles two ranks. The receiver polls each
-                        // element on its own, so only the per-element values matter (the high word is the sign extension).
-                        // The storing lane acquires its destination's READY itself (`acquire_ready`)
-                        for (int j = thread_idx; j < num_experts / 2; j += kNumNotifyThreads) {
-                            const int i = j * 2;
-                            const auto dst_rank = i / num_experts_per_rank;
-                            if (not is_rank_live(dst_rank))
-                                continue;
-                            const int v0 = expert_count[i], v1 = expert_count[i + 1];
-                            const auto idx = num_experts_per_rank * rank_idx + (i % num_experts_per_rank);
-                            acquire_ready(position_of(dst_rank));
-                            transport.put_value(reinterpret_cast<int4*>(workspace_layout.get_scaleup_expert_count_ptr<false>() + idx),
-                                                make_int4(v0, v0 >> 31, v1, v1 >> 31), scaleup_peer_id(position_of(dst_rank)));
-                        }
-                    } else {
-                        for (int i = thread_idx; i < num_experts; i += kNumNotifyThreads) {
-                            const auto dst_rank = i / num_experts_per_rank;
-                            if (not is_rank_live(dst_rank))
-                                continue;
-                            const auto idx = num_experts_per_rank * rank_idx + (i % num_experts_per_rank);
-                            acquire_ready(position_of(dst_rank));
-                            transport.put_value<int64_t>(
-                                workspace_layout.get_scaleup_expert_count_ptr<false>() + idx,
-                                static_cast<int64_t>(expert_count[i]), scaleup_peer_id(position_of(dst_rank)));
-                        }
-                    }
+                    write_direct_dispatch_counts<kNumExpertsPerRank, kNumMaxScaleupRanks, kNumNotifyThreads, kNumTimeoutCycles>(
+                        transport, topo, workspace_layout, thread_idx, rank_idx, rank_count, expert_count);
 
                     // This is necessary, as the waited results will rewrite the shared memory
                     ptx::named_barrier<kNumNotifyThreads>(kNotifyBarrierIndex);
@@ -579,81 +755,9 @@ adaptive_dispatch_impl(
                     // `griddepcontrol.wait`, i.e. after this kernel's full completion, these warps included
                     end_sequence();
 
-                    // Wait for rank and expert count: `num_scaleup_ranks` rank slots (writer = position `i`), then the
-                    // `num_experts` expert slots (writer = the global rank owning expert `i - num_scaleup_ranks`)
-                    const auto start_clock = clock64();
-                    if constexpr (kNumExpertsPerRank % 2 == 0) {
-                        // Polled in 16-byte chunks of two 64-bit slots: every element is checked on its own (a chunk is retried until
-                        // all its live elements read as written; a vector load need not be atomic), then the chunk is zeroed for the next call
-                        const int num_rank_chunks = (num_scaleup_ranks + 1) / 2, num_expert_chunks = num_experts / 2;
-                        for (int c = thread_idx; c < num_rank_chunks + num_expert_chunks; c += kNumNotifyThreads) {
-                            const bool is_rank_chunk = c < num_rank_chunks;
-                            const int e0 = is_rank_chunk ? c * 2 : (c - num_rank_chunks) * 2;
-                            int64_t* chunk_ptr = is_rank_chunk ? workspace_layout.get_scaleup_rank_count_ptr<false>() + e0
-                                                               : workspace_layout.get_scaleup_expert_count_ptr<false>() + e0;
-                            // Element liveness (a rank chunk's second element may lie past the live positions)
-                            bool live[2];
-                            #pragma unroll
-                            for (int k = 0; k < 2; ++ k) {
-                                const int e = e0 + k;
-                                live[k] = is_rank_chunk ? (e < num_scaleup_ranks and topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, e))
-                                                        : is_rank_live(e / num_experts_per_rank);
-                            }
-                            int* smem_dst = is_rank_chunk ? rank_count + e0 : expert_count + e0;
-                            int decoded[2] = {0, 0};
-                            if (live[0] or live[1]) {
-                                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
-                                    // NOTES: the low word of each 64-bit slot carries the (encoded) count
-                                    const auto v = ptx::ld_volatile_int4(chunk_ptr);
-                                    const int d0 = math::encode_decode_positive(v.x), d1 = math::encode_decode_positive(v.z);
-                                    if ((not live[0] or math::is_decoded_positive_ready(d0)) and (not live[1] or math::is_decoded_positive_ready(d1))) {
-                                        decoded[0] = d0, decoded[1] = d1;
-                                        return true;
-                                    }
+                    receive_direct_dispatch_counts<kNumExpertsPerRank, kNumMaxScaleupRanks, kNumNotifyThreads, kNumTimeoutCycles>(
+                        topo, workspace_layout, thread_idx, rank_idx, rank_count, expert_count);
 
-                                    if (is_last_check)
-                                        printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, %s chunk: %d, counts: %d %d\n",
-                                               rank_idx, is_rank_chunk ? "rank" : "expert", e0, d0, d1);
-                                    return false;
-                                }, start_clock);
-                                // Clean for the next call
-                                ptx::st_relaxed_sys(chunk_ptr, make_int4(0, 0, 0, 0));
-                            }
-                            // A rank chunk stays inside the bound: slot `num_scaleup_ranks` (an odd count's pad) is `expert_count[0]`
-                            // when the live domain is domain 0, else an unused rank slot
-                            #pragma unroll
-                            for (int k = 0; k < 2; ++ k)
-                                if (not is_rank_chunk or e0 + k < num_scaleup_ranks)
-                                    smem_dst[k] = live[k] ? decoded[k] : 0;
-                        }
-                    } else {
-                        for (int i = thread_idx; i < num_scaleup_ranks + num_experts; i += kNumNotifyThreads) {
-                            const bool is_rank_slot = i < num_scaleup_ranks;
-                            const int expert_slot = i - num_scaleup_ranks;
-                            const bool live = is_rank_slot ? topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, i)
-                                                           : is_rank_live(expert_slot / num_experts_per_rank);
-                            int* smem_dst = is_rank_slot ? rank_count + i : expert_count + expert_slot;
-                            if (not live) {
-                                *smem_dst = 0;
-                                continue;
-                            }
-                            const auto slot_ptr = workspace_layout.get_scaleup_count_ptr<false>(i, num_scaleup_ranks);
-                            comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
-                                // NOTES: the global memory type has 64 bits
-                                const auto count = static_cast<int>(ptx::ld_volatile<int64_t>(slot_ptr));
-                                const auto decoded = math::encode_decode_positive(count);
-                                if (math::is_decoded_positive_ready(decoded)) {
-                                    *slot_ptr = 0;
-                                    *smem_dst = decoded;
-                                    return true;
-                                }
-
-                                if (is_last_check)
-                                    printf("NIXL EP V2 adaptive notify (direct) timeout, rank: %d, slot: %d, count: %d\n", rank_idx, i, decoded);
-                                return false;
-                            }, start_clock);
-                        }
-                    }
                     ptx::named_barrier<kNumNotifyThreads>(kNotifyBarrierIndex);
                     EP_PROFILE_STAMP(workspace_layout, 4);
                 }  // the staged exchange
@@ -948,66 +1052,11 @@ adaptive_dispatch_impl(
 
         // Iterate all tokens
         for (int token_idx = channel_idx; token_idx < num_tokens; token_idx = next_token(token_idx)) {
-            const auto token_i64_idx = static_cast<int64_t>(token_idx);
+            pack_direct_payload<kZeroCopy, kNumHiddenBytes, kNumSFPacks>(
+                tma_buffer, mbarrier_ptr, x, sf, token_idx, sf_token_stride, sf_hidden_stride, lane_idx);
 
-            // Wait TMA store arrivals
-            if constexpr (kZeroCopy) {
-                ptx::tma_store_wait_read();
-            } else {
-                ptx::tma_store_wait();
-            }
-            __syncwarp();
-
-            // Issue data TMA
-            if (ptx::elect_one_sync()) {
-                ptx::tma_load_1d(tma_buffer.get_hidden_ptr(), math::advance_ptr(x, token_i64_idx * kNumHiddenBytes),
-                                 mbarrier_ptr, kNumHiddenBytes);
-            }
-            __syncwarp();
-
-            // Issue SF `cp.async`
-            if constexpr (kNumSFPacks > 0) {
-                EP_STATIC_ASSERT(sizeof(sf_pack_t) % 4 == 0, "Unaligned SF element type");
-                const auto gmem_src_ptr = math::advance_ptr<sf_pack_t>(sf, token_i64_idx * sf_token_stride * sizeof(sf_pack_t));
-                const auto smem_dst_ptr = tma_buffer.get_sf_ptr();
-
-                constexpr auto kNumFullIters = kNumSFPacks / 32;
-                #pragma unroll
-                for (int k = 0; k < kNumFullIters; ++ k) {
-                    ptx::cp_async_ca(gmem_src_ptr + (k * 32 + lane_idx) * sf_hidden_stride,
-                                     smem_dst_ptr + k * 32 + lane_idx);
-                }
-                if (kNumFullIters * 32 + lane_idx < kNumSFPacks) {
-                    ptx::cp_async_ca(gmem_src_ptr + (kNumFullIters * 32 + lane_idx) * sf_hidden_stride,
-                                     smem_dst_ptr + kNumFullIters * 32 + lane_idx);
-                }
-                ptx::cp_async_mbarrier_arrive(mbarrier_ptr);
-                __syncwarp();
-            }
-
-            // Load top-k indices and weights
-            EP_STATIC_ASSERT(kNumTopk <= 32, "Insufficient lanes for loading top-k indices");
-            int stored_dst_rank_idx = -1;
-            [[maybe_unused]] int stored_dst_expert_idx = -1;
-            [[maybe_unused]] float stored_topk_weight = 0.0f;
-            if (lane_idx < kNumTopk) {
-                const auto uncasted_dst_expert_idx = __ldg(topk_idx + token_idx * kNumTopk + lane_idx);
-                const auto dst_expert_idx = static_cast<int>(uncasted_dst_expert_idx);
-                stored_dst_rank_idx = dst_expert_idx >= 0 ? dst_expert_idx / num_experts_per_rank : -1;   // global rank
-                if (stored_dst_rank_idx >= 0 and not is_rank_live(stored_dst_rank_idx))
-                    stored_dst_rank_idx = -1;
-                if constexpr (kZeroCopy) {
-                    stored_dst_expert_idx = dst_expert_idx;
-                    if (topk_weights != nullptr)
-                        stored_topk_weight = __ldg(topk_weights + token_idx * kNumTopk + lane_idx);
-                } else {
-                    tma_buffer.get_topk_idx_ptr()[lane_idx] = dst_expert_idx;
-                    if (topk_weights != nullptr)
-                        tma_buffer.get_topk_weights_ptr()[lane_idx] = __ldg(topk_weights + token_idx * kNumTopk + lane_idx);
-                }
-                if (copied_topk_idx != nullptr)
-                    copied_topk_idx[token_idx * kNumTopk + lane_idx] = uncasted_dst_expert_idx;
-            }
+            const auto route = pack_direct_route<kZeroCopy, kNumTopk, kNumExpertsPerRank, kNumMaxScaleupRanks>(
+                topo, tma_buffer, topk_idx, topk_weights, copied_topk_idx, token_idx, lane_idx);
             __syncwarp();
 
             // Add source metadata (rank index and token index)
@@ -1021,8 +1070,8 @@ adaptive_dispatch_impl(
 
             // Deduplicate ranks and assign slots
             int stored_dst_slot_idx = -1;
-            if (ptx::deduplicate(stored_dst_rank_idx, lane_idx) and stored_dst_rank_idx >= 0)
-                stored_dst_slot_idx = atomicAdd(workspace_layout.get_scaleup_atomic_sender_counter() + position_of(stored_dst_rank_idx), 1);
+            if (ptx::deduplicate(route.rank, lane_idx) and route.rank >= 0)
+                stored_dst_slot_idx = atomicAdd(workspace_layout.get_scaleup_atomic_sender_counter() + position_of(route.rank), 1);
             __syncwarp();
 
             // Peer-signalled mode (this direct path without zero copy): the lane that stores to a destination acquires that
@@ -1030,7 +1079,7 @@ adaptive_dispatch_impl(
             if constexpr (not kZeroCopy) {
                 if (stored_dst_slot_idx >= 0)
                     comm::peer_ready_acquire_rt<kNumTimeoutCycles, comm::kDirectDispatchTag, kNumMaxScaleupRanks>(
-                        acquired_ready, workspace_layout, topo, position_of(stored_dst_rank_idx));
+                        acquired_ready, workspace_layout, topo, position_of(route.rank));
                 __syncwarp();
             }
 
@@ -1041,7 +1090,7 @@ adaptive_dispatch_impl(
                 int zc_base = 0;
                 #pragma unroll
                 for (int j = 0; j < kNumScaleupRanksPerLane; ++ j) {
-                    const int dst_pos = stored_dst_rank_idx >= 0 ? position_of(stored_dst_rank_idx) : -1;   // the bases are per position
+                    const int dst_pos = route.rank >= 0 ? position_of(route.rank) : -1;   // the bases are per position
                     const int src_lane_idx = dst_pos >= 0 ? dst_pos % 32 : 0;
                     const auto base_j = ptx::exchange(zc_stored_rank_base[j], src_lane_idx);
                     const auto peer_base_j = ptx::exchange(zc_peer_base[j], src_lane_idx);
@@ -1061,13 +1110,7 @@ adaptive_dispatch_impl(
             __syncwarp();
 
             if constexpr (not kZeroCopy) {
-                // Issue TMA NVLink stores
-                const auto dst_ptr = stored_dst_slot_idx >= 0 ?
-                    transport.get_p2p_ptr(recv_buffer.get_token_buffer(stored_dst_slot_idx).get_base_ptr(), scaleup_peer_id(position_of(stored_dst_rank_idx))) :
-                    nullptr;
-                EP_DEVICE_ASSERT((stored_dst_slot_idx < 0 or dst_ptr != nullptr) and "Direct mode needs every live peer reachable with stores");
-                if (dst_ptr != nullptr)
-                    ptx::tma_store_1d(dst_ptr, tma_buffer.get_base_ptr(), tma_buffer.get_num_bytes<false>());
+                write_direct_token<kNumMaxScaleupRanks>(transport, topo, recv_buffer, tma_buffer, route.rank, stored_dst_slot_idx);
             } else {
                 // Zero copy: per destination one bulk store of the row, then plain remote stores of its small parts
                 constexpr int kNumSFRegs = kNumSFPacks > 0 ? math::constexpr_ceil_div(kNumSFPacks, 32) : 1;
@@ -1090,7 +1133,7 @@ adaptive_dispatch_impl(
                 const int src_token_global_idx = rank_idx * num_max_tokens_per_rank + token_idx;
                 for (auto mask = ptx::gather(zc_stored_row >= 0); mask != 0; mask &= mask - 1) {
                     const int k = ptx::ffs(mask);
-                    const int dst_rank = ptx::exchange(stored_dst_rank_idx, k);
+                    const int dst_rank = ptx::exchange(route.rank, k);
                     const int row = ptx::exchange(zc_stored_row, k);
                     const int slot_idx = ptx::exchange(stored_dst_slot_idx, k);
                     const auto peer_base = ptx::exchange(zc_stored_peer_base, k);
@@ -1100,11 +1143,11 @@ adaptive_dispatch_impl(
                                           tma_buffer.get_hidden_ptr(), kNumHiddenBytes);
                     }
                     if (lane_idx < kNumTopk) {
-                        const bool on_dst = stored_dst_rank_idx == dst_rank;
+                        const bool on_dst = route.rank == dst_rank;
                         *transport.get_p2p_ptr_from_base(peer_base, zc_recv_topk_idx + static_cast<int64_t>(row) * kNumTopk + lane_idx) =
-                            static_cast<topk_idx_t>(on_dst ? stored_dst_expert_idx - dst_rank * num_experts_per_rank : -1);
+                            static_cast<topk_idx_t>(on_dst ? route.expert - dst_rank * num_experts_per_rank : -1);
                         if (topk_weights != nullptr)
-                            *transport.get_p2p_ptr_from_base(peer_base, zc_recv_topk_weights + static_cast<int64_t>(row) * kNumTopk + lane_idx) = stored_topk_weight;
+                            *transport.get_p2p_ptr_from_base(peer_base, zc_recv_topk_weights + static_cast<int64_t>(row) * kNumTopk + lane_idx) = route.weight;
                     }
                     zc_store_sf(peer_base, row);
                     if (lane_idx < 2) {
@@ -1121,6 +1164,8 @@ adaptive_dispatch_impl(
             ptx::tma_store_commit();
             __syncwarp();
         }
+
+
         EP_PROFILE_STAMP_WARP(workspace_layout, 10, kNumNotifyWarps);
         EP_PROFILE_STAMP_WARP(workspace_layout, 11, kNumThreads / 32 - 1);
     } else if (warp_idx < kNumNotifyWarps + kNumScaleoutWarps) {
