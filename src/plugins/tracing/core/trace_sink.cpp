@@ -30,38 +30,6 @@ namespace {
 
     constexpr std::size_t inline_record_attrs = 12;
 
-    constinit thread_local bool deferred_phases_gone = false;
-
-    struct DeferredPhaseQueue {
-        std::array<DeferredPhase, deferredPhaseCapacity> entries;
-        std::size_t count = 0;
-
-        ~DeferredPhaseQueue() {
-            deferred_phases_gone = true;
-            if (count != 0) {
-                pendingDeferredPhases.fetch_sub(count, std::memory_order_relaxed);
-            }
-        }
-    };
-
-    thread_local DeferredPhaseQueue deferred_phases;
-
-    void
-    recordDeferred(const DeferredPhase &deferred) noexcept {
-        if (deferred.status == NIXL_SUCCESS) {
-            deferred.trace.recordAt(deferred.phase, deferred.phaseAt);
-        } else if (auto *const sink = static_cast<TracerPhaseSink *>(deferred.trace.sink())) {
-            sink->recordFailedPhase(
-                deferred.phase, deferred.phaseAt, deferred.trace.identity(), deferred.status);
-        }
-        if (deferred.phase == nixl_trace_phase_t::WIRE_COMPLETED) {
-            deferred.trace.recordSpan(nixl_trace_span_t::WIRE_INFLIGHT,
-                                      deferred.operation,
-                                      deferred.inflightSince,
-                                      deferred.completedAt);
-        }
-    }
-
     [[nodiscard]] constexpr Kind
     operationKind(nixl_xfer_op_t operation) noexcept {
         switch (operation) {
@@ -206,43 +174,6 @@ TracerPhaseSink::readTraceTags(nixlSerDes &ser_des) const {
 std::string
 TracerPhaseSink::readTraceBaggage(nixlSerDes &ser_des) const {
     return decodeTraceBaggage(ser_des);
-}
-
-std::atomic<std::uint64_t> pendingDeferredPhases{0};
-
-TracerPhaseSink::~TracerPhaseSink() {
-    nixl::trace::recordDeferredPhases(this);
-}
-
-void
-TracerPhaseSink::deferPhase(const DeferredPhase &deferred) noexcept {
-    if (deferred_phases_gone) {
-        recordDeferred(deferred);
-        return;
-    }
-    DeferredPhaseQueue &queue = deferred_phases;
-    if (queue.count == queue.entries.size()) {
-        recordDeferred(deferred);
-        return;
-    }
-    queue.entries[queue.count++] = deferred;
-    pendingDeferredPhases.fetch_add(1, std::memory_order_relaxed);
-}
-
-void
-TracerPhaseSink::recordDeferredPhases() noexcept {
-    if (deferred_phases_gone) {
-        return;
-    }
-    DeferredPhaseQueue &queue = deferred_phases;
-    const std::size_t recorded = queue.count;
-    for (std::size_t i = 0; i < recorded; ++i) {
-        recordDeferred(queue.entries[i]);
-    }
-    queue.count = 0;
-    if (recorded != 0) {
-        pendingDeferredPhases.fetch_sub(recorded, std::memory_order_relaxed);
-    }
 }
 
 } // namespace nixl::trace

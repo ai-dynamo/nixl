@@ -247,7 +247,6 @@ nixlUcxChunkBackendReqH::status() {
 
     setNotif(std::exchange(sharedState_->notif, {}));
     sendNotif();
-    trace.drain();
     return NIXL_IN_PROG;
 }
 
@@ -436,9 +435,8 @@ public:
     nixlUcxDedicatedWorker(const nixlUcxContext &context,
                            ucp_err_handling_mode_t err_handling_mode,
                            size_t id,
-                           nixlBackendTraceSink *trace_sink,
                            nixlUcxEngine *engine)
-        : nixlUcxWorker(context, err_handling_mode, id, trace_sink),
+        : nixlUcxWorker(context, err_handling_mode, id),
           thread_(std::in_place, engine, *this) {}
 
     void

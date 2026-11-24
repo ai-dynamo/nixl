@@ -210,7 +210,7 @@ protected:
     void
     addWorker(argTypes &&...args) {
         workers_.emplace_back(std::make_unique<workerType>(
-            *uc, errHandlingMode_, workers_.size(), traceSink_, std::forward<argTypes>(args)...));
+            *uc, errHandlingMode_, workers_.size(), std::forward<argTypes>(args)...));
     }
 
     [[nodiscard]] worker_span_t

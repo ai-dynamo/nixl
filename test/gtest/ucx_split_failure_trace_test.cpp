@@ -31,9 +31,21 @@
 
 namespace {
 
-class DeferringSink final : public nixlBackendTraceSink {
+class RecordingSink final : public nixlBackendTraceSink {
 public:
-    DeferringSink() {
+    struct failure_t {
+        nixl_trace_phase_t phase;
+        nixlTime::us_t at;
+        nixl_status_t status;
+    };
+
+    struct span_t {
+        nixl_trace_span_t span;
+        nixlTime::us_t start;
+        nixlTime::us_t end;
+    };
+
+    RecordingSink() {
         identity_.context.traceId->fill(0x11);
         identity_.context.spanId->fill(0x22);
         identity_.context.flags = nixl::trace::sampledTraceFlag;
@@ -51,13 +63,15 @@ public:
                 std::string_view) noexcept override {}
 
     void
-    recordSpan(nixl_trace_span_t,
+    recordSpan(nixl_trace_span_t span,
                nixl_xfer_op_t,
-               nixlTime::us_t,
-               nixlTime::us_t,
+               nixlTime::us_t start,
+               nixlTime::us_t end,
                const nixl::trace::TraceIdentity &,
                std::span<const nixlBackendTraceAttr>,
-               std::string_view) noexcept override {}
+               std::string_view) noexcept override {
+        spans.push_back({span, start, end});
+    }
 
     [[nodiscard]] bool
     needsTimestamps() const noexcept override {
@@ -90,21 +104,22 @@ public:
     }
 
     void
-    deferPhase(const nixl::trace::DeferredPhase &phase) noexcept override {
-        deferred.push_back(phase);
+    recordFailedPhase(nixl_trace_phase_t phase,
+                      nixlTime::us_t timestamp,
+                      const nixl::trace::TraceIdentity &,
+                      nixl_status_t status) noexcept override {
+        failures.push_back({phase, timestamp, status});
     }
 
-    void
-    recordDeferredPhases() noexcept override {}
-
-    std::vector<nixl::trace::DeferredPhase> deferred;
+    std::vector<failure_t> failures;
+    std::vector<span_t> spans;
 
 private:
     nixl::trace::TraceIdentity identity_;
 };
 
 [[nodiscard]] nixlBackendPostPhases
-splitPostTrace(DeferringSink &sink) {
+splitPostTrace(RecordingSink &sink) {
     nixlBackendPostPhases trace;
     trace.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::LAST_PART);
     return trace;
@@ -113,7 +128,7 @@ splitPostTrace(DeferringSink &sink) {
 } // namespace
 
 TEST(UcxSplitFailure, ResetReturnsTheSubmissionToWaiting) {
-    DeferringSink sink;
+    RecordingSink sink;
     nixlBackendPostPhases trace = splitPostTrace(sink);
     nixlUcxSplitFailure failure;
     failure.finishSubmission(NIXL_ERR_BACKEND);
@@ -122,7 +137,7 @@ TEST(UcxSplitFailure, ResetReturnsTheSubmissionToWaiting) {
 }
 
 TEST(UcxSplitFailure, FirstChunkWaitsWhileSubmittingAndRecordsWhenItSawTheFailure) {
-    DeferringSink sink;
+    RecordingSink sink;
     nixlBackendPostPhases trace = splitPostTrace(sink);
     nixlUcxSplitFailure failure;
     failure.reset();
@@ -132,21 +147,23 @@ TEST(UcxSplitFailure, FirstChunkWaitsWhileSubmittingAndRecordsWhenItSawTheFailur
     std::this_thread::sleep_for(std::chrono::milliseconds(2));
     const nixlTime::us_t after_wait = nixlTime::getUs();
     EXPECT_FALSE(failure.observe(UCS_ERR_CONNECTION_RESET, trace));
-    EXPECT_TRUE(sink.deferred.empty());
+    EXPECT_TRUE(sink.failures.empty());
 
     failure.finishSubmission(NIXL_SUCCESS);
     EXPECT_TRUE(failure.observe(UCS_ERR_CONNECTION_RESET, trace));
-    ASSERT_EQ(sink.deferred.size(), 1u);
-    EXPECT_EQ(sink.deferred[0].phase, nixl_trace_phase_t::WIRE_COMPLETED);
-    EXPECT_EQ(sink.deferred[0].status, NIXL_ERR_REMOTE_DISCONNECT);
-    EXPECT_EQ(sink.deferred[0].phaseAt, 0u);
-    EXPECT_GE(sink.deferred[0].completedAt, before_seen);
-    EXPECT_LT(sink.deferred[0].completedAt, after_wait);
+    ASSERT_EQ(sink.failures.size(), 1u);
+    EXPECT_EQ(sink.failures[0].phase, nixl_trace_phase_t::WIRE_COMPLETED);
+    EXPECT_EQ(sink.failures[0].status, NIXL_ERR_REMOTE_DISCONNECT);
+    EXPECT_EQ(sink.failures[0].at, 0u);
+    ASSERT_EQ(sink.spans.size(), 1u);
+    EXPECT_EQ(sink.spans[0].span, nixl_trace_span_t::WIRE_INFLIGHT);
+    EXPECT_GE(sink.spans[0].end, before_seen);
+    EXPECT_LT(sink.spans[0].end, after_wait);
     EXPECT_FALSE(trace.active());
 }
 
 TEST(UcxSplitFailure, FirstChunkDropsTheFailureOfARejectedPost) {
-    DeferringSink sink;
+    RecordingSink sink;
     nixlBackendPostPhases trace = splitPostTrace(sink);
     nixlUcxSplitFailure failure;
     failure.reset();
@@ -154,12 +171,13 @@ TEST(UcxSplitFailure, FirstChunkDropsTheFailureOfARejectedPost) {
     EXPECT_FALSE(failure.observe(UCS_ERR_CONNECTION_RESET, trace));
     failure.finishSubmission(NIXL_ERR_REMOTE_DISCONNECT);
     EXPECT_TRUE(failure.observe(UCS_ERR_CONNECTION_RESET, trace));
-    EXPECT_TRUE(sink.deferred.empty());
+    EXPECT_TRUE(sink.failures.empty());
+    EXPECT_TRUE(sink.spans.empty());
     EXPECT_FALSE(trace.active());
 }
 
 TEST(UcxSplitFailure, ResetForgetsWhenTheLastPostsFailureWasSeen) {
-    DeferringSink sink;
+    RecordingSink sink;
     nixlBackendPostPhases trace = splitPostTrace(sink);
     nixlUcxSplitFailure failure;
     failure.reset();
@@ -170,16 +188,16 @@ TEST(UcxSplitFailure, ResetForgetsWhenTheLastPostsFailureWasSeen) {
     const nixlTime::us_t after_reset = nixlTime::getUs();
     failure.finishSubmission(NIXL_SUCCESS);
     EXPECT_TRUE(failure.observe(UCS_ERR_CONNECTION_RESET, trace));
-    ASSERT_EQ(sink.deferred.size(), 1u);
-    EXPECT_GE(sink.deferred[0].completedAt, after_reset);
+    ASSERT_EQ(sink.spans.size(), 1u);
+    EXPECT_GE(sink.spans[0].end, after_reset);
 }
 
 TEST(UcxSplitFailure, TracedChunkRetiresAtOnceWithoutANativeStatus) {
-    DeferringSink sink;
+    RecordingSink sink;
     nixlBackendPostPhases trace = splitPostTrace(sink);
     nixlUcxSplitFailure failure;
     failure.reset();
     EXPECT_TRUE(failure.observe(UCS_OK, trace));
-    EXPECT_TRUE(sink.deferred.empty());
+    EXPECT_TRUE(sink.failures.empty());
     EXPECT_TRUE(trace.active());
 }

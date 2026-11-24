@@ -297,72 +297,13 @@ public:
     }
 
     void
-    deferPhase(const nixl::trace::DeferredPhase &) noexcept override {}
-
-    void
-    recordDeferredPhases() noexcept override {}
+    recordFailedPhase(nixl_trace_phase_t,
+                      nixlTime::us_t,
+                      const nixl::trace::TraceIdentity &,
+                      nixl_status_t) noexcept override {}
 
     mutable int questions = 0;
     std::vector<nixlTime::us_t> timestamps;
-};
-
-class DrainCountingSink final : public nixlBackendTraceSink {
-public:
-    explicit DrainCountingSink(const std::atomic<std::uint64_t> *pending) noexcept
-        : nixlBackendTraceSink(pending) {}
-
-    using nixlBackendTraceSink::recordPhase;
-
-    void
-    recordPhase(nixl_trace_phase_t,
-                nixlTime::us_t,
-                const nixl::trace::TraceIdentity &,
-                std::span<const nixlBackendTraceAttr>,
-                std::string_view) noexcept override {}
-
-    void
-    recordSpan(nixl_trace_span_t,
-               nixl_xfer_op_t,
-               nixlTime::us_t,
-               nixlTime::us_t,
-               const nixl::trace::TraceIdentity &,
-               std::span<const nixlBackendTraceAttr>,
-               std::string_view) noexcept override {}
-
-    [[nodiscard]] const nixl::trace::TraceIdentity *
-    currentIdentity() const noexcept override {
-        return nullptr;
-    }
-
-    [[nodiscard]] std::string_view
-    currentBaggage() const noexcept override {
-        return {};
-    }
-
-    void
-    writeTraceTags(nixlSerDes &,
-                   const nixl::trace::TraceIdentity &,
-                   std::string_view) const override {}
-
-    [[nodiscard]] std::optional<nixl::trace::TraceIdentity>
-    readTraceTags(nixlSerDes &) const override {
-        return std::nullopt;
-    }
-
-    [[nodiscard]] std::string
-    readTraceBaggage(nixlSerDes &) const override {
-        return {};
-    }
-
-    void
-    deferPhase(const nixl::trace::DeferredPhase &) noexcept override {}
-
-    void
-    recordDeferredPhases() noexcept override {
-        ++drains;
-    }
-
-    int drains = 0;
 };
 
 class ThrowingBackend final : public nixl::trace::TraceBackend {
@@ -2505,130 +2446,6 @@ TEST(TracePhaseSink, PostTraceRecordsItsPostsIdentity) {
     }
 }
 
-TEST(TracePhaseSink, DrainAsksTheSinkOnlyWhilePhasesArePending) {
-    std::atomic<std::uint64_t> pending{0};
-    DrainCountingSink sink{&pending};
-
-    nixl::trace::recordDeferredPhases(&sink);
-    EXPECT_EQ(sink.drains, 0);
-
-    pending = 1;
-    nixl::trace::recordDeferredPhases(&sink);
-    EXPECT_EQ(sink.drains, 1);
-}
-
-TEST(TracePhaseSink, DeferredPhaseIsPendingUntilRecorded) {
-    CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 1.0);
-    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-    sink.recordDeferredPhases();
-    const std::uint64_t before = nixl::trace::pendingDeferredPhases.load();
-    nixlBackendPostPhases phases;
-    {
-        const nixl::trace::Scope scope(tracer.get(),
-                                       {testContext(0x3e), nixl::trace::RequestId{0x3e}, 1});
-        phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
-    }
-
-    phases.callbackCompleted(NIXL_SUCCESS);
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before + 1);
-    EXPECT_TRUE(sink.mayHaveDeferredPhases());
-
-    phases.drain();
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
-    for (const CallLog *log : {&a, &b}) {
-        EXPECT_TRUE(std::ranges::any_of(log->emittedEvents, [](const EmittedRecord &event) {
-            return event.name == "nixl::wire.completed";
-        }));
-    }
-}
-
-TEST(TracePhaseSink, DestroyedSinkRecordsItsThreadsDeferredPhases) {
-    CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 1.0);
-    std::uint64_t before = 0;
-    {
-        nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-        sink.recordDeferredPhases();
-        before = nixl::trace::pendingDeferredPhases.load();
-        nixlBackendPostPhases phases;
-        {
-            const nixl::trace::Scope scope(tracer.get(),
-                                           {testContext(0x42), nixl::trace::RequestId{0x42}, 1});
-            phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
-        }
-        phases.callbackCompleted(NIXL_ERR_CANCELED);
-        ASSERT_EQ(nixl::trace::pendingDeferredPhases.load(), before + 1);
-    }
-
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
-    const attr_t canceled{"nixl.status", std::int64_t{NIXL_ERR_CANCELED}};
-    for (const CallLog *log : {&a, &b}) {
-        EXPECT_TRUE(std::ranges::any_of(log->emittedEvents, [&](const EmittedRecord &event) {
-            return (event.name == "nixl::wire.completed") &&
-                (std::ranges::find(event.attrs, canceled) != event.attrs.end());
-        }));
-    }
-}
-
-TEST(TracePhaseSink, ThreadExitReturnsTheCountOfThePhasesItDeferred) {
-    CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 1.0);
-    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-    sink.recordDeferredPhases();
-    const std::uint64_t before = nixl::trace::pendingDeferredPhases.load();
-    std::uint64_t while_deferred = 0;
-    std::thread([&] {
-        nixlBackendPostPhases phases;
-        {
-            const nixl::trace::Scope scope(tracer.get(),
-                                           {testContext(0x43), nixl::trace::RequestId{0x43}, 1});
-            phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
-        }
-        phases.callbackCompleted(NIXL_ERR_CANCELED);
-        while_deferred = nixl::trace::pendingDeferredPhases.load();
-    }).join();
-
-    EXPECT_EQ(while_deferred, before + 1);
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
-    for (const CallLog *log : {&a, &b}) {
-        EXPECT_TRUE(std::ranges::none_of(log->emittedEvents, [](const EmittedRecord &event) {
-            return event.name == "nixl::wire.completed";
-        }));
-    }
-}
-
-TEST(TracePhaseSink, SinkOutlivingItsThreadsQueueLeavesThePendingCountAlone) {
-    CallLog a, b;
-    const auto tracer = makeMockTracer(a, b, 1.0);
-    nixl::trace::TracerPhaseSink sink{*tracer, "UCX"};
-    sink.recordDeferredPhases();
-    const std::uint64_t before = nixl::trace::pendingDeferredPhases.load();
-    nixlBackendPostPhases pending;
-    {
-        const nixl::trace::Scope scope(tracer.get(),
-                                       {testContext(0x44), nixl::trace::RequestId{0x44}, 1});
-        pending.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
-    }
-    pending.callbackCompleted(NIXL_ERR_CANCELED);
-
-    std::thread([&] {
-        thread_local std::optional<nixl::trace::TracerPhaseSink> owner;
-        owner.emplace(*tracer, "UCX");
-        nixlBackendPostPhases phases;
-        {
-            const nixl::trace::Scope scope(tracer.get(),
-                                           {testContext(0x45), nixl::trace::RequestId{0x45}, 1});
-            phases.begin(&*owner, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
-        }
-        phases.callbackCompleted(NIXL_ERR_CANCELED);
-    }).join();
-
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before + 1);
-    sink.recordDeferredPhases();
-    EXPECT_EQ(nixl::trace::pendingDeferredPhases.load(), before);
-}
-
 TEST(TracePhaseSink, CallbackCompletionRecordsAFailuresStatus) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b);
@@ -2643,7 +2460,6 @@ TEST(TracePhaseSink, CallbackCompletionRecordsAFailuresStatus) {
             phases.begin(&sink, NIXL_WRITE, nixl_trace_completion_t::CALLBACK);
         }
         phases.callbackCompleted(status);
-        phases.drain();
     }
 
     for (const CallLog *log : {&a, &b}) {

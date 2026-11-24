@@ -30,19 +30,14 @@
 
 namespace nixl::trace {
 
-extern std::atomic<std::uint64_t> pendingDeferredPhases;
-
 class TracerPhaseSink final : public nixlBackendTraceSink {
 public:
     TracerPhaseSink(CompositeTracer &tracer,
                     std::string backend,
                     std::function<void(std::uint64_t)> on_dropped = {}) noexcept
-        : nixlBackendTraceSink(&pendingDeferredPhases),
-          tracer_(tracer),
+        : tracer_(tracer),
           backend_(std::move(backend)),
           onDropped_(std::move(on_dropped)) {}
-
-    ~TracerPhaseSink() override;
 
     using nixlBackendTraceSink::recordPhase;
 
@@ -66,7 +61,7 @@ public:
     recordFailedPhase(nixl_trace_phase_t phase,
                       nixlTime::us_t timestamp,
                       const TraceIdentity &identity,
-                      nixl_status_t status) noexcept;
+                      nixl_status_t status) noexcept override;
 
     [[nodiscard]] bool
     needsTimestamps() const noexcept override {
@@ -89,12 +84,6 @@ public:
 
     [[nodiscard]] std::string
     readTraceBaggage(nixlSerDes &ser_des) const override;
-
-    void
-    deferPhase(const DeferredPhase &deferred) noexcept override;
-
-    void
-    recordDeferredPhases() noexcept override;
 
 private:
     template<typename Emit>

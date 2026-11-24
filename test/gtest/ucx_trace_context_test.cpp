@@ -167,10 +167,10 @@ public:
     }
 
     void
-    deferPhase(const nixl::trace::DeferredPhase &) noexcept override {}
-
-    void
-    recordDeferredPhases() noexcept override {}
+    recordFailedPhase(nixl_trace_phase_t,
+                      nixlTime::us_t,
+                      const nixl::trace::TraceIdentity &,
+                      nixl_status_t) noexcept override {}
 };
 
 [[nodiscard]] std::string

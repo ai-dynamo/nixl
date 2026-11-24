@@ -394,9 +394,9 @@ identity current on that thread, and a backend reads it from its sink:
   it during the call.
 - Outside those calls or on any other thread it returns null. Reading it at the wrong
   time is not an error, so a mistake shows only as a call that is not traced.
-- The current identity lives with the tracer, and the notification's trace tags and
-  the deferred phases also go through the sink, so a plugin holds no tracing state of
-  its own and traces in a build with `-Ddefault_library=static` too.
+- The current identity lives with the tracer, and the notification's trace tags also
+  go through the sink, so a plugin holds no tracing state of its own and traces in a
+  build with `-Ddefault_library=static` too.
 
 ### Backend phases
 
@@ -500,8 +500,7 @@ under the sender's context, with `nixl.remote_agent` naming the sender, from `tr
 sender's `nixl.xfer_request_id` and `nixl.xfer_execution`, and from `tbag` its
 `nixl.baggage`; a missing or malformed `treq` costs the event only the pair, and a
 `tbag` NIXL would not accept only the baggage. UCX records it inside the active-message
-callback that receives the notification, rather than deferring it as it does
-`nixl::wire.completed` and `nixl::notif.sent`, so that it precedes the notification's
+callback that receives the notification, so that it precedes the notification's
 delivery through `getNotifs`; recording there allocates nothing. An agent with tracing
 off skips the tags without reading them. The event's context thus holds the request's
 trace id and the span id of the sender's `nixl::postXferReq.write` or `.read` span, the
@@ -522,8 +521,8 @@ completes at once, from the flush callback while the progress thread runs, for a
 post split across the thread-pool engine's dedicated workers from its first chunk's
 status check on that chunk's dedicated thread once the other chunks are done, and
 otherwise from the first status check that finds it complete. Its `notif.sent` is
-recorded at the end of that call, or right after the progress call that ran the
-callback, once per notifying post, with that post's execution number.
+recorded when the notification is posted, once per notifying post, with that post's
+execution number.
 UCX records `nixl::wire.completed` only where a thread other
 than the application's sees a transfer complete: on the thread-pool engine, for
 a post split across its dedicated workers (at least `split_batch_size`

@@ -28,7 +28,6 @@
  */
 
 #include <array>
-#include <atomic>
 #include <cstddef>
 #include <cstdint>
 #include <optional>
@@ -44,10 +43,6 @@
 
 class nixlSerDes;
 class nixlBackendTraceSink;
-
-namespace nixl::trace {
-struct DeferredPhase;
-} // namespace nixl::trace
 
 /**
  * @brief Fixed set of backend phases.
@@ -286,26 +281,13 @@ public:
     readTraceBaggage(nixlSerDes &ser_des) const = 0;
 
     virtual void
-    deferPhase(const nixl::trace::DeferredPhase &deferred) noexcept = 0;
-
-    virtual void
-    recordDeferredPhases() noexcept = 0;
-
-    [[nodiscard]] bool
-    mayHaveDeferredPhases() const noexcept {
-        return (pendingDeferredPhases_ == nullptr) ||
-            (pendingDeferredPhases_->load(std::memory_order_relaxed) != 0);
-    }
+    recordFailedPhase(nixl_trace_phase_t phase,
+                      nixlTime::us_t timestamp,
+                      const nixl::trace::TraceIdentity &identity,
+                      nixl_status_t status) noexcept = 0;
 
 protected:
     nixlBackendTraceSink() noexcept = default;
-
-    explicit nixlBackendTraceSink(
-        const std::atomic<std::uint64_t> *pending_deferred_phases) noexcept
-        : pendingDeferredPhases_(pending_deferred_phases) {}
-
-private:
-    const std::atomic<std::uint64_t> *pendingDeferredPhases_ = nullptr;
 };
 
 #if defined(NIXL_TRACE_ENABLED)
@@ -382,6 +364,15 @@ public:
     }
 
     void
+    recordFailedAt(nixl_trace_phase_t phase,
+                   nixlTime::us_t timestamp,
+                   nixl_status_t status) const noexcept {
+        if (sink_ != nullptr) {
+            sink_->recordFailedPhase(phase, timestamp, identity_, status);
+        }
+    }
+
+    void
     recordSpan(nixl_trace_span_t span,
                nixl_xfer_op_t operation,
                nixlTime::us_t start,
@@ -446,26 +437,6 @@ public:
 
 namespace nixl::trace {
 
-inline constexpr std::size_t deferredPhaseCapacity = 64;
-
-/**
- * @brief A phase deferred with deferPhase(). Deferring
- *        @ref nixl_trace_phase_t::WIRE_COMPLETED also records
- *        @ref nixl_trace_span_t::WIRE_INFLIGHT for `operation`, from
- *        `inflightSince` to `completedAt`, so a backend sets all three; left at
- *        their defaults, the span runs from 0 to 0. A `status` other than
- *        `NIXL_SUCCESS` records the phase with it as `nixl.status`.
- */
-struct DeferredPhase {
-    nixlBackendPostTrace trace;
-    nixl_trace_phase_t phase = nixl_trace_phase_t::WIRE_COMPLETED;
-    nixl_xfer_op_t operation = NIXL_WRITE;
-    nixlTime::us_t inflightSince = 0;
-    nixlTime::us_t phaseAt = 0;
-    nixlTime::us_t completedAt = 0;
-    nixl_status_t status = NIXL_SUCCESS;
-};
-
 #if defined(NIXL_TRACE_ENABLED)
 
 inline void
@@ -483,27 +454,6 @@ getTraceTags(nixlSerDes &ser_des, const nixlBackendTraceSink *sink) {
 [[nodiscard]] inline std::string
 getTraceBaggage(nixlSerDes &ser_des, const nixlBackendTraceSink *sink) {
     return (sink != nullptr) ? sink->readTraceBaggage(ser_des) : std::string{};
-}
-
-/**
- * @brief Queues @p deferred on the calling thread, or records it at once when
- *        `deferredPhaseCapacity` phases are already queued there. The entry
- *        keeps the post's sink, so the same thread must call
- *        recordDeferredPhases() before that sink is destroyed.
- */
-inline void
-deferPhase(const DeferredPhase &deferred) noexcept {
-    if (deferred.trace.active()) {
-        deferred.trace.sink()->deferPhase(deferred);
-    }
-}
-
-/** @brief Records the phases the calling thread deferred, in order, and empties its queue. */
-inline void
-recordDeferredPhases(nixlBackendTraceSink *sink) noexcept {
-    if ((sink != nullptr) && sink->mayHaveDeferredPhases()) {
-        sink->recordDeferredPhases();
-    }
 }
 
 inline void
@@ -530,12 +480,6 @@ getTraceTags(nixlSerDes &, const nixlBackendTraceSink *) noexcept {
 getTraceBaggage(nixlSerDes &, const nixlBackendTraceSink *) noexcept {
     return {};
 }
-
-inline void
-deferPhase(const DeferredPhase &) noexcept {}
-
-inline void
-recordDeferredPhases(nixlBackendTraceSink *) noexcept {}
 
 inline void
 recordNotifReceived(const nixlBackendPostTrace &,
@@ -606,31 +550,16 @@ public:
 
     void
     callbackCompleted(nixl_status_t status) const noexcept {
-        if (!completesOnCallback_) {
-            return;
+        if (completesOnCallback_) {
+            completed(status);
         }
-        const nixlTime::us_t phase_at = trace_.now();
-        nixl::trace::deferPhase({.trace = trace_,
-                                 .phase = nixl_trace_phase_t::WIRE_COMPLETED,
-                                 .operation = operation_,
-                                 .inflightSince = inflightSince_,
-                                 .phaseAt = phase_at,
-                                 .completedAt = (phase_at != 0) ? phase_at : nixlTime::getUs(),
-                                 .status = status});
     }
 
     void
     notifSent(nixl_status_t status) const noexcept {
-        if (trace_.active() && ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG))) {
-            nixl::trace::deferPhase({.trace = trace_,
-                                     .phase = nixl_trace_phase_t::NOTIF_SENT,
-                                     .phaseAt = trace_.now()});
+        if ((status == NIXL_SUCCESS) || (status == NIXL_IN_PROG)) {
+            trace_.record(nixl_trace_phase_t::NOTIF_SENT);
         }
-    }
-
-    void
-    drain() const noexcept {
-        nixl::trace::recordDeferredPhases(trace_.sink());
     }
 
     [[nodiscard]] completion_time_t
@@ -649,14 +578,9 @@ public:
             recordCompleted(at);
             return;
         }
-        nixl::trace::deferPhase({.trace = trace_,
-                                 .phase = nixl_trace_phase_t::WIRE_COMPLETED,
-                                 .operation = operation_,
-                                 .inflightSince = inflightSince_,
-                                 .phaseAt = at.phaseAt,
-                                 .completedAt = at.completedAt,
-                                 .status = status});
-        nixl::trace::recordDeferredPhases(trace_.sink());
+        trace_.recordFailedAt(nixl_trace_phase_t::WIRE_COMPLETED, at.phaseAt, status);
+        trace_.recordSpan(
+            nixl_trace_span_t::WIRE_INFLIGHT, operation_, inflightSince_, at.completedAt);
     }
 
 private:
@@ -714,9 +638,6 @@ public:
 
     void
     notifSent(nixl_status_t) const noexcept {}
-
-    void
-    drain() const noexcept {}
 
     [[nodiscard]] constexpr completion_time_t
     completionTime() const noexcept {

@@ -616,17 +616,13 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     }
 
     int_handle->trace.submitted();
-    ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
-    int_handle->trace.drain();
-    return ret;
+    return int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const
 {
     const auto int_handle = static_cast<nixlUcxBackendReqH *>(handle);
-    const nixl_status_t status = int_handle->status();
-    int_handle->trace.drain();
-    return status;
+    return int_handle->status();
 }
 
 nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
