@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
+            echo "  --build-nixl-ep: Include the NIXL EP example (sm_90 or newer) and the experimental topology-aware API shell"
             echo "  --torch-version: Torch version to build the wheel for (default: $TORCH_VERSION)"
             echo "  --help: Show this help message"
             echo ""
