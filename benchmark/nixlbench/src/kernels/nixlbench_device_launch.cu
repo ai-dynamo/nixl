@@ -118,8 +118,8 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
 
         nixl_status_t put_status = NIXL_SUCCESS;
         for (size_t region_idx = 0; region_idx < params.numRegions; ++region_idx) {
-            const bool submit = (region_idx + 1) % params.putsPerSubmit == 0 ||
-                region_idx + 1 == params.numRegions;
+            const bool submit =
+                (region_idx + 1) % params.putsPerSubmit == 0 || region_idx + 1 == params.numRegions;
             const uint64_t flags = submit ? 0 : nixl_gpu_flags::defer;
             put_status = nixlbenchPostPut<Level>(
                 params, region_base + region_idx, channel_id, flags, xfer_status);
@@ -200,11 +200,9 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
     }
 
     if (block_threads <= kWarpSize) {
-        nixlbenchPutKernel<nixl_gpu_level_t::THREAD>
-            <<<1, block_threads, 0, nullptr>>>(params);
+        nixlbenchPutKernel<nixl_gpu_level_t::THREAD><<<1, block_threads, 0, nullptr>>>(params);
     } else {
-        nixlbenchPutKernel<nixl_gpu_level_t::WARP>
-            <<<1, block_threads, 0, nullptr>>>(params);
+        nixlbenchPutKernel<nixl_gpu_level_t::WARP><<<1, block_threads, 0, nullptr>>>(params);
     }
 
     cudaError_t cuda_err = cudaGetLastError();
