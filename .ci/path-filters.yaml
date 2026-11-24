@@ -23,6 +23,7 @@ components:
     - contrib/**
     - examples/**
     - licenses/**
+    - runtime/**
     - src/**
     - subprojects/**
     - test/**
