@@ -103,9 +103,11 @@ class ElasticBuffer {
     using CombineResult = std::tuple<std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>;
 
     enum class AFDRole { Attention, FFN };
+    static constexpr int kFP8ScaleBlock = 128;
 
     struct AFDConfig {
         int hidden, num_topk, token_capacity, num_attention_ranks;
+        bool fp8_dispatch;
         AFDRole role;
         topology::ScaleupMask live_mask;
         torch::Tensor topology_tensor;
@@ -273,7 +275,7 @@ public:
     // with one stream-ordered copy (after the transport's view swap when peers changed). Membership: see `topology.cuh`
 
     void configure_afd(const std::vector<int>& attention_ranks, const std::vector<int>& ffn_ranks,
-                       int hidden, int num_topk, int token_capacity) {
+                       int hidden, int num_topk, int token_capacity, bool fp8_dispatch) {
         EP_HOST_ASSERT(not afd and not adaptive_num_channels_per_sm and "AFD membership is configured once before dispatch");
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                        "Configure AFD outside CUDA graph capture");
@@ -282,7 +284,7 @@ public:
                        "AFD needs both roles in one NVLink domain");
         EP_HOST_ASSERT(num_experts_per_rank > 0 and num_topk > 0 and num_topk <= 32 and "Invalid AFD expert or top-k count");
         EP_HOST_ASSERT(hidden > 0 and hidden <= jit::device_runtime->get_num_smem_bytes() / sizeof(nv_bfloat16) and
-                       hidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0 and "Invalid AFD BF16 hidden size");
+                       hidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0 and "Invalid AFD hidden size for BF16 combine");
         EP_HOST_ASSERT(token_capacity > 0 and
                        static_cast<int64_t>(token_capacity) + kNumMaxChannels <=
                            std::numeric_limits<int>::max() / (max_num_scaleout_ranks * max_num_scaleup_ranks) and
@@ -318,7 +320,7 @@ public:
         auto descriptor = torch::empty({static_cast<int64_t>(sizeof(device_topology))}, topology_tensor.options());
         CUDA_RUNTIME_CHECK(cudaMemcpy(descriptor.data_ptr(), &device_topology, sizeof(device_topology), cudaMemcpyHostToDevice));
         const auto role = device_topology.attention_mask.test(scaleup_rank_idx) ? AFDRole::Attention : AFDRole::FFN;
-        afd.emplace(AFDConfig{hidden, num_topk, token_capacity, static_cast<int>(attention_ranks.size()),
+        afd.emplace(AFDConfig{hidden, num_topk, token_capacity, static_cast<int>(attention_ranks.size()), fp8_dispatch,
                               role, live_mask, std::move(descriptor)});
     }
 
@@ -817,10 +819,11 @@ public:
 
     DispatchResult dispatch_send(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                  const std::optional<torch::Tensor>& topk_weights,
-                                 int num_max_tokens_per_rank, int expert_alignment, int num_sms) const {
+                                 int num_max_tokens_per_rank, int expert_alignment, int num_sms,
+                                 const std::optional<torch::Tensor>& sf = std::nullopt) const {
         require_afd_role(AFDRole::Attention);
         return dispatch_internal(
-            x, std::nullopt, topk_idx, topk_weights, std::nullopt, num_max_tokens_per_rank, expert_alignment, num_sms,
+            x, sf, topk_idx, topk_weights, std::nullopt, num_max_tokens_per_rank, expert_alignment, num_sms,
             std::nullopt, std::nullopt, false, false, true, false, false, false, false, false, 0, kSend);
     }
 
@@ -900,12 +903,13 @@ private:
         const bool is_recv = direction == kRecv;
         EP_HOST_ASSERT(x.has_value() == (not is_recv) and topk_idx.has_value() == (not is_recv));
         if (afd) {
-            EP_HOST_ASSERT(not do_expand and not do_zero_padding and not zero_copy and not sf and
-                           not use_tma_aligned_col_major_sf and "AFD dispatch uses compact, ordinary-copy BF16");
+            EP_HOST_ASSERT(not do_expand and not do_zero_padding and not zero_copy and
+                           not use_tma_aligned_col_major_sf and "AFD dispatch uses compact, ordinary-copy rows");
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
             EP_HOST_ASSERT(expert_alignment == 1 and "Compact AFD dispatch requires expert_alignment=1");
             EP_HOST_ASSERT(not is_recv or not topk_weights);
             EP_HOST_ASSERT(not is_send or (do_handle_copy and not do_cpu_sync and not cumulative_local_expert_recv_stats) and "Invalid AFD dispatch send options");
+            EP_HOST_ASSERT((not is_send or sf.has_value() == afd->fp8_dispatch) and "AFD dispatch scales must match the configured wire");
         }
         // AFD endpoints may choose different call buckets. Writes and source-token IDs use the shared capacity.
         const int wire_token_capacity = afd ? afd->token_capacity : num_max_tokens_per_rank;
@@ -934,7 +938,8 @@ private:
         const auto [num_tokens, num_cols] = is_recv ? std::make_tuple(0, afd->hidden) : get_shape<2>(*x);
         const bool nvfp4 = x and x->scalar_type() == torch::kByte;
         const int hidden = nvfp4 ? 2 * num_cols : num_cols;
-        const int num_hidden_bytes = num_cols * (is_recv ? sizeof(nv_bfloat16) : x->element_size());
+        const auto afd_dtype = afd and afd->fp8_dispatch ? c10::ScalarType::Float8_e4m3fn : torch::kBFloat16;
+        const int num_hidden_bytes = num_cols * (is_recv ? c10::elementSize(afd_dtype) : x->element_size());
         EP_HOST_ASSERT((not nvfp4 or (sf.has_value() and hidden % 64 == 0)) and "NVFP4 dispatch takes (codes [tokens, hidden / 2] uint8, scales [tokens, hidden / 64] int32 packs) with hidden % 64 == 0");
         EP_HOST_ASSERT(not (nvfp4 and use_tma_aligned_col_major_sf) and "NVFP4 scales are returned row-major only");
         // Fixed slots: the expert count of the live world is its rank count times the slots per rank
@@ -946,7 +951,7 @@ private:
             EP_HOST_ASSERT((x->size(1) * x->element_size()) % sizeof(int4) == 0);
             EP_HOST_ASSERT(num_tokens <= num_max_tokens_per_rank);
             if (is_send) {
-                EP_HOST_ASSERT(x->scalar_type() == torch::kBFloat16 and hidden == afd->hidden and
+                EP_HOST_ASSERT(x->scalar_type() == afd_dtype and hidden == afd->hidden and
                                x->get_device() == comm_stream.device_index() and "Invalid AFD dispatch payload");
             }
         }
@@ -961,7 +966,7 @@ private:
         }
 
         // Check SF stuffs
-        int num_sf_packs = 0;
+        int num_sf_packs = is_recv and afd->fp8_dispatch ? hidden / kFP8ScaleBlock : 0;
         void* sf_ptr = nullptr;
         int sf_token_stride = 0, sf_hidden_stride = 0;
         if (sf.has_value()) {
@@ -971,6 +976,8 @@ private:
             EP_HOST_ASSERT(sf->is_cuda());
             EP_HOST_ASSERT(sf->element_size() == sizeof(sf_pack_t));
             EP_HOST_ASSERT((not nvfp4 or num_sf_packs_ == hidden / 64) and "NVFP4 scales must be [tokens, hidden / 64] int32 packs (an FP8 payload is float8_e4m3fn, not uint8)");
+            EP_HOST_ASSERT(not is_send or (sf->scalar_type() == torch::kFloat and sf->get_device() == x->get_device() and
+                           num_sf_packs_ == hidden / kFP8ScaleBlock) and "AFD FP8 scales must be FP32 [tokens, hidden / 128]");
             num_sf_packs = num_sf_packs_;
             sf_ptr = sf->data_ptr();
             sf_token_stride = sf->stride(0);
@@ -1189,7 +1196,7 @@ private:
         if (is_send) {
             stream_control_before_epilogue(previous_event_before_epilogue);
             const auto event = stream_control_epilogue(
-                {x, topk_idx, topk_weights, copied_topk_idx, psum_num_recv_tokens_per_scaleup_rank,
+                {x, sf, topk_idx, topk_weights, copied_topk_idx, psum_num_recv_tokens_per_scaleup_rank,
                  psum_num_recv_tokens_per_expert, num_unaligned_recv_tokens_per_expert},
                 compute_stream, allocate_on_comm_stream, async_with_compute_stream);
             return {std::nullopt, std::nullopt, std::nullopt, std::nullopt, copied_topk_idx, 0, 0, {},
@@ -1263,7 +1270,7 @@ private:
         // `recv_src_metadata` includes source token indices and buffer slot indices
         // Zero copy: views of the slot (`from_blob`, no deleter: the slot rule protects them), sliced to the count
         const auto num_allocated_tokens = do_expand ? num_expanded_tokens : num_recv_tokens;
-        const auto x_options = x ? x->options() : int_options.dtype(torch::kBFloat16);
+        const auto x_options = x ? x->options() : int_options.dtype(afd_dtype);
         const auto index_options = topk_idx ? topk_idx->options() : int_options.dtype(c10::CppTypeToScalarType<topk_idx_t>::value);
         torch::Tensor recv_x, recv_src_metadata;
         auto recv_sf = std::optional<torch::Tensor>();
@@ -1301,7 +1308,7 @@ private:
             recv_x = torch::empty({num_allocated_tokens, num_cols}, x_options);
             recv_src_metadata = torch::empty({num_recv_tokens, num_topk + 2},
                                              torch::TensorOptions(torch::kCUDA).dtype(torch::kInt));
-            if (sf.has_value()) {
+            if (sf or num_sf_packs > 0) {
                 if (not use_tma_aligned_col_major_sf) {
                     recv_sf_token_stride = num_sf_packs, recv_sf_hidden_stride = 1;
                 } else {
@@ -1310,7 +1317,7 @@ private:
                 }
                 recv_sf = torch::empty_strided({num_allocated_tokens, num_sf_packs},
                                                {recv_sf_token_stride, recv_sf_hidden_stride},
-                                               sf->options());
+                                               sf ? sf->options() : int_options.dtype(torch::kFloat));
                 recv_sf_ptr = recv_sf->data_ptr();
             }
             if (not do_expand) {
@@ -1623,7 +1630,10 @@ static void register_apis(pybind11::module_& m) {
         .def("has_zero_copy", &ElasticBuffer::has_zero_copy)
         .def("get_zero_copy_num_slots", &ElasticBuffer::get_zero_copy_num_slots)
         .def("dispatch", &ElasticBuffer::dispatch)
-        .def("dispatch_send", &ElasticBuffer::dispatch_send)
+        .def("dispatch_send", &ElasticBuffer::dispatch_send,
+             pybind11::arg("x"), pybind11::arg("topk_idx"), pybind11::arg("topk_weights"),
+             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
+             pybind11::arg("sf") = pybind11::none())
         .def("dispatch_recv", &ElasticBuffer::dispatch_recv,
              pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
              pybind11::arg("do_cpu_sync"), pybind11::arg("with_weights") = false)

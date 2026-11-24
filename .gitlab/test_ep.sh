@@ -115,6 +115,7 @@ fi
     unset UCX_NET_DEVICES
     export UCX_TLS=^rc_gda
     "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd.py --perf-repeats 0
+    "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd_fp8.py
 )
 
 echo "==== nixl_ep elastic tests done ===="

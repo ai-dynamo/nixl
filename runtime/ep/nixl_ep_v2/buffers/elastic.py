@@ -376,7 +376,8 @@ class ElasticBuffer:
                 If left at 0 with explicit `num_bytes`, supply it when calling dispatch.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token for sizing payload capacity; 0 reserves for 32.
-            use_fp8_dispatch: size for FP8 dispatch in regular EP. AFD currently requires BF16.
+            use_fp8_dispatch: size for FP8 dispatch. For AFD, all endpoints must agree on this flag;
+                attention sends prequantized FP8 rows and FP32 scales when enabled, or BF16 rows by default.
             num_experts_per_rank: the fixed number of expert slots on every rank, in every live world: the expert count
                 of a world is its rank count times this, and slot `e` belongs to rank `e // num_experts_per_rank` of the
                 live world's packed numbering. Required (positive) for `dispatch` / `combine`; 0 for a buffer that only
@@ -415,7 +416,7 @@ class ElasticBuffer:
             zc_use_nvfp4_dispatch: with a zero-copy arena, lay the arena out for the NVFP4 wire (`hidden // 2` code bytes and
                 `hidden // 64` scale packs per row, `hidden % 64 == 0`); the two `zc_` flags exclude each other (also without an
                 arena, where neither lays anything out: `dispatch` accepts any wire's payload on any buffer).
-            role: fixed attention or FFN endpoint for eager BF16 AFD. The default enables regular EP.
+            role: fixed attention or FFN endpoint for eager AFD. The default enables regular EP.
             dynamic_take: the dynamic token take of the direct-mode kernels, OFF by default (`False`): the direct paths keep
                 their static token partition unless the caller asks for the take. `True` turns it on (measured faster or equal
                 at every batch size and active SM count on 1x16, where the static shares meet the per-SM egress arbitration
@@ -440,6 +441,7 @@ class ElasticBuffer:
         self._afd_pending_handle: Optional[EPHandle] = None
         self._afd_hidden = hidden
         self._afd_topk = num_topk
+        self._afd_use_fp8_dispatch = use_fp8_dispatch
         self.group = group
         if group is not None:
             if rank_idx not in (None, group.rank()) or num_ranks not in (
@@ -476,9 +478,8 @@ class ElasticBuffer:
         )
         afd_config = None
         if self.role is not None:
-            compact_bf16 = (
-                not use_fp8_dispatch
-                and not num_zero_copy_slots
+            compact_wire = (
+                not num_zero_copy_slots
                 and not deterministic
                 and connect_group
                 and not zc_use_fp8_dispatch
@@ -486,7 +487,8 @@ class ElasticBuffer:
             )
             afd_config = (
                 self.role.value,
-                compact_bf16,
+                compact_wire,
+                use_fp8_dispatch,
                 hidden,
                 num_topk,
                 num_experts_per_rank,
@@ -522,13 +524,15 @@ class ElasticBuffer:
                 )
             if (
                 num_group_scaleout_ranks != 1
-                or not compact_bf16
+                or not compact_wire
                 or min(hidden, num_topk, num_experts_per_rank, num_max_tokens_per_rank)
                 <= 0
             ):
                 raise ValueError(
-                    "AFD requires connected single-domain compact eager BF16 buffers with positive dimensions"
+                    "AFD requires connected single-domain compact eager BF16 or FP8 buffers with positive dimensions"
                 )
+            if use_fp8_dispatch and hidden % 128:
+                raise ValueError("AFD FP8 hidden size must be divisible by 128")
 
         # The declared maximum world and this rank's coordinates in it: explicit values win, else the cohort's layout
         max_num_scaleout_ranks = cast(
@@ -710,6 +714,7 @@ class ElasticBuffer:
                         hidden,
                         num_topk,
                         num_max_tokens_per_rank,
+                        use_fp8_dispatch,
                     )
                 except BaseException:
                     # The committed topology still contains only this rank.
@@ -809,8 +814,8 @@ class ElasticBuffer:
         """
         if role is not None:
             AFDRole(role)
-            if use_fp8_dispatch:
-                raise ValueError("AFD currently supports BF16 dispatch")
+            if use_fp8_dispatch and hidden % 128:
+                raise ValueError("AFD FP8 hidden size must be divisible by 128")
         if max_num_scaleout_ranks == 0 or max_num_scaleup_ranks == 0:
             group_domains, group_positions = get_logical_domain_size(
                 group,
@@ -1540,7 +1545,7 @@ class ElasticBuffer:
 
     def dispatch_send(
         self,
-        x: torch.Tensor,
+        x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
         topk_idx: torch.Tensor,
         topk_weights: Optional[torch.Tensor] = None,
         *,
@@ -1550,21 +1555,14 @@ class ElasticBuffer:
     ) -> Tuple[EPHandle, EventOverlap]:
         """Send attention rows and retain the local handle for combine_recv.
 
+        FP8 send takes prequantized E4M3FN rows and FP32 block-128 scales.
         Each buffer supports one outstanding AFD exchange. The caller's CUDA
         stream waits for communication, and this send waits for FFN receivers
         to enter dispatch_recv. When switching streams, order the streams
         explicitly before using data or handles from this call.
         """
         self._require_role(AFDRole.ATTENTION)
-        if (
-            not isinstance(x, torch.Tensor)
-            or x.dtype != torch.bfloat16
-            or x.ndim != 2
-            or x.shape[1] != self._afd_hidden
-        ):
-            raise ValueError(
-                "AFD dispatch requires BF16 rows with the configured hidden size"
-            )
+        x, sf = self._afd_dispatch_payload(x)
         if topk_idx.shape != (len(x), self._afd_topk):
             raise ValueError(
                 "AFD route dimensions disagree with the buffer configuration"
@@ -1573,7 +1571,7 @@ class ElasticBuffer:
             num_max_tokens_per_rank, expert_alignment, do_expand, len(x)
         )
         result = self.runtime.dispatch_send(
-            x, topk_idx, topk_weights, bucket, 1, num_sms
+            x, topk_idx, topk_weights, bucket, 1, num_sms, sf
         )
         _, _, _, _, handle, event = self._unpack_result(
             result, False, 1, bucket, num_sms, False
@@ -1589,10 +1587,15 @@ class ElasticBuffer:
         num_max_tokens_per_rank: Optional[int] = None,
         expert_alignment: Optional[int] = None,
     ) -> Tuple[
-        torch.Tensor, torch.Tensor, Optional[torch.Tensor], EPHandle, EventOverlap
+        Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
+        torch.Tensor,
+        Optional[torch.Tensor],
+        EPHandle,
+        EventOverlap,
     ]:
         """Receive one compact row per routed source token with its local expert IDs.
 
+        The FP8 payload is a pair of E4M3FN rows and row-major FP32 scales.
         Set with_weights=True to return routing weights; omitted send weights are ones.
         The receive layout uses the configured capacity even if this call
         passes a smaller bucket. With do_cpu_sync=False, storage holds
@@ -1609,7 +1612,33 @@ class ElasticBuffer:
         recv_x, recv_sf, recv_ids, recv_weights, handle, event = self._unpack_result(
             result, False, 1, bucket, num_sms, do_cpu_sync
         )
-        return recv_x, recv_ids, recv_weights, handle, event
+        payload = (recv_x, recv_sf) if recv_sf is not None else recv_x
+        return payload, recv_ids, recv_weights, handle, event
+
+    def _afd_dispatch_payload(self, payload):
+        fp8 = self._afd_use_fp8_dispatch
+        if fp8 and (not isinstance(payload, tuple) or len(payload) != 2):
+            raise ValueError(
+                "AFD FP8 dispatch requires a pair of FP8 rows and FP32 scales"
+            )
+        x, sf = payload if fp8 else (payload, None)
+        dtype = torch.float8_e4m3fn if fp8 else torch.bfloat16
+        if (
+            not isinstance(x, torch.Tensor)
+            or x.dtype != dtype
+            or x.ndim != 2
+            or x.shape[1] != self._afd_hidden
+        ):
+            raise ValueError(
+                f"AFD dispatch requires {dtype} rows with the configured hidden size"
+            )
+        if fp8 and (
+            not isinstance(sf, torch.Tensor)
+            or sf.dtype != torch.float32
+            or sf.shape != (len(x), self._afd_hidden // 128)
+        ):
+            raise ValueError("AFD FP8 scales must be FP32 [tokens, hidden / 128]")
+        return x, sf
 
     def _dispatch_sms(self, num_topk, num_sms):
         return self._adaptive_active_sms(

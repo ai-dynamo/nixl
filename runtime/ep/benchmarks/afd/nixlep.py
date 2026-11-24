@@ -1,6 +1,6 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Compact eager BF16 benchmark adapter for nixlEP."""
+"""Compact eager benchmark adapter for nixlEP."""
 
 import hashlib
 from pathlib import Path
@@ -14,8 +14,8 @@ class Arm:
     def __init__(self, name, config, overrides, args, group):
         if overrides:
             raise ValueError(f"unsupported nixlEP options: {sorted(overrides)}")
-        if args.execution != "eager" or config["payload"] != "bf16":
-            raise ValueError("nixlEP requires --execution eager --payload bf16")
+        if args.execution != "eager":
+            raise ValueError("nixlEP requires --execution eager")
         if config["ffn_ranks_per_domain"] not in (0, config["ffn_ranks"]):
             raise ValueError("nixlEP requires a single NVLink domain")
         if config["num_sms"]:
@@ -34,17 +34,19 @@ class Arm:
             hidden=config["hidden_size"],
             num_topk=config["top_k"],
             num_experts_per_rank=config["num_experts"] // ffn,
+            use_fp8_dispatch=config["payload"] == "fp8",
             explicitly_destroy=True,
         )
 
     def prepare(self, n, x, ids, weights, scale, graph, counts):
         ids = ids.to(ep.topk_idx_t)
+        payload = x if scale is None else (x, scale)
         self.result = None
 
         def exchange(verify=False):
             if self.role == "attention":
                 source_handle, _ = self.buffer.dispatch_send(
-                    x, ids, weights, num_max_tokens_per_rank=n
+                    payload, ids, weights, num_max_tokens_per_rank=n
                 )
                 self.result, _, _ = self.buffer.combine_recv(source_handle)
             else:
@@ -57,7 +59,8 @@ class Arm:
                 # coalesce selections; their order can change on every exchange.
                 reply = (local_ids >= 0).sum(1, keepdim=True).to(torch.bfloat16)
                 self.buffer.combine_send(
-                    reply.expand_as(rows).contiguous(), worker_handle
+                    reply.expand(-1, self.config["hidden_size"]).contiguous(),
+                    worker_handle,
                 )
                 if verify:
                     count = int(worker_handle.num_recv_tokens_device.item())
