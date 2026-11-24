@@ -1038,6 +1038,8 @@
       browse them at
       <a href='https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local/release'>sw-nbu-swx-nixl-pypi-local/release</a>.
       Each green build also links its own folder from the build description<br/>
+      • A green release run is then compared against the previous PyPI release; the wheel
+      inspection report lands next to the wheels and is mailed to <code>MAIL_TO</code><br/>
       • A run that does not end green deletes its release folder: a partial wheel set has to
       be rebuilt anyway, and leaving it would make the poller skip the commit<br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -1064,7 +1066,7 @@
       - string:
           name: "MAIL_TO"
           default: "nixl-ci-alerts@exchange.nvidia.com"
-          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
+          description: "Recipient(s) for the failure report, sent only when the build is not green, and for the wheel inspection report of a release run."
       - string:
           name: "ci_refspec"
           default: "{jjb_branch}"
