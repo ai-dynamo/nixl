@@ -37,7 +37,7 @@ def _load_ep_module() -> str:
             ) from e
     # No CUDA stack detected — use whatever backend is installed.
     errors: list[BaseException] = []
-    for mod_name in ("nixl_ep_cu13", "nixl_ep_cu12"):
+    for mod_name in ("nixl_ep_cu13",):
         try:
             return importlib.import_module(mod_name).__name__
         except (ImportError, OSError) as e:

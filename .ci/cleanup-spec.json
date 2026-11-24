@@ -64,7 +64,8 @@
             { "path": { "$match": "verification/**" } },
             { "$or": [
               { "name": { "$match": "*.whl" } },
-              { "name": "build-manifest.json" }
+              { "name": "build-manifest.json" },
+              { "name": { "$match": "wheel-inspection.*" } }
             ]},
             { "modified": { "$before": "3mo" } }
           ]

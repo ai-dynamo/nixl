@@ -21,6 +21,8 @@
 #include <cctype>
 #include <chrono>
 #include <cstring>
+/* CUDA/HIP: include only via headers that load toml++ before HIP (see utils.h).
+ * Early hip_runtime.h breaks toml++ on GCC + ROCm (__noinline__ macro). */
 #include <fcntl.h>
 #include <filesystem>
 #include <iomanip>
@@ -49,9 +51,7 @@
 
 static nixl_mem_t
 resolveVramSegment() {
-#if HAVE_CUDA
-    return VRAM_SEG;
-#elif HAVE_ROCM
+#if HAVE_CUDA || HAVE_ROCM
     return VRAM_SEG;
 #else
     if (neuronCoreCount() > 0) return VRAM_SEG;
@@ -119,10 +119,35 @@ getRandomSeed() {
     return seed;
 }
 
+#if HAVE_CUDA
+/*
+ * Backends such as UCX can only use CUDA IPC with a VRAM peer when the DRAM
+ * process has an active CUDA context, which it would otherwise never create.
+ */
+static void
+initCudaContext() {
+    int num_devices = 0;
+
+    if ((cudaGetDeviceCount(&num_devices) != cudaSuccess) || (num_devices == 0)) {
+        (void)cudaGetLastError();
+        return;
+    }
+
+    CHECK_CUDA_ERROR(cudaFree(nullptr), "Failed to create CUDA context");
+}
+#endif
+
 xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices)
     : xferBenchWorker(),
       default_rng_(getRandomSeed()) {
     seg_type = GET_SEG_TYPE(isInitiator());
+
+#if HAVE_CUDA
+    if ((xferBenchConfig::initiator_seg_type == "VRAM") ||
+        (xferBenchConfig::target_seg_type == "VRAM")) {
+        initCudaContext();
+    }
+#endif
 
     int rank;
     std::string backend_name;
@@ -235,6 +260,10 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "GDS_MT backend" << std::endl;
         backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
         std::cout << "GDS MT Num threads: " << xferBenchConfig::gds_mt_num_threads << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_AIS)) {
+        std::cout << "AIS backend" << std::endl;
+        backend_params["thread_count"] = std::to_string(xferBenchConfig::gds_mt_num_threads);
+        std::cout << "AIS thread_count: " << xferBenchConfig::gds_mt_num_threads << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_POSIX)) {
         if (!xferBenchConfig::plugin_parameters) {
             // Preserve the existing flags-only POSIX parameter assembly.
@@ -402,6 +431,33 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
         std::cout << "INFINIA backend (plugin will use RED_* environment variables, "
                      "NIXL_CONFIG_FILE, or defaults)"
                   << std::endl;
+    } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_DAOS)) {
+        backend_params["pool"] = xferBenchConfig::daos_pool;
+        backend_params["container"] = xferBenchConfig::daos_container;
+        backend_params["chunk_size"] = std::to_string(xferBenchConfig::daos_chunk_size);
+        backend_params["oclass_id"] = std::to_string(xferBenchConfig::daos_oclass_id);
+        backend_params["num_event_queues"] = std::to_string(xferBenchConfig::daos_num_event_queues);
+        backend_params["max_inflight_per_queue"] =
+            std::to_string(xferBenchConfig::daos_max_inflight_per_queue);
+        backend_params["submission_batch_size"] =
+            std::to_string(xferBenchConfig::daos_submission_batch_size);
+        backend_params["completion_batch_size"] =
+            std::to_string(xferBenchConfig::daos_completion_batch_size);
+        if (!xferBenchConfig::daos_system.empty()) {
+            backend_params["system"] = xferBenchConfig::daos_system;
+        }
+        if (!xferBenchConfig::daos_object_class.empty()) {
+            backend_params["object_class"] = xferBenchConfig::daos_object_class;
+        }
+        if (!xferBenchConfig::daos_object_class_hint.empty()) {
+            backend_params["object_class_hint"] = xferBenchConfig::daos_object_class_hint;
+        }
+        if (!xferBenchConfig::daos_progress_cpu_affinity.empty()) {
+            backend_params["progress_cpu_affinity"] = xferBenchConfig::daos_progress_cpu_affinity;
+        }
+        std::cout << "DAOS backend: pool=" << xferBenchConfig::daos_pool
+                  << ", container=" << xferBenchConfig::daos_container
+                  << ", event queues=" << xferBenchConfig::daos_num_event_queues << std::endl;
     } else {
         std::cerr << "Unsupported NIXLBench backend: " << xferBenchConfig::backend << std::endl;
         exit(EXIT_FAILURE);
@@ -753,15 +809,15 @@ cleanupVramCuda(xferBenchIOV &iov) {
 static std::optional<xferBenchIOV>
 getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
-    CHECK_CUDA_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
-    CHECK_CUDA_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    CHECK_HIP_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
+    CHECK_HIP_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
 static void
 cleanupVramRocm(xferBenchIOV &iov) {
-    CHECK_CUDA_ERROR(hipSetDevice(iov.devId), "Failed to set device");
-    CHECK_CUDA_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
+    CHECK_HIP_ERROR(hipSetDevice(iov.devId), "Failed to set device");
+    CHECK_HIP_ERROR(hipFree((void *)iov.addr), "Failed to deallocate ROCm buffer");
 }
 #endif /* HAVE_ROCM */
 
@@ -782,7 +838,7 @@ getVramDesc(int devid, size_t buffer_size, bool isInit) {
         return getVramDescCuda(devid, buffer_size, memset_value);
     }
 #elif HAVE_ROCM
-    CHECK_CUDA_ERROR(hipSetDevice(devid), "Failed to set device");
+    CHECK_HIP_ERROR(hipSetDevice(devid), "Failed to set device");
     return getVramDescRocm(devid, buffer_size, memset_value);
 #else
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
