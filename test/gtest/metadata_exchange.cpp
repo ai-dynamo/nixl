@@ -373,6 +373,33 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     }
 }
 
+TEST_F(MetadataExchangeTestFixture, RejectsTruncatedMetadataThenLoadsCompleteBlob) {
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+    src.createAgentBackend();
+    dst.createAgentBackend();
+
+    // With no registered buffers, the section count is the last field in the blob.
+    nixl_blob_t md;
+    ASSERT_EQ(src.agent->getLocalMD(md), NIXL_SUCCESS);
+    ASSERT_FALSE(md.empty());
+    std::string remote_name;
+    {
+        const LogIgnoreGuard incomplete(
+            "Deserialization of tag nixlSecElms failed for incomplete data");
+        const LogIgnoreGuard rejected("loadRemoteMD: error loading remote metadata for agent '" +
+                                      src.name + "' with status NIXL_ERR_MISMATCH");
+        EXPECT_EQ(dst.agent->loadRemoteMD(md.substr(0, md.size() - 1), remote_name),
+                  NIXL_ERR_MISMATCH);
+        EXPECT_EQ(incomplete.getIgnoredCount(), 1u);
+    }
+    EXPECT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+
+    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
+    EXPECT_EQ(remote_name, src.name);
+    EXPECT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+}
+
 TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
     initAgentsDefault();
 

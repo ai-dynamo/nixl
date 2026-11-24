@@ -43,7 +43,7 @@ public:
 
     /* Ser/Des for Byte buffers */
     nixl_status_t addBuf(const std::string &tag, const void* buf, ssize_t len);
-    // Returns -1 for an invalid/incomplete field or a length not representable as ssize_t.
+    // Returns -1 for an invalid or incomplete field.
     ssize_t getBufLen(const std::string &tag) const;
 
     /**

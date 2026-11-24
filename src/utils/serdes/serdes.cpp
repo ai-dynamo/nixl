@@ -15,29 +15,28 @@
  * limitations under the License.
  */
 #include <cstring>
-#include <limits>
 #include <utility>
-#include <variant>
 
 #include "serdes.h"
 #include "common/nixl_log.h"
 
 namespace {
 
-enum class FieldError { IncompleteHeader, TagMismatch, IncompleteData };
+std::optional<size_t>
+parseFieldLength(std::string_view wire, size_t offset, std::string_view tag, bool log_errors) {
+    const auto fail = [&](const char *reason) {
+        if (log_errors) {
+            NIXL_ERROR << "Deserialization of tag " << tag << " failed for " << reason;
+        }
+        return std::nullopt;
+    };
 
-std::variant<size_t, FieldError>
-parseFieldLength(std::string_view wire, size_t offset, std::string_view tag) noexcept {
-    if (offset > wire.size()) {
-        return FieldError::IncompleteHeader;
-    }
-
-    const size_t remaining = wire.size() - offset;
-    if (tag.size() > remaining || remaining - tag.size() < sizeof(size_t)) {
-        return FieldError::IncompleteHeader;
+    const size_t remaining = offset <= wire.size() ? wire.size() - offset : 0;
+    if (remaining < sizeof(size_t) || tag.size() > remaining - sizeof(size_t)) {
+        return fail("incomplete or missing header");
     }
     if (!tag.empty() && std::memcmp(wire.data() + offset, tag.data(), tag.size()) != 0) {
-        return FieldError::TagMismatch;
+        return fail("tag mismatch");
     }
 
     size_t len;
@@ -45,31 +44,9 @@ parseFieldLength(std::string_view wire, size_t offset, std::string_view tag) noe
     const size_t header_end = offset + tag.size() + sizeof(len);
     // Reserve the trailing byte without adding the untrusted length to the cursor.
     if (wire.size() - header_end <= len) {
-        return FieldError::IncompleteData;
+        return fail("incomplete data");
     }
     return len;
-}
-
-std::optional<size_t>
-fieldLengthOrLog(std::string_view wire, size_t offset, const std::string &tag) {
-    const auto field = parseFieldLength(wire, offset, tag);
-    if (const auto *len = std::get_if<size_t>(&field)) {
-        return *len;
-    }
-
-    switch (std::get<FieldError>(field)) {
-    case FieldError::IncompleteHeader:
-        NIXL_ERROR << "Deserialization of tag " << tag
-                   << " failed for incomplete or missing header";
-        break;
-    case FieldError::TagMismatch:
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for tag mismatch";
-        break;
-    case FieldError::IncompleteData:
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for incomplete data";
-        break;
-    }
-    return std::nullopt;
 }
 
 } // namespace
@@ -103,7 +80,7 @@ nixl_status_t nixlSerDes::addStr(const std::string &tag, const std::string &str)
 
 std::string
 nixlSerDes::getStr(const std::string &tag) {
-    const auto len = fieldLengthOrLog(workingStr, des_offset, tag);
+    const auto len = parseFieldLength(workingStr, des_offset, tag, /*log_errors=*/true);
     if (!len) {
         return "";
     }
@@ -122,11 +99,7 @@ nixlSerDes::getStr(const std::string &tag) {
 
 std::optional<size_t>
 nixlSerDes::peekBufLen(std::string_view tag) const noexcept {
-    const auto field = parseFieldLength(workingStr, des_offset, tag);
-    if (const auto *len = std::get_if<size_t>(&field)) {
-        return *len;
-    }
-    return std::nullopt;
+    return parseFieldLength(workingStr, des_offset, tag, /*log_errors=*/false);
 }
 
 // Byte buffers serialization
@@ -142,12 +115,8 @@ nixl_status_t nixlSerDes::addBuf(const std::string &tag, const void* buf, ssize_
 
 ssize_t
 nixlSerDes::getBufLen(const std::string &tag) const {
-    const auto len = fieldLengthOrLog(workingStr, des_offset, tag);
+    const auto len = parseFieldLength(workingStr, des_offset, tag, /*log_errors=*/true);
     if (!len) {
-        return -1;
-    }
-    if (*len > static_cast<size_t>(std::numeric_limits<ssize_t>::max())) {
-        NIXL_ERROR << "Deserialization of tag " << tag << " failed for data length mismatch";
         return -1;
     }
 
@@ -161,7 +130,7 @@ nixl_status_t
 nixlSerDes::getBuf(const std::string &tag, void *buf, ssize_t len) {
     // In existing code the value of len is often assumed instead
     // of the return value from a preceding call to getBufLen().
-    const auto field_len = fieldLengthOrLog(workingStr, des_offset, tag);
+    const auto field_len = parseFieldLength(workingStr, des_offset, tag, /*log_errors=*/true);
     if (!field_len) {
         return NIXL_ERR_MISMATCH;
     }
