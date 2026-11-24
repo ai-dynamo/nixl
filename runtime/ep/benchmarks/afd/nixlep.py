@@ -77,6 +77,7 @@ class Arm:
             raise ValueError(
                 "nixlEP directional operations choose their SM count automatically"
             )
+        self.expanded_output_bytes: dict[int, int] = {}
         self.name = name
         self.config = config
         ffn = config["ffn_ranks"]
@@ -142,6 +143,15 @@ class Arm:
                     expert = torch.ones_like(received.recv_x, dtype=torch.bfloat16)
                 worker_reply(self.buffer, expert, received.receipt)
                 if verify:
+                    self.expanded_output_bytes[n] = sum(
+                        t.nbytes
+                        for t in (
+                            received.recv_x,
+                            received.recv_sf,
+                            received.recv_topk_weights,
+                        )
+                        if t is not None
+                    )
                     assert received.expert_counts.tolist() == counts
                     for count, end in zip(
                         counts, received.expert_ends.tolist(), strict=True
@@ -183,7 +193,11 @@ class Arm:
                 if self.layout == "expert-major"
                 else "per-exchange count of local selections and BF16 row materialization inside timing"
             ),
-            "registered_bytes": self.buffer.num_bytes,
+            "registered_bytes": self.buffer.get_local_peer_info()[3],
+            "registered_token_bytes": self.buffer.num_bytes,
+            "control_workspace_bytes": self.buffer.get_local_peer_info()[3]
+            - self.buffer.num_bytes,
+            "expanded_ffn_output_bytes_by_bucket": self.expanded_output_bytes,
             "transport_sms": self.buffer.get_topology()[1],
             "transport_mode": self.buffer.get_topology()[0],
             "expert_alignment": self.alignment,

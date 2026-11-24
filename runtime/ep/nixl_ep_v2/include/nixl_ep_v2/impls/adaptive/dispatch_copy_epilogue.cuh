@@ -38,7 +38,7 @@ template <bool kDoExpand, bool kDoZeroPadding, bool kZeroCopy,
           int kNumSMs, int kNumChannelsPerSM, int kNumWarps,
           int kNumHiddenBytes, int kNumSFPacks,
           int kNumExpertsPerRank, int kNumTopk, int kExpertAlignment,
-          int kNumThreads = kNumWarps * 32>
+          bool kAFD = false, int kNumThreads = kNumWarps * 32>
 __global__ void __launch_bounds__(kNumThreads, 1)
 dispatch_copy_epilogue_impl(void* buffer, void* workspace,
                             int* psum_num_recv_tokens_per_scaleup_rank,
@@ -53,7 +53,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
                             const topology::EPTopology* topology_ptr,
                             const int num_max_tokens_per_rank) {
     // Topology
-    const auto topo = topology::load(topology_ptr);
+    const auto topo = topology::load<kAFD>(topology_ptr);
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
     const int num_ranks = num_scaleout_ranks * num_scaleup_ranks;
@@ -118,7 +118,8 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
             current_rank_start = current_rank_end;
             current_rank_end = ptx::exchange(stored_psum_num_recv_tokens, stored_lane_idx);
         }
-        const auto buffer_token = scaleup_buffer.get_rank_buffer(current_rank_idx).get_token_buffer(i - current_rank_start);
+        const int source_slot = kAFD ? topo.afd->role_index[current_rank_idx] : current_rank_idx;
+        const auto buffer_token = scaleup_buffer.get_rank_buffer(source_slot).get_token_buffer(i - current_rank_start);
 
         // Wait buffer releases
         ptx::tma_store_wait();

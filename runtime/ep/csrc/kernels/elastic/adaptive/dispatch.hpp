@@ -244,7 +244,7 @@ class DispatchCopyEpilogueRuntime final : public jit::LaunchRuntime<DispatchCopy
 public:
     struct Args {
         // Templated arguments
-        bool do_expand, do_zero_padding, zero_copy;
+        bool do_expand, do_zero_padding, zero_copy, afd;
         int num_channels_per_sm;
         int num_warps;
         int num_hidden_bytes, num_sf_packs;
@@ -274,13 +274,13 @@ public:
 using namespace nixl_ep_v2::elastic::adaptive;
 
 static void __instantiate_kernel() {{
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<{}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}, {}>);
 }}
 )",
                            args.do_expand, args.do_zero_padding, args.zero_copy,
                            args.launch_args.grid_dim.first, args.num_channels_per_sm, args.num_warps,
                            args.num_hidden_bytes, args.num_sf_packs,
-                           args.num_experts_per_rank, args.num_topk, args.expert_alignment);
+                           args.num_experts_per_rank, args.num_topk, args.expert_alignment, args.afd);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -315,7 +315,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           const int& num_sms, const int& num_smem_bytes,
                                           const int& num_channels_per_sm,
                                           const bool& do_expand, const bool& do_zero_padding, const bool& zero_copy,
-                                          const at::cuda::CUDAStream& stream) {
+                                          const at::cuda::CUDAStream& stream, const bool afd = false) {
     // Maximize shared memory utilization
     // A margin below the opt-in maximum: a layout that filled it to the byte faulted on the last warp's mbarrier
     constexpr int kNumSmemReserveBytes = 1024;
@@ -325,7 +325,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
 
     // Generate, build and launch
     const DispatchCopyEpilogueRuntime::Args args = {
-        .do_expand = do_expand, .do_zero_padding = do_zero_padding, .zero_copy = zero_copy,
+        .do_expand = do_expand, .do_zero_padding = do_zero_padding, .zero_copy = zero_copy, .afd = afd,
         .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,
         .num_experts_per_rank = num_experts_per_rank, .num_topk = num_topk, .expert_alignment = expert_alignment,

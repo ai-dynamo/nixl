@@ -357,6 +357,8 @@ class ElasticBuffer:
         dynamic_take: Optional[bool] = False,
         *,
         role: Optional[AFDRole] = None,
+        max_attention_ranks: int = 0,
+        max_ffn_ranks: int = 0,
     ):
         """
         Initialize the elastic communication buffer.
@@ -389,6 +391,8 @@ class ElasticBuffer:
             num_gpu_timeout_secs: GPU-side timeout in seconds for GPU operations.
             explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
                 otherwise, the resources will be released by the destructor.
+            max_attention_ranks: reserved attention membership for AFD dispatch inboxes.
+            max_ffn_ranks: reserved FFN membership for AFD replies.
             max_num_scaleout_ranks: the maximum number of scaleout ranks (NVLink domains) the buffer, the handles and
                 the kernels are sized for; 0 = the cohort's validated layout. The live world is any product subset of it.
             max_num_scaleup_ranks: likewise for the positions per domain, at most 128 (`kNumMaxScaleupRanksCap`).
@@ -487,6 +491,7 @@ class ElasticBuffer:
             )
             afd_config = (
                 self.role.value,
+                num_bytes,
                 compact_wire,
                 use_fp8_dispatch,
                 hidden,
@@ -496,6 +501,8 @@ class ElasticBuffer:
                 allow_multiple_reduction,
                 max_num_scaleout_ranks,
                 max_num_scaleup_ranks,
+                max_attention_ranks,
+                max_ffn_ranks,
             )
         self._nixl_bootstrap = NixlBootstrap(
             bootstrap_store,
@@ -513,7 +520,7 @@ class ElasticBuffer:
         if any(config is not None for config in configs):
             if (
                 any(config is None for config in configs)
-                or len({c[1:] for c in configs}) != 1
+                or len({c[2:] for c in configs}) != 1
             ):
                 raise ValueError(
                     "AFD peers must agree on role-specific operation and wire configuration"
@@ -549,6 +556,42 @@ class ElasticBuffer:
             int,
             value_or(scaleup_rank_idx, self.rank_idx % num_group_scaleup_ranks),
         )
+
+        if self.role is not None:
+            attention_count = sum(c[0] == AFDRole.ATTENTION.value for c in configs)
+            ffn_count = len(configs) - attention_count
+            max_attention_ranks = max_attention_ranks or attention_count
+            max_ffn_ranks = max_ffn_ranks or ffn_count
+            if not (
+                attention_count <= max_attention_ranks <= max_num_scaleup_ranks
+                and ffn_count <= max_ffn_ranks <= max_num_scaleup_ranks
+            ):
+                raise ValueError(
+                    "AFD role bounds must cover membership within the declared domain"
+                )
+            sizes = {
+                role.value: _C.calculate_afd_buffer_size(
+                    role == AFDRole.ATTENTION,
+                    max_attention_ranks,
+                    max_ffn_ranks,
+                    num_max_tokens_per_rank,
+                    hidden,
+                    num_topk,
+                    use_fp8_dispatch,
+                    allow_multiple_reduction,
+                )
+                for role in AFDRole
+            }
+            alignment = _C.get_elastic_buffer_alignment()
+            for peer_role, explicit, *_ in configs:
+                if explicit is not None and (
+                    explicit < sizes[peer_role] or explicit % alignment
+                ):
+                    raise ValueError(
+                        "AFD explicit token arena is too small or misaligned"
+                    )
+            if num_bytes is None:
+                num_bytes = sizes[self.role.value]
 
         # Calculate buffer size (already 2 MB-aligned from hint functions / calculate_elastic_buffer_size)
         if num_bytes is None:
@@ -658,6 +701,7 @@ class ElasticBuffer:
             num_experts_per_rank,
             num_zero_copy_bytes,
             dynamic_take_mode,
+            self.role is not None,
         )
 
         if num_zero_copy_slots > 0:
@@ -790,6 +834,8 @@ class ElasticBuffer:
         store_timeout_secs: int = 300,
         *,
         role: Optional[AFDRole] = None,
+        max_attention_ranks: int = 0,
+        max_ffn_ranks: int = 0,
     ) -> int:
         """
         Get a recommended buffer size (in bytes) for the given MoE settings, without constructing the buffer.
@@ -802,6 +848,8 @@ class ElasticBuffer:
             num_topk: the number of top-k experts per token.
             use_fp8_dispatch: whether to use FP8 for dispatch.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
+            max_attention_ranks: reserved attention membership for AFD dispatch inboxes.
+            max_ffn_ranks: reserved FFN membership for AFD replies.
             max_num_scaleout_ranks: the declared maximum world to size for (0 = the group's domain count).
             max_num_scaleup_ranks: likewise (0 = the group's domain size).
             num_group_scaleup_ranks: the group's declared domain size, as the constructor's argument of the same name.
@@ -816,6 +864,11 @@ class ElasticBuffer:
             AFDRole(role)
             if use_fp8_dispatch and hidden % 128:
                 raise ValueError("AFD FP8 hidden size must be divisible by 128")
+            if max_attention_ranks and max_ffn_ranks:
+                max_num_scaleout_ranks = max_num_scaleout_ranks or 1
+                max_num_scaleup_ranks = (
+                    max_num_scaleup_ranks or max_attention_ranks + max_ffn_ranks
+                )
         if max_num_scaleout_ranks == 0 or max_num_scaleup_ranks == 0:
             group_domains, group_positions = get_logical_domain_size(
                 group,
@@ -826,6 +879,20 @@ class ElasticBuffer:
             )
             max_num_scaleout_ranks = max_num_scaleout_ranks or group_domains
             max_num_scaleup_ranks = max_num_scaleup_ranks or group_positions
+        if role is not None:
+            if max_num_scaleout_ranks != 1:
+                raise ValueError("AFD sizing requires one NVLink domain")
+            # Without explicit role counts the remaining positions can all be peers.
+            return _C.calculate_afd_buffer_size(
+                AFDRole(role) == AFDRole.ATTENTION,
+                max_attention_ranks or max_num_scaleup_ranks - 1,
+                max_ffn_ranks or max_num_scaleup_ranks - 1,
+                num_max_tokens_per_rank,
+                hidden,
+                num_topk,
+                use_fp8_dispatch,
+                allow_multiple_reduction,
+            )
         # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
         return _C.calculate_elastic_buffer_size(
             max_num_scaleout_ranks,

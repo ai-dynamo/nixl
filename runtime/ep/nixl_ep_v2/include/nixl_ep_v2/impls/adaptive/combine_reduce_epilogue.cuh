@@ -60,15 +60,16 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     const int num_channels = kNumChannelsPerSM * topo.num_active_sms;
     // Fixed expert slots per rank: the live expert count follows the live rank count
     const int num_experts_per_rank = kNumExpertsPerRank;
-    const bool use_scaleup_rank_layout = kAllowMultipleReduction and num_scaleup_ranks <= kNumTopk;
-    const int num_tokens_in_scaleup_layout = use_scaleup_rank_layout ? num_scaleup_ranks : kNumTopk;
+    const int reply_ranks = kDirection == kFused ? num_scaleup_ranks : topo.afd->num_ffn_ranks;
+    const bool use_scaleup_rank_layout = kAllowMultipleReduction and reply_ranks <= kNumTopk;
+    const int num_tokens_in_scaleup_layout = use_scaleup_rank_layout ? reply_ranks : kNumTopk;
 
     // Which rows hold the data to reduce:
     //   hybrid: the scale-out receive rows, indexed by the scale-out rank (domain) owning the expert
     //   direct: the scale-up rows (the direct receive buffer), indexed by the POSITION of the rank owning the expert
     //           (the one live domain need not be domain 0, so an owner's global rank is not its position)
     const bool is_direct = kDirection != kFused || topo.mode == topology::kModeDirect;
-    const int num_reduce_ranks = is_direct ? num_scaleup_ranks : num_scaleout_ranks;
+    const int num_reduce_ranks = is_direct ? reply_ranks : num_scaleout_ranks;
     const bool use_rank_layout = kAllowMultipleReduction and num_reduce_ranks <= kNumTopk;
     const int num_tokens_in_layout = use_rank_layout ? num_reduce_ranks : kNumTopk;
 
@@ -116,6 +117,9 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
             if (owner >= 0 and not topo.is_live(owner / num_scaleup_ranks, owner % num_scaleup_ranks))
                 stored_dst_expert_idx = -1;
             stored_dst_rank_idx = stored_dst_expert_idx >= 0 ? (is_direct ? owner % num_scaleup_ranks : owner / num_scaleup_ranks) : -1;
+            if constexpr (kDirection == kRecv)
+                if (stored_dst_rank_idx >= 0)
+                    stored_dst_rank_idx = topo.afd->role_index[stored_dst_rank_idx];
         }
         __syncwarp();
 

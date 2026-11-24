@@ -222,11 +222,11 @@ std::string NIXLEPContext::get_local_metadata() const {
 }
 
 NIXLPeerInfo NIXLEPContext::get_local_peer_info() const {
-    return {reinterpret_cast<uint64_t>(region_base), device_id, rank_id, region.num_bytes};
+    return {reinterpret_cast<uint64_t>(region_base), device_id, rank_id, static_cast<uint64_t>(num_region_bytes)};
 }
 
 void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::vector<std::string>& remote_mds,
-                                  const std::vector<NIXLPeerInfo>& peer_infos) {
+                                  const std::vector<NIXLPeerInfo>& peer_infos, uint64_t min_peer_bytes) {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
     EP_HOST_ASSERT(rank_ids.size() == remote_mds.size() and rank_ids.size() == peer_infos.size());
     if (rank_ids.empty())
@@ -239,7 +239,7 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::v
         EP_HOST_ASSERT(0 <= rid and rid < num_rank_ids and rid != rank_id and "Invalid peer rank id");
         EP_HOST_ASSERT(not connected[rid] and seen.insert(rid).second and "Peer already connected");
         EP_HOST_ASSERT(peer_infos[i].rank_id == rid and peer_infos[i].region_base != 0 and "Peer info does not match the rank id");
-        EP_HOST_ASSERT(peer_infos[i].num_region_bytes >= static_cast<uint64_t>(num_region_bytes) and "Peer region is too small");
+        EP_HOST_ASSERT(peer_infos[i].num_region_bytes >= min_peer_bytes and "Peer region is too small");
         // A pending disconnect of the id would invalidate the metadata reloaded here at the next commit
         EP_HOST_ASSERT(std::find(pending_disconnects.begin(), pending_disconnects.end(), rid) == pending_disconnects.end() and
                        "Commit the pending disconnect before reconnecting the same rank");
@@ -377,7 +377,7 @@ void NIXLEPContext::stage_views() {
     nixl_remote_dlist_t remote_descs(VRAM_SEG);
     for (int r = 0; r < num_rank_ids; ++ r)
         remote_descs.addDesc(connected[r] ?
-            nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(num_region_bytes), static_cast<uint64_t>(peers[r].device_id), remote_agent_names[r]) :
+            nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(peers[r].num_region_bytes), static_cast<uint64_t>(peers[r].device_id), remote_agent_names[r]) :
             nixlRemoteDesc(0, static_cast<size_t>(num_region_bytes), 0, nixl_null_agent));
     if (std::find(connected.begin(), connected.end(), 1) != connected.end())
         NIXL_CHECK(state->agent->prepMemView(remote_descs, state->staged_remote, &state->extra_params));

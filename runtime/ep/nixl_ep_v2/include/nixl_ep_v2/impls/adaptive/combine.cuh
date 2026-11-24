@@ -253,9 +253,10 @@ adaptive_combine_impl(nv_bfloat16* x,
 
     // Layout decisions (compile-time in the hybrid kernel)
     const bool use_scaleout_rank_layout = kAllowMultipleReduction and num_scaleout_ranks <= kNumTopk;
-    const bool use_scaleup_rank_layout = kAllowMultipleReduction and num_scaleup_ranks <= kNumTopk;
+    const int reply_ranks = kDirection == kFused ? num_scaleup_ranks : topo.afd->num_ffn_ranks;
+    const bool use_scaleup_rank_layout = kAllowMultipleReduction and reply_ranks <= kNumTopk;
     const int num_tokens_in_scaleout_layout = use_scaleout_rank_layout ? num_scaleout_ranks : kNumTopk;
-    const int num_tokens_in_scaleup_layout = use_scaleup_rank_layout ? num_scaleup_ranks : kNumTopk;
+    const int num_tokens_in_scaleup_layout = use_scaleup_rank_layout ? reply_ranks : kNumTopk;
 
     const auto warp_idx = ptx::get_warp_idx();
     const auto lane_idx = ptx::get_lane_idx();
@@ -348,6 +349,11 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if constexpr (kDirection == kSend)
                     EP_DEVICE_ASSERT(src_rank_idx >= 0 && src_rank_idx / num_scaleup_ranks == scaleout_rank_idx &&
                                      topology::is_scaleup_live<kNumMaxScaleupRanks>(topo, src_rank_idx % num_scaleup_ranks));
+                if constexpr (kDirection == kSend) {
+                    const int pos = src_rank_idx % num_scaleup_ranks;
+                    const auto offset = reinterpret_cast<uintptr_t>(ptr) - reinterpret_cast<uintptr_t>(buffer);
+                    return afd_inbox_record(transport, topo, scaleup_peer_id(pos), pos, offset, scaleup_buffer.get_num_bytes_per_token());
+                }
                 const auto dst_ptr = transport.get_p2p_ptr(ptr, scaleup_peer_id(src_rank_idx % num_scaleup_ranks));
                 EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");
                 return dst_ptr;
@@ -396,7 +402,8 @@ adaptive_combine_impl(nv_bfloat16* x,
                 const int token_end_idx = min(token_start_idx + chunk_rows, num_reduced_tokens);
                 write_direct_combine_replies<kUseExpandedLayout, kAllowMultipleReduction, kHidden, kNumHiddenBytes, kNumTopk>(
                     x, topk_weights, src_metadata, scaleup_buffer, tma_buffer, mbarrier_ptr, phase,
-                    token_start_idx, token_end_idx, num_max_tokens_per_rank, num_scaleup_ranks, scaleup_rank_idx,
+                    token_start_idx, token_end_idx, num_max_tokens_per_rank, num_scaleup_ranks,
+                    kDirection == kSend ? topo.afd->role_index[scaleup_rank_idx] : scaleup_rank_idx,
                     use_scaleup_rank_layout, lane_idx, peer_ptr, acquire_ready);
             }
         }

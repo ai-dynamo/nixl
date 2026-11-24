@@ -203,7 +203,7 @@ def run(me, layout, repeats, weighted):
             ep.ElasticBuffer(**(config | {"role": ep.AFDRole.ATTENTION}))
         # This fails during native AFD configuration after peer registration.
         with TestCase().assertRaisesRegex((RuntimeError, ValueError), "hidden"):
-            ep.ElasticBuffer(**(config | {"hidden": HIDDEN + 16}))
+            ep.ElasticBuffer(**(config | {"hidden": 262144}))
     buf = ep.ElasticBuffer(**config)
     if layout == "AF" and weighted:
         size = ep.ElasticBuffer.get_buffer_size_hint(

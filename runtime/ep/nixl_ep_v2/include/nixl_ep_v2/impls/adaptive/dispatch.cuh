@@ -249,15 +249,23 @@ __device__ __forceinline__ DirectDispatchRoute pack_direct_route(
     return route;
 }
 
-template <int kNumMaxScaleupRanks>
+template <int kNumMaxScaleupRanks, int kDirection>
 __device__ __forceinline__ void write_direct_token(
     const nixl::NIXLTransport& transport, const topology::EPTopology& topo, const layout::BufferLayout<false>& recv_buffer,
     const layout::TokenLayout& tma_buffer, int dst_rank_idx, int dst_slot_idx) {
-    const auto dst_ptr = dst_slot_idx >= 0 ?
-        transport.get_p2p_ptr(recv_buffer.get_token_buffer(dst_slot_idx).get_base_ptr(),
-                              topology::rank_id(topo.scaleout_rank_idx, dst_rank_idx % topo.num_scaleup_ranks, kNumMaxScaleupRanks)) :
-        nullptr;
-    EP_DEVICE_ASSERT((dst_slot_idx < 0 or dst_ptr != nullptr) and "Direct mode needs every live peer reachable with stores");
+    if (dst_slot_idx < 0)
+        return;
+    const int pos = dst_rank_idx % topo.num_scaleup_ranks;
+    const int peer = topology::rank_id(topo.scaleout_rank_idx, pos, kNumMaxScaleupRanks);
+    void* dst_ptr;
+    if constexpr (kDirection == kSend) {
+        const auto bytes = recv_buffer.get_num_bytes_per_token();
+        const auto row = static_cast<int64_t>(topo.afd->role_index[topo.scaleup_rank_idx]) * recv_buffer.num_max_tokens_per_rank + dst_slot_idx;
+        dst_ptr = afd_inbox_record(transport, topo, peer, pos, row * bytes, bytes);
+    } else {
+        dst_ptr = transport.get_p2p_ptr(recv_buffer.get_token_buffer(dst_slot_idx).get_base_ptr(), peer);
+        EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");
+    }
     if (dst_ptr != nullptr)
         ptx::tma_store_1d(dst_ptr, tma_buffer.get_base_ptr(), tma_buffer.get_num_bytes<false>());
 }
@@ -992,7 +1000,8 @@ adaptive_dispatch_impl(
 
         // My region in every peer's scale-up buffer (`[num_scaleup_ranks][...]`, indexed by my position; the slots beyond
         // `num_max_tokens_per_rank` that a bound above 1 adds stay unused in direct mode)
-        [[maybe_unused]] const auto recv_buffer = scaleup_buffer.get_rank_buffer(scaleup_rank_idx);
+        [[maybe_unused]] const auto recv_buffer = scaleup_buffer.get_rank_buffer(
+            kDirection == kSend ? 0 : scaleup_rank_idx);
 
         // Zero copy: the data warps join the count pass and, on SM 0, the sweep (the notify branch's block barriers)
         if constexpr (kZeroCopy) {
@@ -1128,7 +1137,7 @@ adaptive_dispatch_impl(
             __syncwarp();
 
             if constexpr (not kZeroCopy) {
-                write_direct_token<kNumMaxScaleupRanks>(transport, topo, recv_buffer, tma_buffer, route.rank, stored_dst_slot_idx);
+                write_direct_token<kNumMaxScaleupRanks, kDirection>(transport, topo, recv_buffer, tma_buffer, route.rank, stored_dst_slot_idx);
             } else {
                 // Zero copy: per destination one bulk store of the row, then plain remote stores of its small parts
                 constexpr int kNumSFRegs = kNumSFPacks > 0 ? math::constexpr_ceil_div(kNumSFPacks, 32) : 1;
