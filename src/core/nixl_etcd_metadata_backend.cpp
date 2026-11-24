@@ -167,7 +167,8 @@ public:
     nixl_status_t
     fetchMetadataFromEtcd(const std::string &agent_name,
                           const std::string &metadata_type,
-                          nixl_blob_t &metadata) {
+                          nixl_blob_t &metadata,
+                          int64_t &revision) {
         const std::string metadata_key = makeKey(agent_name, metadata_type);
         try {
             const etcd::Response response = etcd_->get(metadata_key);
@@ -184,6 +185,7 @@ public:
                 }
                 NIXL_DEBUG << "Successfully fetched key: " << metadata_key << " (rev "
                            << response.value().modified_index() << ")";
+                revision = response.index();
                 return NIXL_SUCCESS;
             }
             NIXL_INFO << "Failed to fetch key: " << metadata_key
@@ -197,7 +199,9 @@ public:
     }
 
     nixl_status_t
-    waitForMetadataFromEtcd(const std::string &metadata_key, nixl_blob_t &remote_metadata) {
+    waitForMetadataFromEtcd(const std::string &metadata_key,
+                            nixl_blob_t &remote_metadata,
+                            int64_t &revision) {
         try {
             const etcd::Response response = etcd_->get(metadata_key);
             const int64_t watch_index = response.index();
@@ -222,6 +226,7 @@ public:
                     return;
                 }
                 remote_metadata = response.value().as_string();
+                revision = response.value().modified_index();
                 NIXL_DEBUG << "Watch response: metadata key fetched: " << metadata_key;
                 ret_prom.set_value(NIXL_SUCCESS);
             };
@@ -247,19 +252,20 @@ public:
     nixl_status_t
     fetchOrWaitForMetadataFromEtcd(const std::string &remote_agent,
                                    const std::string &metadata_label,
-                                   nixl_blob_t &remote_metadata) {
+                                   nixl_blob_t &remote_metadata,
+                                   int64_t &revision) {
         const nixl_status_t ret =
-            fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata);
+            fetchMetadataFromEtcd(remote_agent, metadata_label, remote_metadata, revision);
         if (ret == NIXL_SUCCESS) {
             return NIXL_SUCCESS;
         }
         const std::string metadata_key = makeKey(remote_agent, metadata_label);
         NIXL_DEBUG << "Metadata not found, setting up watch for: " << metadata_key;
-        return waitForMetadataFromEtcd(metadata_key, remote_metadata);
+        return waitForMetadataFromEtcd(metadata_key, remote_metadata, revision);
     }
 
     void
-    setupAgentWatcher(const std::string &agent_name) {
+    setupAgentWatcher(const std::string &agent_name, int64_t revision) {
         if (agentWatchers_.find(agent_name) != agentWatchers_.end()) {
             // Expected: fetchRemote re-arms after every successful fetch, and
             // this is what keeps watchers from stacking up per fetch.
@@ -294,7 +300,10 @@ public:
             }
         };
         const std::string agent_prefix = makeKey(agent_name, "");
-        agentWatchers_[agent_name] =
+        // Start right after the revision the metadata was read at, so a DELETE
+        // issued before the watch is registered on the server is replayed.
+        agentWatchers_[agent_name] = (revision > 0) ?
+            std::make_unique<etcd::Watcher>(*etcd_, agent_prefix, revision + 1, process_response) :
             std::make_unique<etcd::Watcher>(*etcd_, agent_prefix, process_response);
     }
 
@@ -393,7 +402,9 @@ nixlEtcdMetadataBackend::fetchRemote(const std::string &remote_name,
         default_metadata_label;
     worker_.submit([this, remote_name, label]() {
         nixl_blob_t blob;
-        if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob) != NIXL_SUCCESS) {
+        int64_t revision = 0;
+        if (client_->fetchOrWaitForMetadataFromEtcd(remote_name, label, blob, revision) !=
+            NIXL_SUCCESS) {
             NIXL_ERROR << "Failed to fetch metadata from etcd for agent: " << remote_name;
             return;
         }
@@ -410,7 +421,7 @@ nixlEtcdMetadataBackend::fetchRemote(const std::string &remote_name,
             return;
         }
         NIXL_DEBUG << "Successfully loaded metadata for agent: " << remote_name;
-        client_->setupAgentWatcher(remote_name);
+        client_->setupAgentWatcher(remote_name, revision);
     });
     return NIXL_SUCCESS;
 }
