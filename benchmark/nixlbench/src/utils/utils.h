@@ -57,10 +57,11 @@
             exit(EXIT_FAILURE);                                                        \
         }                                                                              \
     } while (0)
+
 #elif HAVE_ROCM
 #include <hip/hip_runtime.h>
 
-#define CHECK_CUDA_ERROR(result, message)                                      \
+#define CHECK_HIP_ERROR(result, message)                                       \
     do {                                                                       \
         const auto _r = (result);                                              \
         if (_r != hipSuccess) {                                                \
@@ -69,6 +70,7 @@
             exit(EXIT_FAILURE);                                                \
         }                                                                      \
     } while (0)
+
 #endif
 
 // TODO: This is true for CX-7, need support for other CX cards and NVLink
@@ -97,6 +99,7 @@
 #define XFERBENCH_BACKEND_LIBFABRIC "LIBFABRIC"
 #define XFERBENCH_BACKEND_GDS "GDS"
 #define XFERBENCH_BACKEND_GDS_MT "GDS_MT"
+#define XFERBENCH_BACKEND_AIS "AIS"
 #define XFERBENCH_BACKEND_POSIX "POSIX"
 #define XFERBENCH_BACKEND_GPUNETIO "GPUNETIO"
 #define XFERBENCH_BACKEND_MOONCAKE "MOONCAKE"
@@ -109,6 +112,7 @@
 #define XFERBENCH_BACKEND_AZURE_BLOB "AZURE_BLOB"
 #define XFERBENCH_BACKEND_INFINIA "INFINIA"
 #define XFERBENCH_BACKEND_DOCA_MEMOS "DOCA_MEMOS"
+#define XFERBENCH_BACKEND_DAOS "DAOS"
 
 // POSIX API types
 #define XFERBENCH_POSIX_API_AIO "AIO"
@@ -222,6 +226,8 @@ public:
     static std::string gpunetio_gid_index;
     static std::string gpunetio_oob_port;
     static int gpunetio_data_qp_count;
+    static std::string gpunetio_write_stripe;
+    static uint64_t gpunetio_write_stripe_min_bytes;
     static long page_size;
     static std::string obj_access_key;
     static std::string obj_secret_key;
@@ -245,6 +251,19 @@ public:
     static std::string azure_blob_account_url;
     static std::string azure_blob_container_name;
     static std::string azure_blob_connection_string;
+    static std::string daos_pool;
+    static std::string daos_container;
+    static std::string daos_system;
+    static std::string daos_mount_path;
+    static std::string daos_object_class;
+    static std::string daos_object_class_hint;
+    static std::string daos_progress_cpu_affinity;
+    static uint64_t daos_chunk_size;
+    static uint64_t daos_oclass_id;
+    static uint64_t daos_num_event_queues;
+    static uint64_t daos_max_inflight_per_queue;
+    static uint64_t daos_submission_batch_size;
+    static uint64_t daos_completion_batch_size;
     static int hf3fs_iopool_size;
     static std::string gusli_client_name;
     static int gusli_max_simultaneous_requests;
@@ -452,6 +471,12 @@ public:
     getObjS3(const std::string &name);
     static bool
     rmObjS3(const std::string &name);
+    static bool
+    putObjDaos(size_t buffer_size, const std::string &name);
+    static bool
+    getObjDaos(const std::string &name);
+    static bool
+    rmObjDaos(const std::string &name);
 
     static bool
     checkConsistency(std::vector<std::vector<xferBenchIOV>> &desc_lists);

@@ -300,6 +300,7 @@ TEST(wqsOwnerTest, ReleasesCapacityBeforePublishingCompletion) {
 }
 
 TEST_F(wqsEngineTest, SupportsOnlyLocalDramAndObjects) {
+    EXPECT_TRUE(engine->supportsCapability(nixl_backend_capability_t::LOCAL));
     EXPECT_TRUE(engine->supportsLocal());
     EXPECT_FALSE(engine->supportsRemote());
     EXPECT_FALSE(engine->supportsNotif());

@@ -53,6 +53,10 @@ if 'WQS' in static_plugins
     nixl_lib_deps += [ wqs_backend_interface ]
 endif
 
+if 'DAOS' in static_plugins
+    nixl_lib_deps += [ daos_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
@@ -60,6 +64,18 @@ endif
 
 if 'GDS_MT' in static_plugins
     nixl_lib_deps += [ gds_mt_backend_interface, taskflow_proj, cuda_dep ]
+endif
+
+# AIS mirrors GDS. The interface only exists once rocm_ais/meson.build has
+# resolved HIP, hipFile and Taskflow; without all three it returns early via
+# subdir_done(), so guard on the variable rather than assuming it is defined.
+disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
+if not disable_rocm_ais_backend and 'AIS' in static_plugins
+    if not is_variable('ais_backend_interface')
+        error('AIS requested in static_plugins but the AIS plugin was not built; ' +
+              'set -Drocm_path=<prefix> to a ROCm install providing hipFile.')
+    endif
+    nixl_lib_deps += [ ais_backend_interface, taskflow_proj, rocm_dep ]
 endif
 
 cc = meson.get_compiler('cpp')
@@ -94,7 +110,9 @@ nixl_lib_sources = [
 nixl_lib = library('nixl',
                    nixl_lib_sources,
                    include_directories: [ nixl_inc_dirs, utils_inc_dirs, include_directories('tracing') ],
-                   link_args: ['-lstdc++fs'],
+                   link_args: ['-lstdc++fs',
+                               '-Wl,--version-script=' + meson.current_source_dir() / 'libnixl.map'],
+                   link_depends: 'libnixl.map',
                    dependencies: nixl_lib_deps,
                    install: true,
                    install_rpath: join_paths(get_option('prefix'), get_option('libdir')))

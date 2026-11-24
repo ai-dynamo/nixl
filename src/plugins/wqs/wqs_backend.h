@@ -18,21 +18,6 @@ public:
     nixlWqsEngine(const nixlBackendInitParams *params, std::shared_ptr<nixlWqsSession> session);
     ~nixlWqsEngine() override;
 
-    [[nodiscard]] bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    [[nodiscard]] bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    [[nodiscard]] bool
-    supportsNotif() const override {
-        return false;
-    }
-
     [[nodiscard]] nixl_mem_list_t
     getSupportedMems() const override {
         return {DRAM_SEG, OBJ_SEG};

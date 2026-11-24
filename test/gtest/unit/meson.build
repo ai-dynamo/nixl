@@ -36,6 +36,11 @@ if is_variable('wqs_backend_interface')
     subdir('plugins/wqs')
 endif
 
+if is_variable('daos_backend_interface')
+    subdir('daos')
+    unit_test_deps += [daos_unit_test_dep]
+endif
+
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
 

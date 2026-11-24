@@ -33,6 +33,10 @@ if enabled_plugins.get('POSIX')
     subdir('posix')
 endif
 
+if enabled_plugins.get('DAOS')
+    subdir('daos')
+endif
+
 if enabled_plugins.get('GPUNETIO')
     if (not cuda_dep.found() or not doca_gpunetio_dep.found()) and is_explicit_enable
         if not cuda_dep.found()
@@ -49,6 +53,10 @@ if is_variable('gds_backend_interface') or is_variable(
     'gds_mt_backend_interface',
 )
     subdir('cuda_gds')
+endif
+
+if is_variable('ais_backend_interface')
+    subdir('ais')
 endif
 
 cc = meson.get_compiler('cpp')

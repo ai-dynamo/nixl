@@ -115,26 +115,6 @@ public:
 
     ~nixlUcxEngine();
 
-    bool
-    supportsRemote() const override {
-        return true;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return true;
-    }
-
-    [[nodiscard]] bool
-    supportsTraceContext() const noexcept override {
-        return true;
-    }
-
     nixl_mem_list_t
     getSupportedMems() const override;
 
@@ -312,8 +292,7 @@ private:
     nixl_status_t
     notifSendPriv(const std::string &remote_agent,
                   const std::string &msg,
-                  const nixlUcxEp &ep,
-                  nixlUcxReq *req = nullptr) const;
+                  const nixlUcxEp &ep) const;
 
     ucx_connection_ptr_t
     getConnection(const std::string &remote_agent) const;

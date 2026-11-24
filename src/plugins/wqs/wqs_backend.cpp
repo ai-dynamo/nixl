@@ -303,7 +303,8 @@ public:
     std::unordered_map<nixlBackendMD *, std::unique_ptr<wqsMetadata>> metadata;
 };
 
-nixlWqsEngine::nixlWqsEngine(const nixlBackendInitParams *params) : nixlBackendEngine(params) {
+nixlWqsEngine::nixlWqsEngine(const nixlBackendInitParams *params)
+    : nixlBackendEngine(params, nixl_backend_capability_t::LOCAL) {
     auto config = nixlWqsConfig::fromParams(getCustomParams());
     auto session = getWqsSession(config);
     impl_ = std::make_unique<impl>(std::move(config), std::move(session), *params);
@@ -311,7 +312,7 @@ nixlWqsEngine::nixlWqsEngine(const nixlBackendInitParams *params) : nixlBackendE
 
 nixlWqsEngine::nixlWqsEngine(const nixlBackendInitParams *params,
                              std::shared_ptr<nixlWqsSession> session)
-    : nixlBackendEngine(params),
+    : nixlBackendEngine(params, nixl_backend_capability_t::LOCAL),
       impl_(std::make_unique<impl>(nixlWqsConfig::fromParams(getCustomParams()),
                                    std::move(session),
                                    *params)) {}
