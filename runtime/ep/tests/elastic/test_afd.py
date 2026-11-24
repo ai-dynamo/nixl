@@ -261,7 +261,7 @@ def run(me, layout, repeats, weighted):
                     with TestCase().assertRaisesRegex(ValueError, "bucket"):
                         buf.dispatch_send(x, ids, num_max_tokens_per_rank=BUCKET + 1)
                     with TestCase().assertRaises(ValueError):
-                        buf.dispatch_send(x, ids, do_expand=True)
+                        buf.dispatch_send(x, ids, do_expand=True, expert_alignment=0)
                     with TestCase().assertRaises(ValueError):
                         buf.dispatch_send(x.float(), ids)
                 handle, _ = buf.dispatch_send(
@@ -298,7 +298,7 @@ def run(me, layout, repeats, weighted):
                     with TestCase().assertRaisesRegex(ValueError, "bucket"):
                         buf.dispatch_recv(num_max_tokens_per_rank=BUCKET + 1)
                     with TestCase().assertRaises(ValueError):
-                        buf.dispatch_recv(do_expand=True)
+                        buf.dispatch_recv(do_expand=True, expert_alignment=0)
                 received, ids, weights, handle, _ = buf.dispatch_recv(
                     with_weights=weighted or r == 5,
                     do_cpu_sync=not bounded,

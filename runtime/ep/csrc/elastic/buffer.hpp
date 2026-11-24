@@ -820,20 +820,20 @@ public:
     DispatchResult dispatch_send(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                  const std::optional<torch::Tensor>& topk_weights,
                                  int num_max_tokens_per_rank, int expert_alignment, int num_sms,
-                                 const std::optional<torch::Tensor>& sf = std::nullopt) const {
+                                 const std::optional<torch::Tensor>& sf = std::nullopt, bool do_expand = false) const {
         require_afd_role(AFDRole::Attention);
         return dispatch_internal(
             x, sf, topk_idx, topk_weights, std::nullopt, num_max_tokens_per_rank, expert_alignment, num_sms,
-            std::nullopt, std::nullopt, false, false, true, false, false, false, false, false, 0, kSend);
+            std::nullopt, std::nullopt, false, false, true, false, do_expand, false, false, false, 0, kSend);
     }
 
     DispatchResult dispatch_recv(int num_max_tokens_per_rank, int expert_alignment, int num_sms,
-                                 bool do_cpu_sync, bool with_weights = false) const {
+                                 bool do_cpu_sync, bool do_expand = false, bool with_weights = false) const {
         require_afd_role(AFDRole::FFN);
         return dispatch_internal(
             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
             num_max_tokens_per_rank, expert_alignment, num_sms, std::nullopt, std::nullopt,
-            false, false, false, do_cpu_sync, false, false, false, false, 0, kRecv, with_weights);
+            false, false, false, do_cpu_sync, do_expand, false, false, false, 0, kRecv, with_weights);
     }
 
     std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
@@ -865,20 +865,24 @@ public:
 
     CombineResult combine_send(const torch::Tensor& x, const torch::Tensor& src_metadata,
                                const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
-                               bool recv_count_is_exact, int num_max_tokens_per_rank, int num_sms) const {
+                               bool recv_count_is_exact, int num_max_tokens_per_rank, int num_sms,
+                               bool use_expanded_layout = false, int num_expanded_tokens = 0) const {
         require_afd_role(AFDRole::FFN);
+        EP_HOST_ASSERT((not use_expanded_layout or (x.dim() == 2 and x.size(0) == num_expanded_tokens)) and
+                       "Expanded AFD replies must match the dispatch row allocation");
         return combine_internal(
             x, std::nullopt, std::nullopt, std::nullopt, src_metadata, std::nullopt,
             psum_num_recv_tokens_per_scaleup_rank, std::nullopt, std::nullopt, recv_count_is_exact,
-            num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, false, kSend);
+            num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, use_expanded_layout, kSend);
     }
 
     CombineResult combine_recv(const torch::Tensor& combined_topk_idx, const std::optional<torch::Tensor>& bias_0,
-                               const std::optional<torch::Tensor>& bias_1, int num_max_tokens_per_rank, int num_sms) const {
+                               const std::optional<torch::Tensor>& bias_1, int num_max_tokens_per_rank, int num_sms,
+                               bool use_expanded_layout = false) const {
         require_afd_role(AFDRole::Attention);
         return combine_internal(
             std::nullopt, std::nullopt, bias_0, bias_1, std::nullopt, combined_topk_idx, std::nullopt, std::nullopt,
-            std::nullopt, false, num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, false, kRecv);
+            std::nullopt, false, num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, use_expanded_layout, kRecv);
     }
 
 private:
@@ -903,10 +907,11 @@ private:
         const bool is_recv = direction == kRecv;
         EP_HOST_ASSERT(x.has_value() == (not is_recv) and topk_idx.has_value() == (not is_recv));
         if (afd) {
-            EP_HOST_ASSERT(not do_expand and not do_zero_padding and not zero_copy and
-                           not use_tma_aligned_col_major_sf and "AFD dispatch uses compact, ordinary-copy rows");
+            EP_HOST_ASSERT(not do_zero_padding and not zero_copy and
+                           not use_tma_aligned_col_major_sf and "AFD dispatch uses ordinary-copy rows");
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
-            EP_HOST_ASSERT(expert_alignment == 1 and "Compact AFD dispatch requires expert_alignment=1");
+            EP_HOST_ASSERT((expert_alignment > 0 and (do_expand or expert_alignment == 1)) and
+                           "AFD expert alignment must be positive and compact dispatch requires alignment 1");
             EP_HOST_ASSERT(not is_recv or not topk_weights);
             EP_HOST_ASSERT(not is_send or (do_handle_copy and not do_cpu_sync and not cumulative_local_expert_recv_stats) and "Invalid AFD dispatch send options");
             EP_HOST_ASSERT((not is_send or sf.has_value() == afd->fp8_dispatch) and "AFD dispatch scales must match the configured wire");
@@ -961,7 +966,8 @@ private:
         const int num_max_channels = topology::get_num_launch_sms() * kNumMaxChannelsPerSM;
         if (afd) {
             const int64_t max_compact_rows = static_cast<int64_t>(wire_token_capacity) * afd->num_attention_ranks;
-            const int64_t max_expanded_rows = max_compact_rows * std::min(afd->num_topk, num_local_experts);
+            const int64_t max_expanded_rows = max_compact_rows * std::min(afd->num_topk, num_local_experts) +
+                static_cast<int64_t>(expert_alignment - 1) * (num_local_experts + 1);
             EP_HOST_ASSERT(max_expanded_rows <= std::numeric_limits<int>::max() and "AFD receive counters exceed int32");
         }
 
@@ -1419,7 +1425,7 @@ private:
                        psum_num_recv_tokens_per_scaleup_rank.has_value() == (not is_recv) and
                        combined_topk_idx.has_value() == (not is_send));
         if (afd) {
-            EP_HOST_ASSERT(not use_expanded_layout and not topk_weights and "AFD combine uses compact BF16 replies");
+            EP_HOST_ASSERT(not topk_weights and "AFD combine expects preweighted BF16 replies");
             EP_HOST_ASSERT(not is_send or (not bias_0 and not bias_1));
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
         }
@@ -1633,13 +1639,19 @@ static void register_apis(pybind11::module_& m) {
         .def("dispatch_send", &ElasticBuffer::dispatch_send,
              pybind11::arg("x"), pybind11::arg("topk_idx"), pybind11::arg("topk_weights"),
              pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
-             pybind11::arg("sf") = pybind11::none())
+             pybind11::arg("sf") = pybind11::none(), pybind11::arg("do_expand") = false)
         .def("dispatch_recv", &ElasticBuffer::dispatch_recv,
              pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
-             pybind11::arg("do_cpu_sync"), pybind11::arg("with_weights") = false)
+             pybind11::arg("do_cpu_sync"), pybind11::arg("do_expand") = false, pybind11::arg("with_weights") = false)
         .def("combine", &ElasticBuffer::combine)
-        .def("combine_send", &ElasticBuffer::combine_send)
-        .def("combine_recv", &ElasticBuffer::combine_recv);
+        .def("combine_send", &ElasticBuffer::combine_send,
+             pybind11::arg("x"), pybind11::arg("src_metadata"), pybind11::arg("psum_num_recv_tokens_per_scaleup_rank"),
+             pybind11::arg("recv_count_is_exact"), pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("num_sms"),
+             pybind11::arg("use_expanded_layout") = false, pybind11::arg("num_expanded_tokens") = 0)
+        .def("combine_recv", &ElasticBuffer::combine_recv,
+             pybind11::arg("combined_topk_idx"), pybind11::arg("bias_0"), pybind11::arg("bias_1"),
+             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("num_sms"),
+             pybind11::arg("use_expanded_layout") = false);
     m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
     m.def("calculate_zero_copy_arena_size", &ElasticBuffer::calculate_zero_copy_arena_size);
     m.def("get_elastic_buffer_alignment", [=]() {

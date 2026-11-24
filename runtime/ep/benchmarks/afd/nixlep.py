@@ -1,17 +1,72 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
-"""Compact eager benchmark adapter for nixlEP."""
+"""Ordinary-copy benchmark adapter for nixlEP."""
 
 import hashlib
+from collections import namedtuple
 from pathlib import Path
 
 import torch
 
 from nixl.runtime import ep  # type: ignore[attr-defined]
 
+WorkerReceive = namedtuple(
+    "WorkerReceive",
+    "recv_x recv_sf recv_topk_weights expert_ends expert_counts host_counts receipt",
+)
+
+
+def source_dispatch(buffer, x, ids, weights, scale, bucket, alignment):
+    payload = x if scale is None else (x, scale)
+    handle, _ = buffer.dispatch_send(
+        payload,
+        ids,
+        weights,
+        num_max_tokens_per_rank=bucket,
+        do_expand=True,
+        expert_alignment=alignment,
+    )
+    return handle
+
+
+def worker_receive(buffer, bucket, alignment, do_cpu_sync=False):
+    payload, _, weights, handle, _ = buffer.dispatch_recv(
+        with_weights=True,
+        num_max_tokens_per_rank=bucket,
+        do_expand=True,
+        expert_alignment=alignment,
+        do_cpu_sync=do_cpu_sync,
+    )
+    x, sf = payload if isinstance(payload, tuple) else (payload, None)
+    return WorkerReceive(
+        x,
+        sf,
+        weights,
+        handle.psum_num_recv_tokens_per_expert,
+        handle.num_unaligned_recv_tokens_per_expert,
+        handle.num_recv_tokens_per_expert_list,
+        handle,
+    )
+
+
+def worker_reply(buffer, output, receipt):
+    buffer.combine_send(output, receipt)
+
+
+def source_collect(buffer, handle):
+    return buffer.combine_recv(handle)[0]
+
 
 class Arm:
     def __init__(self, name, config, overrides, args, group):
+        self.layout = overrides.pop("receive_layout", "expert-major")
+        if self.layout not in ("compact", "expert-major"):
+            raise ValueError(f"unsupported receive layout: {self.layout}")
+        self.alignment = overrides.pop(
+            "expert_alignment", 128 if self.layout == "expert-major" else 1
+        )
+        if self.layout == "compact" and self.alignment != 1:
+            raise ValueError("compact receive requires expert_alignment=1")
         if overrides:
             raise ValueError(f"unsupported nixlEP options: {sorted(overrides)}")
         if args.execution != "eager":
@@ -43,7 +98,7 @@ class Arm:
         payload = x if scale is None else (x, scale)
         self.result = None
 
-        def exchange(verify=False):
+        def compact(verify=False):
             if self.role == "attention":
                 source_handle, _ = self.buffer.dispatch_send(
                     payload, ids, weights, num_max_tokens_per_rank=n
@@ -72,6 +127,29 @@ class Arm:
                         local_weights[valid] == 1 / self.config["top_k"]
                     ).item()
 
+        expert = None
+
+        def expanded(verify=False):
+            nonlocal expert
+            if self.role == "attention":
+                handle = source_dispatch(
+                    self.buffer, x, ids, weights, scale, n, self.alignment
+                )
+                self.result = source_collect(self.buffer, handle)
+            else:
+                received = worker_receive(self.buffer, n, self.alignment)
+                if expert is None:
+                    expert = torch.ones_like(received.recv_x, dtype=torch.bfloat16)
+                worker_reply(self.buffer, expert, received.receipt)
+                if verify:
+                    assert received.expert_counts.tolist() == counts
+                    for count, end in zip(
+                        counts, received.expert_ends.tolist(), strict=True
+                    ):
+                        valid = received.recv_topk_weights[end - count : end]
+                        assert torch.all(valid == 1 / self.config["top_k"]).item()
+
+        exchange = expanded if self.layout == "expert-major" else compact
         self.exchange = exchange
         exchange(verify=True)
         exchange()
@@ -99,12 +177,16 @@ class Arm:
             "config": self.config,
             "native_source_sha256": sha.hexdigest(),
             "backend_binary": str(native),
-            "receive_layout": "compact",
-            "reply_preparation": "per-exchange count of local selections and BF16 row materialization inside timing",
+            "receive_layout": self.layout,
+            "reply_preparation": (
+                "preweighted BF16 ones prepared outside timing"
+                if self.layout == "expert-major"
+                else "per-exchange count of local selections and BF16 row materialization inside timing"
+            ),
             "registered_bytes": self.buffer.num_bytes,
             "transport_sms": self.buffer.get_topology()[1],
             "transport_mode": self.buffer.get_topology()[0],
-            "expert_alignment": 1,
+            "expert_alignment": self.alignment,
             "host_receive_counts": False,
         }
 

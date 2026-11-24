@@ -1556,6 +1556,7 @@ class ElasticBuffer:
         """Send attention rows and retain the local handle for combine_recv.
 
         FP8 send takes prequantized E4M3FN rows and FP32 block-128 scales.
+        Use the same do_expand and expert_alignment on all endpoints of an exchange.
         Each buffer supports one outstanding AFD exchange. The caller's CUDA
         stream waits for communication, and this send waits for FFN receivers
         to enter dispatch_recv. When switching streams, order the streams
@@ -1567,14 +1568,14 @@ class ElasticBuffer:
             raise ValueError(
                 "AFD route dimensions disagree with the buffer configuration"
             )
-        bucket, num_sms = self._afd_dispatch_options(
+        bucket, alignment, num_sms = self._afd_dispatch_options(
             num_max_tokens_per_rank, expert_alignment, do_expand, len(x)
         )
         result = self.runtime.dispatch_send(
-            x, topk_idx, topk_weights, bucket, 1, num_sms, sf
+            x, topk_idx, topk_weights, bucket, alignment, num_sms, sf, do_expand
         )
         _, _, _, _, handle, event = self._unpack_result(
-            result, False, 1, bucket, num_sms, False
+            result, do_expand, alignment, bucket, num_sms, False
         )
         return handle, event
 
@@ -1588,29 +1589,33 @@ class ElasticBuffer:
         expert_alignment: Optional[int] = None,
     ) -> Tuple[
         Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
-        torch.Tensor,
+        Optional[torch.Tensor],
         Optional[torch.Tensor],
         EPHandle,
         EventOverlap,
     ]:
-        """Receive one compact row per routed source token with its local expert IDs.
+        """Receive compact rows or expert-major rows with do_expand=True.
 
         The FP8 payload is a pair of E4M3FN rows and row-major FP32 scales.
+        Expanded receive returns a row per expert selection and an optional
+        weight per row. The handle gives the device expert boundaries.
         Set with_weights=True to return routing weights; omitted send weights are ones.
-        The receive layout uses the configured capacity even if this call
-        passes a smaller bucket. With do_cpu_sync=False, storage holds
-        the configured capacity times the number of attention ranks. Use
-        the handle's device count to identify the valid rows.
+        The default returns None for weights. Compact receive also returns local expert IDs.
+
+        With do_cpu_sync=False, compact storage reserves the configured
+        capacity times the number of attention ranks. Expanded storage also
+        reserves the worst-case expert selections and alignment padding.
+        Use the handle's device counts to identify valid rows.
         """
         self._require_role(AFDRole.FFN)
-        bucket, num_sms = self._afd_dispatch_options(
+        bucket, alignment, num_sms = self._afd_dispatch_options(
             num_max_tokens_per_rank, expert_alignment, do_expand, 0
         )
         result = self.runtime.dispatch_recv(
-            bucket, 1, num_sms, do_cpu_sync, with_weights
+            bucket, alignment, num_sms, do_cpu_sync, do_expand, with_weights
         )
         recv_x, recv_sf, recv_ids, recv_weights, handle, event = self._unpack_result(
-            result, False, 1, bucket, num_sms, do_cpu_sync
+            result, do_expand, alignment, bucket, num_sms, do_cpu_sync
         )
         payload = (recv_x, recv_sf) if recv_sf is not None else recv_x
         return payload, recv_ids, recv_weights, handle, event
@@ -1650,11 +1655,14 @@ class ElasticBuffer:
             raise ValueError("AFD dispatch is pending combine")
         check_torch_deterministic()
         bucket = value_or(bucket, self.num_max_tokens_per_rank)
-        if expand or alignment not in (None, 1):
-            raise ValueError("AFD currently supports compact dispatch with alignment 1")
+        alignment = value_or(alignment, 1)
+        if alignment <= 0 or (not expand and alignment != 1):
+            raise ValueError(
+                "AFD expert alignment must be positive and compact dispatch requires alignment 1"
+            )
         if not 0 < bucket <= self.num_max_tokens_per_rank or num_tokens > bucket:
             raise ValueError("AFD token bucket outside configured capacity")
-        return bucket, self._dispatch_sms(self._afd_topk, 0)
+        return bucket, alignment, self._dispatch_sms(self._afd_topk, 0)
 
     def _unpack_result(
         self,
@@ -1801,7 +1809,7 @@ class ElasticBuffer:
         handle: EPHandle,
         topk_weights: Optional[torch.Tensor] = None,
     ) -> EventOverlap:
-        """Return one weighted BF16 reply for each compact row received on this FFN.
+        """Return preweighted BF16 replies using the dispatch handle's layout.
 
         Use the dispatch handle once. The caller's CUDA stream waits for
         communication, and this send waits for attention ranks to enter
@@ -1811,7 +1819,7 @@ class ElasticBuffer:
         self._require_role(AFDRole.FFN)
         if topk_weights is not None:
             raise ValueError(
-                "Apply routing weights to the compact BF16 replies before combine_send"
+                "Apply routing weights to the BF16 replies before combine_send"
             )
         self._check_afd_handle(handle)
         _, _, event = self.runtime.combine_send(
@@ -1821,6 +1829,8 @@ class ElasticBuffer:
             handle.recv_count_is_exact,
             handle.num_max_tokens_per_rank,
             handle.num_sms,
+            handle.do_expand,
+            handle.num_expanded_tokens,
         )
         self._afd_pending_handle = None
         return EventOverlap(event)
@@ -1841,6 +1851,7 @@ class ElasticBuffer:
             bias_1,
             handle.num_max_tokens_per_rank,
             handle.num_sms,
+            handle.do_expand,
         )
         self._afd_pending_handle = None
         return combined_x, weights, EventOverlap(event)

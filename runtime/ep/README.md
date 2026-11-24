@@ -169,10 +169,9 @@ The nixlEP arm uses the installed NIXL-EP V2 runtime. For a nixlEP-only screen,
 pass `--arms '{"nixlep":{}}'` before the `--` separator.
 
 Read the per-repeat JSON alongside the summary to compare routes, receive
-layouts, and the maximum attention-rank CUDA-event time. The BF16 nixlEP arm
-receives a compact row for each token sent to a destination FFN. The reference
-arms expose expert-major rows. Each IBM arm reuses a prefilled BF16 reply.
-The nixlEP arm counts local expert selections and materializes their summed
-reply across the bounded receive allocation inside the timed exchange. This
-counts selected experts without reading their output rows. The reference arms
-include their reduction in the timed library call.
+layouts, and the maximum attention-rank CUDA-event time. All three arms default to expert-major output, expert alignment 128, and
+prefilled BF16 replies prepared outside timing. Select BF16 or prequantized
+block-128 FP8 dispatch with `--payload`. To reproduce the compact nixlEP
+baseline, pass `--arms '{"nixlep":{"receive_layout":"compact"}}'` before the
+`--` separator. That arm counts local expert selections and materializes a
+BF16 reply per compact row inside the timed exchange.
