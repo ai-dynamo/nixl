@@ -162,8 +162,9 @@ python -m benchmarks.afd.screen --nproc 4 --repeats 3 --output /tmp/afd.json -- 
 The screen uses nixlEP as its control. Each repeat launches nixlEP, afdEP, and
 FastAFD in fresh processes on the same GPUs. The two reference arms require
 afdEP with its vendored DeepEP transport. The FastAFD arm runs the FastAFD
-DeepEP M2N contract using that transport. All three arms run eagerly with host
-receive-count reads disabled during timing. Use a repeat count divisible by
+DeepEP M2N contract using that transport. The example runs all arms eagerly with host
+receive-count reads disabled during timing. For a separate graph-replay screen,
+select `--execution graph`; each arm warms up and captures before timing. Use a repeat count divisible by
 three to give each arm equal time in each launch-order position.
 The nixlEP arm uses the installed NIXL-EP V2 runtime. For a nixlEP-only screen,
 pass `--arms '{"nixlep":{}}'` before the `--` separator.

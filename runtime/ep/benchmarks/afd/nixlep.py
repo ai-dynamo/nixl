@@ -69,8 +69,6 @@ class Arm:
             raise ValueError("compact receive requires expert_alignment=1")
         if overrides:
             raise ValueError(f"unsupported nixlEP options: {sorted(overrides)}")
-        if args.execution != "eager":
-            raise ValueError("nixlEP requires --execution eager")
         if config["ffn_ranks_per_domain"] not in (0, config["ffn_ranks"]):
             raise ValueError("nixlEP requires a single NVLink domain")
         if config["num_sms"]:
@@ -160,11 +158,18 @@ class Arm:
                         assert torch.all(valid == 1 / self.config["top_k"]).item()
 
         exchange = expanded if self.layout == "expert-major" else compact
-        self.exchange = exchange
         exchange(verify=True)
         exchange()
         torch.cuda.synchronize()
         torch.distributed.barrier()
+        # Keep converted route IDs and the prefilled reply alive at their captured addresses.
+        self.eager_exchange = exchange
+        self.graph = None
+        if graph:
+            self.graph = torch.cuda.CUDAGraph()
+            with torch.cuda.graph(self.graph):
+                exchange()
+        self.exchange = self.graph.replay if graph else exchange
 
     def check(self, top_k):
         if self.role == "attention":
@@ -205,7 +210,7 @@ class Arm:
         }
 
     def release(self):
-        self.exchange = self.result = None
+        self.exchange = self.graph = self.eager_exchange = self.result = None
 
     def close(self):
         self.buffer.destroy()

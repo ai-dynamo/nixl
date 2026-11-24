@@ -118,6 +118,7 @@ fi
     "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd_fp8.py
     "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd_plugin.py
     "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd_sizing.py
+    "${VLLM_PYTHON}" runtime/ep/tests/elastic/test_afd_graph.py
 )
 
 echo "==== nixl_ep elastic tests done ===="
