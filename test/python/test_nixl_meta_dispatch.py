@@ -225,6 +225,33 @@ def test_rocm_from_core_under_rocm_path(env):
     assert env.utils.find_rocm() == on_disk(prefix, (10, 2))
 
 
+def test_rocm_version_from_core_info_with_hip_at_root(env):
+    # Layout: version at <root>/core/.info/version, HIP at <root>/lib.
+    # Meson reads the nested version file; the runtime loader must match it.
+    root = env.rocm
+    (root / "core" / ".info").mkdir(parents=True)
+    (root / "core" / ".info" / "version").write_text("10.1.0\n")
+    (root / "lib").mkdir()
+    (root / "lib" / "libamdhip64.so.7").write_text("")
+    assert env.utils.find_rocm() == on_disk(root, (10, 1))
+
+
+def test_rocm_version_from_header_fallback(env):
+    # Layout: no version file, only rocm-core/rocm_version.h with defines.
+    # Matches Meson's third fallback so the runtime selects the same backend.
+    root = env.rocm
+    (root / "include" / "rocm-core").mkdir(parents=True)
+    header = (
+        "#define ROCM_VERSION_MAJOR 10\n"
+        "#define ROCM_VERSION_MINOR 2\n"
+        "#define ROCM_VERSION_PATCH 0\n"
+    )
+    (root / "include" / "rocm-core" / "rocm_version.h").write_text(header)
+    (root / "lib").mkdir()
+    (root / "lib" / "libamdhip64.so.7").write_text("")
+    assert env.utils.find_rocm() == on_disk(root, (10, 2))
+
+
 def test_rocm_from_the_only_versioned_core(env):
     # The component packages: <root>/core-<X.Y>, with links to it next to it.
     prefix = set_rocm_install(env, "10.1.0", "core-10.1")

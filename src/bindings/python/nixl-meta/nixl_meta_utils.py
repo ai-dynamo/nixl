@@ -272,16 +272,35 @@ def _pip_rocm_root() -> pathlib.Path | None:
         return None
 
 
+def _rocm_version_from_header(root: pathlib.Path) -> tuple[int, int] | None:
+    """ROCm version from rocm-core/rocm_version.h, matching Meson's third fallback."""
+    try:
+        text = (root / "include" / "rocm-core" / "rocm_version.h").read_text()
+    except (OSError, UnicodeDecodeError):
+        return None
+    major = re.search(r"#define\s+ROCM_VERSION_MAJOR\s+(\d+)", text)
+    minor = re.search(r"#define\s+ROCM_VERSION_MINOR\s+(\d+)", text)
+    if major and minor:
+        return (int(major.group(1)), int(minor.group(1)))
+    return None
+
+
 def _rocm_install(root: pathlib.Path) -> RocmInstall | None:
-    """The ROCm install at a prefix, read from its version file.
+    """The ROCm install at a prefix, read from its version file or header.
 
     A prefix without the HIP runtime is not one: the process cannot be using
     it.
     """
-    try:
-        version = parse_rocm_version((root / ".info" / "version").read_text())
-    except (OSError, UnicodeDecodeError):
-        return None
+    version = None
+    for version_file in (root / ".info" / "version", root / "core" / ".info" / "version"):
+        try:
+            version = parse_rocm_version(version_file.read_text())
+        except (OSError, UnicodeDecodeError):
+            continue
+        if version is not None:
+            break
+    if version is None:
+        version = _rocm_version_from_header(root)
     if version is None or not any((root / "lib").glob(_HIP_RUNTIME_LIBS[0] + "*")):
         return None
     return RocmInstall(root, version, str(root))
