@@ -149,3 +149,30 @@ The other scripts under `tests/` are listed below:
   the token count; it needs `NIXL_EP_ADAPTIVE_NUM_LAUNCH_SMS`.
 - `tests/elastic/compile_probe_adaptive.cu`: a compile-only check of the kernel
   templates, built by hand with `nvcc`.
+
+## AFD communication benchmark
+
+From `runtime/ep`, run the screen on four GPUs in one NVLink domain:
+
+```bash
+python -m benchmarks.afd.screen --nproc 4 --repeats 3 --output /tmp/afd.json -- \
+    --execution eager --payload bf16 --hybrid off --routing random --tokens 1 32 128 2048
+```
+
+The screen uses nixlEP as its control. Each repeat launches nixlEP, afdEP, and
+FastAFD in fresh processes on the same GPUs. The two reference arms require
+afdEP with its vendored DeepEP transport. The FastAFD arm runs the FastAFD
+DeepEP M2N contract using that transport. All three arms run eagerly with host
+receive-count reads disabled during timing. Use a repeat count divisible by
+three to give each arm equal time in each launch-order position.
+The nixlEP arm uses the installed NIXL-EP V2 runtime. For a nixlEP-only screen,
+pass `--arms '{"nixlep":{}}'` before the `--` separator.
+
+Read the per-repeat JSON alongside the summary to compare routes, receive
+layouts, and the maximum attention-rank CUDA-event time. The BF16 nixlEP arm
+receives a compact row for each token sent to a destination FFN. The reference
+arms expose expert-major rows. Each IBM arm reuses a prefilled BF16 reply.
+The nixlEP arm counts local expert selections and materializes their summed
+reply across the bounded receive allocation inside the timed exchange. This
+counts selected experts without reading their output rows. The reference arms
+include their reduction in the timed library call.

@@ -1,0 +1,18 @@
+# SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-License-Identifier: Apache-2.0
+
+afdEP-comm
+Copyright afdEP-comm contributors (formerly afdEP).
+
+The Python benchmark drivers adapt benchmarks/comm.py, benchmarks/fastafd.py,
+and benchmarks/screen.py from afdEP-comm revision
+575d2f9d713bfef5d590e915ab23e390003c3f7c under the Apache License, Version 2.0.
+The upstream source and notices are available at
+https://github.com/afdEP/afdEP-comm/tree/575d2f9d713bfef5d590e915ab23e390003c3f7c.
+
+The reference arms run against an external afdEP-comm installation. Its native
+DeepEP V2 transport is derived from DeepEP, Copyright (c) 2025 DeepSeek, as
+carried by FastAFD (https://github.com/hao-ai-lab/FastAFD), MIT License,
+Copyright (c) 2026 sgl-project, and by the AFD plugin
+(https://github.com/ms-llmd/afd-plugin), Apache-2.0. See the upstream
+THIRD_PARTY_NOTICES.md for the native transport and plugin attributions.
