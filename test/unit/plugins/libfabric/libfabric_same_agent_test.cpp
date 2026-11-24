@@ -125,6 +125,11 @@ main() {
                              kAgent);
         nixl_exit_on_failure(status, "Same-agent transfer " + to_string(iter) + " failed", kAgent);
 
+        // Release as soon as it reports done, as a caller would: if done came early, the writes
+        // still in flight complete on a freed handle, and the next transfer's handle may reuse
+        // this address.
+        nixl_exit_on_failure(agent.releaseXferReq(req), "Failed to release transfer", kAgent);
+
         // Done must mean every write landed.
         nixl_exit_on_failure(allBytesAre(dst, kTotal, pattern),
                              "Same-agent transfer " + to_string(iter) +
@@ -146,9 +151,6 @@ main() {
                              "Notification for same-agent transfer " + to_string(iter) +
                                  " never arrived",
                              kAgent);
-
-        // Release right away: the next transfer's handle may reuse this address.
-        nixl_exit_on_failure(agent.releaseXferReq(req), "Failed to release transfer", kAgent);
     }
 
     nixl_exit_on_failure(agent.deregisterMem(reg, &extra), "Failed to deregister memory", kAgent);
