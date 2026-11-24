@@ -2186,7 +2186,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     uint64_t *device_post_duration_ns = nullptr;
     uint64_t *device_xfer_duration_ns = nullptr;
     nixl_status_t *device_status = nullptr;
-    auto device_buffer_guard =
+    auto duration_buffer_guard =
         make_scope_guard([&device_post_duration_ns, &device_xfer_duration_ns, &device_status] {
             auto free_buffer = [](void *buffer) {
                 if (buffer == nullptr) {
@@ -2194,8 +2194,8 @@ execDeviceTransfer(nixlMemViewH local_mvh,
                 }
                 const cudaError_t error = cudaFree(buffer);
                 if (error != cudaSuccess) {
-                    std::cerr << "Failed to free Device API buffer: " << cudaGetErrorString(error)
-                              << std::endl;
+                    std::cerr << "Failed to free Device API duration buffer: "
+                              << cudaGetErrorString(error) << std::endl;
                 }
             };
             free_buffer(device_post_duration_ns);
@@ -2225,13 +2225,12 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.regionSize = region_size;
     params.numIterations = static_cast<uint64_t>(per_group_iter);
     params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
-    params.postsPerDoorbell = xferBenchConfig::device_posts_per_doorbell;
+    params.putsPerSubmit = xferBenchConfig::device_puts_per_submit;
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
-    // Time launch and device synchronization; manage and inspect output buffers outside timing.
+    params.deviceStatus = device_status;
     xferBenchTimer total_timer;
-    nixl_status_t st =
-        nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads), device_status);
+    nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads));
     const nixlTime::us_t total_duration = total_timer.lap();
     stats.total_duration.add(total_duration);
     if (__builtin_expect(st != NIXL_SUCCESS, 0)) {
