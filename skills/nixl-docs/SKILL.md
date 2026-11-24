@@ -68,6 +68,8 @@ Transfer backends, etcd metadata exchange, telemetry events and exporters, NIXLB
 - [INFINIA](../../fern/docs/pages/user-guide/backends/infinia.md): DDN INFINIA backend for asynchronous transfers between DRAM or VRAM and object storage.
 - [DOCA_MEMOS](../../fern/docs/pages/user-guide/backends/doca-memos.md): DOCA_MEMOS backend for key-value transfers between DRAM and an NVMe KV device on BlueField.
 - [GUSLI](../../fern/docs/pages/user-guide/backends/gusli.md): Block-level I/O backend for transfers between block storage devices and DRAM.
+- [Redis](../../fern/docs/pages/user-guide/backends/redis.md): Key-value storage backend for transfers between DRAM and a Redis server.
+- [AMD Infinity Storage (AIS)](../../fern/docs/pages/user-guide/backends/rocm-ais.md): GPU direct-storage backend for transfers between AMD GPU memory and files via hipFile.
 - [Metadata Exchange with etcd](../../fern/docs/pages/user-guide/etcd-metadata-exchange.md): Configure etcd-based distributed metadata exchange for NIXL agents -- key prefix scheme, watcher lifecycle, and Prometheus integration.
 - [Telemetry Guide](../../fern/docs/pages/user-guide/telemetry.md): Understanding NIXL's telemetry system -- event types, metrics, configuration, and monitoring with Prometheus.
 - [Logging Guide](../../fern/docs/pages/user-guide/logging.md): Configuring NIXL's logging -- verbosity, per-process log files, filename templates, size limits, and failure behavior.
