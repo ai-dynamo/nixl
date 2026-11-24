@@ -1323,6 +1323,8 @@ TEST_F(ucxTraceContextPropagation, FailedPostCarriesUcxsNativeStatus) {
     for (const auto &[engine, params, desc_count] :
          {std::tuple{"default", nixl_b_params_t{}, size_t{1}},
           std::tuple{"thread pool", threadPoolParams(), split_desc_count}}) {
+        const gtest::LogIgnoreGuard in_progress(
+            "request handle .* released with .* requests in progress");
         nixl::trace::TraceContext context;
         std::uint64_t request_id = 0;
         nixl_status_t status = NIXL_IN_PROG;
@@ -1370,6 +1372,8 @@ TEST_F(ucxTraceContextPropagation, PostToAFailedEndpointCarriesUcxsNativeStatus)
         const gtest::LogIgnoreGuard efa(efa_warning);
         const gtest::LogIgnoreGuard disconnected(
             "was disconnected after transfer request creation");
+        const gtest::LogIgnoreGuard in_progress(
+            "request handle .* released with .* requests in progress");
         std::optional<nixlAgent> target(std::in_place, target_name, idleConfig());
         nixlBackendH *target_backend = nullptr;
         ASSERT_EQ(target->createBackend("UCX", {}, target_backend), NIXL_SUCCESS);
