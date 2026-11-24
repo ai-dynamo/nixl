@@ -73,20 +73,29 @@ For example, `device_list="mlx5_0, mlx5_1"` sets `NET_DEVICES` to
 `mlx5_0:1,mlx5_1:1`. With `"mlx5_0,mlx5_1"`, NIXL sees one item and passes
 `mlx5_0,mlx5_1:1` to UCX.
 
-NIXL applies `device_list` before `engine_config`. With `UCX_NET_DEVICES`
-unset, a `NET_DEVICES` entry in `engine_config` overrides `device_list`.
-With `UCX_NET_DEVICES` set, NIXL skips that `engine_config` entry and an
-explicit `device_list` takes precedence over the environment.
+NIXL applies `device_list` before `engine_config`. If both
+`NIXL_UCX_NET_DEVICES` and `UCX_NET_DEVICES` are unset, a `NET_DEVICES` entry
+in `engine_config` overrides `device_list`. If either variable is set, NIXL
+skips that entry and an explicit `device_list` overrides the environment.
 
 ## Environment Variables
 
+The four plugin settings below also accept their former `NIXL_UCX_` names
+when the corresponding `NIXL_PLUGIN_UCX_` setting is absent. Using a former
+name as a fallback logs a deprecation warning.
+
 | Variable | Default | Description |
 | -------- | ------- | ----------- |
-| `NIXL_UCX_SGL_ENABLE` | `true` with UCX SGL support, otherwise `false` | Enables scatter-gather list (SGL) offload for writes on builds with SGL support. |
-| `NIXL_UCX_WARNING_TIMEOUT` | `5000` ms | Warning interval while NIXL retries remote device memory-list creation on `UCS_ERR_NOT_CONNECTED`. Use integer milliseconds, such as `10000`. |
-| `NIXL_UCX_EXPECTED_SONAME` | unset | A nonempty value must appear in the library path for `ucp_get_version_string` or plugin initialization fails. |
-| `NIXL_UCX_DEEPBIND` | `false` | Requests `RTLD_DEEPBIND` for the dynamic UCX plugin on platforms that support it. An invalid boolean value logs a warning and enables the flag. |
-| `UCX_*` | — | UCX environment settings take precedence over NIXL tuning defaults and `engine_config`. An explicit `device_list` overrides `UCX_NET_DEVICES`. |
+| `NIXL_PLUGIN_UCX_SGL_ENABLE` | `true` with UCX SGL support, otherwise `false` | Enables scatter-gather list (SGL) offload for writes on builds with SGL support. |
+| `NIXL_PLUGIN_UCX_WARNING_TIMEOUT` | `5000` ms | Warning interval while NIXL retries remote device memory-list creation on `UCS_ERR_NOT_CONNECTED`. Use integer milliseconds, such as `10000`. |
+| `NIXL_PLUGIN_UCX_EXPECTED_SONAME` | unset | A nonempty value must appear in the library path for `ucp_get_version_string` or plugin initialization fails. |
+| `NIXL_PLUGIN_UCX_DEEPBIND` | `false` | Requests `RTLD_DEEPBIND` for the dynamic UCX plugin on platforms that support it. An invalid boolean value logs a warning and enables the flag. |
+
+For UCX protocol and transport settings, NIXL checks `NIXL_UCX_<X>` before
+`UCX_<X>`. For example, `NIXL_UCX_TLS` overrides `UCX_TLS` for NIXL's UCX
+context. Either environment setting takes precedence over NIXL tuning defaults
+and matching `engine_config` entries. Process-wide settings such as
+`UCX_LOG_LEVEL` use the global `UCX_` prefix.
 
 ## Building
 
@@ -96,7 +105,7 @@ Point the build at a custom UCX installation with
 [UCX build options](../../../fern/docs/pages/user-guide/backends/ucx.md#build-options).
 UCX SGL support is detected at compile time (it requires the
 `ucp_dt_local_sgl_t` type) and enables the write-path SGL offload by default
-(`NIXL_UCX_SGL_ENABLE`).
+(`NIXL_PLUGIN_UCX_SGL_ENABLE`).
 
 ## Example Usage
 
