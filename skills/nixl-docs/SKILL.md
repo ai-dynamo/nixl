@@ -111,6 +111,7 @@ RDMA, GPU-initiated, and peer-to-peer transfer backends.
 - [Libfabric Plugin](../../src/plugins/libfabric/README.md): Libfabric OFI multi-rail RDMA backend with GPU Direct, EFA, Neuron, and NUMA-aware rails.
 - [Mooncake Backend Plugin](../../src/plugins/mooncake/README.md): Mooncake Transfer Engine backend for TCP, RDMA, CXL shared memory, and NVMe-oF transfers.
 - [UCCL Backend Plugin](../../src/plugins/uccl/README.md): UCCL P2P backend for RDMA, TCP, TCP-X, EFA, intranode transfers, and vLLM KV-cache disaggregation.
+- [NIXL UCX Plugin](../../src/plugins/ucx/README.md): UCX engine variants, prerequisites, device selection, proxy configuration, and environment settings.
 
 ## Storage backend plugins
 File, block, object, and key-value storage backends.
