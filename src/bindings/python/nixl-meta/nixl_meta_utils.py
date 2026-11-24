@@ -292,7 +292,10 @@ def _rocm_install(root: pathlib.Path) -> RocmInstall | None:
     it.
     """
     version = None
-    for version_file in (root / ".info" / "version", root / "core" / ".info" / "version"):
+    for version_file in (
+        root / ".info" / "version",
+        root / "core" / ".info" / "version",
+    ):
         try:
             version = parse_rocm_version(version_file.read_text())
         except (OSError, UnicodeDecodeError):
