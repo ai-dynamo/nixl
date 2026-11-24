@@ -360,14 +360,6 @@ nixl_status_t nixlHf3fsEngine::prepXfer (const nixl_xfer_op_t &operation,
                 nixl_mesg = "Error: Failed to create IOV";
                 goto cleanup_handle;
             }
-
-            // For WRITE operations, copy data from source buffer to IOV buffer
-            // For READ operations, we don't need to copy data now - we'll copy after read completes
-            // TODO: Should the data copy in postXfer? User could still modify the data after
-            // prepXfer
-            if (!is_read) {
-                memcpy(io->iov.base, addr, size);
-            }
         }
         // Store original memory address for later use during READ operations
         io->addr = addr;
@@ -411,6 +403,11 @@ nixl_status_t nixlHf3fsEngine::postXfer (const nixl_xfer_op_t &operation,
     for (auto it = hf3fs_handle->io_list.begin(); it != hf3fs_handle->io_list.end(); ++it) {
         nixlHf3fsIO* io = *it;
         void *addr = (io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) ? io->iov.base : io->addr;
+
+        // A request can be posted more than once, so copy WRITE data on every post.
+        if (!io->is_read && io->mem_type == NIXL_HF3FS_MEM_TYPE_DRAM) {
+            memcpy(io->iov.base, io->addr, io->size);
+        }
 
         status = hf3fs_utils->prepIO(
             &hf3fs_handle->ior, &io->iov, addr, io->offset, io->size, io->fd, io->is_read, io);

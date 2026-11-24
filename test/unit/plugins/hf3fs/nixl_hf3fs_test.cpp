@@ -43,7 +43,10 @@ namespace {
     constexpr int default_num_transfers = 10;  // Same as original HF3FS test
     constexpr size_t default_transfer_size = 1024;
     constexpr char test_phrase[] = "NIXL HF3FS Test Pattern 2025";
-    constexpr size_t test_phrase_len = sizeof(test_phrase) - 1;  // -1 to exclude null terminator
+    constexpr char repost_test_phrase_1[] = "NIXL HF3FS Repost Test Pattern 1111";
+    constexpr char repost_test_phrase_2[] = "NIXL HF3FS Repost Test Pattern 2222";
+    static_assert(sizeof(repost_test_phrase_1) == sizeof(repost_test_phrase_2),
+                  "Test phrases must be the same length");
     constexpr char test_file_name[] = "testfile";
     constexpr mode_t std_file_permissions = 0744;
 
@@ -73,15 +76,16 @@ namespace {
     }
 
     // Helper function to fill buffer with repeating pattern
-    void fill_test_pattern(void* buffer, size_t size) {
+    void
+    fill_test_pattern(void *buffer, size_t size, const char *phrase = test_phrase) {
         char* buf = (char*)buffer;
-        size_t phrase_len = test_phrase_len;
+        size_t phrase_len = strlen(phrase);
         size_t offset = 0;
 
         while (offset < size) {
             size_t remaining = size - offset;
             size_t copy_len = (remaining < phrase_len) ? remaining : phrase_len;
-            memcpy(buf + offset, test_phrase, copy_len);
+            memcpy(buf + offset, phrase, copy_len);
             offset += copy_len;
         }
     }
@@ -146,6 +150,147 @@ namespace {
             probe_path = "/mnt/3fs/nixl_hf3fs_path_mode_smoke.bin";
         }
         return nixl_test::runPathModeSmoke("HF3FSPathModeSmoke", "HF3FS", probe_path, 4096);
+    }
+
+    // Posts one WRITE request twice with different buffer contents, then reads the files back.
+    // A request may be posted again once it is done, and each post must write the buffer content
+    // at the time of that post.
+    int
+    runRepostTest(const std::string &test_files_dir_path) {
+        constexpr int num_transfers = 16;
+        constexpr size_t transfer_size = 128 * 1024;
+        const std::string agent_name = "HF3FSRepostTester";
+
+        print_segment_title("NIXL STORAGE REPOST TEST STARTING (HF3FS PLUGIN)");
+
+        nixlAgentConfig cfg;
+        cfg.useProgThread = true;
+        nixlAgent agent(agent_name, cfg);
+
+        // The DRAM path copies WRITE data into an IOV; DRAM_ZC writes from the buffer itself.
+        nixl_b_params_t params = {{"mem_config", "dram"}};
+        nixlBackendH *hf3fs = nullptr;
+        if (agent.createBackend("HF3FS", params, hf3fs) != NIXL_SUCCESS) {
+            std::cerr << "Failed to create HF3FS backend" << std::endl;
+            return 1;
+        }
+
+        std::vector<std::unique_ptr<void, MallocDeleter>> dram_addr;
+        dram_addr.reserve(num_transfers);
+        std::vector<tempFile> fd;
+        fd.reserve(num_transfers);
+        nixl_reg_dlist_t dram_reg(DRAM_SEG);
+        nixl_reg_dlist_t file_reg(FILE_SEG);
+        nixl_xfer_dlist_t dram_xfer(DRAM_SEG);
+        nixl_xfer_dlist_t file_xfer(FILE_SEG);
+
+        for (int i = 0; i < num_transfers; i++) {
+            void *ptr = aligned_alloc(page_size, transfer_size);
+            if (!ptr) {
+                std::cerr << "DRAM allocation failed" << std::endl;
+                return 1;
+            }
+            dram_addr.emplace_back(ptr);
+
+            std::string name = test_files_dir_path + "/" +
+                generate_timestamped_filename("repost_" + std::string(test_file_name)) + "_" +
+                std::to_string(i);
+            try {
+                fd.emplace_back(name, O_RDWR | O_CREAT | O_TRUNC, std_file_permissions);
+            }
+            catch (const std::exception &e) {
+                std::cerr << "Failed to create file: " << name << " - " << e.what() << std::endl;
+                return 1;
+            }
+
+            nixlBlobDesc dram_desc;
+            dram_desc.addr = (uintptr_t)ptr;
+            dram_desc.len = transfer_size;
+            dram_desc.devId = 0;
+            dram_reg.addDesc(dram_desc);
+            dram_xfer.addDesc(dram_desc);
+
+            nixlBlobDesc file_desc;
+            file_desc.addr = 0;
+            file_desc.len = transfer_size;
+            file_desc.devId = fd.back();
+            file_reg.addDesc(file_desc);
+            file_xfer.addDesc(file_desc);
+        }
+
+        if (agent.registerMem(dram_reg) != NIXL_SUCCESS ||
+            agent.registerMem(file_reg) != NIXL_SUCCESS) {
+            std::cerr << "Failed to register memory with NIXL" << std::endl;
+            return 1;
+        }
+
+        auto post_and_wait = [&agent](nixlXferReqH *req) {
+            nixl_status_t status = agent.postXferReq(req);
+            while (status == NIXL_IN_PROG) {
+                status = agent.getXferStatus(req);
+            }
+            return status;
+        };
+
+        nixlXferReqH *write_req = nullptr;
+        if (agent.createXferReq(NIXL_WRITE, dram_xfer, file_xfer, agent_name, write_req) !=
+            NIXL_SUCCESS) {
+            std::cerr << "Failed to create write transfer request" << std::endl;
+            return 1;
+        }
+
+        const char *phrases[] = {repost_test_phrase_1, repost_test_phrase_2};
+        for (int post = 0; post < 2; post++) {
+            print_segment_title(phase_title(post == 0 ? "First post of the write request" :
+                                                        "Second post of the same request"));
+            for (auto &buf : dram_addr) {
+                fill_test_pattern(buf.get(), transfer_size, phrases[post]);
+            }
+            nixl_status_t status = post_and_wait(write_req);
+            if (status != NIXL_SUCCESS) {
+                std::cerr << "Write transfer failed - status: "
+                          << nixlEnumStrings::statusStr(status) << std::endl;
+                agent.releaseXferReq(write_req);
+                return 1;
+            }
+        }
+        agent.releaseXferReq(write_req);
+
+        print_segment_title(phase_title("Reading the files back"));
+        for (auto &buf : dram_addr) {
+            clear_buffer(buf.get(), transfer_size);
+        }
+        nixlXferReqH *read_req = nullptr;
+        if (agent.createXferReq(NIXL_READ, dram_xfer, file_xfer, agent_name, read_req) !=
+            NIXL_SUCCESS) {
+            std::cerr << "Failed to create read transfer request" << std::endl;
+            return 1;
+        }
+        nixl_status_t status = post_and_wait(read_req);
+        agent.releaseXferReq(read_req);
+        if (status != NIXL_SUCCESS) {
+            std::cerr << "Read transfer failed - status: " << nixlEnumStrings::statusStr(status)
+                      << std::endl;
+            return 1;
+        }
+
+        auto expected = std::make_unique<char[]>(transfer_size);
+        fill_test_pattern(expected.get(), transfer_size, repost_test_phrase_2);
+        int mismatched = 0;
+        for (auto &buf : dram_addr) {
+            mismatched += memcmp(buf.get(), expected.get(), transfer_size) != 0;
+        }
+
+        agent.deregisterMem(file_reg);
+        agent.deregisterMem(dram_reg);
+
+        if (mismatched != 0) {
+            std::cerr << mismatched << " of " << num_transfers
+                      << " files do not hold the data of the second post" << std::endl;
+            return 1;
+        }
+        std::cout << "Repost test passed" << std::endl;
+        return 0;
     }
 }
 
@@ -641,5 +786,5 @@ int main(int argc, char *argv[])
     std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
     std::cout << line_str << std::endl;
 
-    return 0;
+    return runRepostTest(test_files_dir_path);
 }
