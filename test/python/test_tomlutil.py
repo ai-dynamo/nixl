@@ -32,7 +32,7 @@ def run_tomlutil(*args):
 def test_renames_existing_project_name(tmp_path):
     toml = tmp_path / "pyproject.toml"
     toml.write_text(
-        '[project]\nname = "nixl-cu12"\nversion = "1.6.0"\n\n[tool.foo]\nbar = 1\n'
+        '[project]\nname = "nixl"\nversion = "1.6.0"\n\n[tool.foo]\nbar = 1\n'
     )
     result = run_tomlutil("--wheel-name", "nixl-cu13", str(toml))
     assert result.returncode == 0, result.stderr

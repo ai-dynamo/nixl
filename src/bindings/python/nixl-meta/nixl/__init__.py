@@ -37,9 +37,9 @@ def _load_cuda_backend() -> str:
     # An absent candidate falls through to the next one; an installed backend
     # that fails to load raises, so the real error is never hidden by a
     # silent switch to another backend.
-    backends = ("nixl_cu13", "nixl_cu12", "nixl_rocm")
+    backends = ("nixl_cu13", "nixl_rocm")
     if detect_rocm():
-        backends = ("nixl_rocm", "nixl_cu13", "nixl_cu12")
+        backends = ("nixl_rocm", "nixl_cu13")
     first_missing = None
     for mod_name in backends:
         try:

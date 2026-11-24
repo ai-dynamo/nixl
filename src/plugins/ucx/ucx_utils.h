@@ -49,6 +49,11 @@ inline constexpr unsigned ucp_version_mem_type_rdma = UCP_VERSION(1, 22);
 
 using nixlUcxReq = void *;
 
+namespace nixl::ucx {
+// Final status of an AM send, in progress until the send completes
+using amSendStatus = std::atomic<nixl_status_t>;
+} // namespace nixl::ucx
+
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -81,14 +86,16 @@ public:
     /**
      * @brief Send an active message that owns its payload
      * @param payload Data released once the send completes
-     * @param req Receives the UCX request of an in-progress send; if null, the request is
-     *            released on completion
+     * @param send_status If not null, receives the final status of an in-progress send
+     *
+     * Only the callback of an in-progress send releases it: the request and the payload, and
+     * then it sets @p send_status.
      */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
            std::string &&payload,
            uint32_t flags,
-           nixlUcxReq *req = nullptr) const;
+           std::shared_ptr<nixl::ucx::amSendStatus> send_status = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t

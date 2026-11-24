@@ -29,8 +29,8 @@ NIXL_META_INIT = (
 @pytest.mark.parametrize(
     ("rocm", "candidates"),
     [
-        (False, ["nixl_cu13", "nixl_cu12", "nixl_rocm"]),
-        (True, ["nixl_rocm", "nixl_cu13", "nixl_cu12"]),
+        (False, ["nixl_cu13", "nixl_rocm"]),
+        (True, ["nixl_rocm", "nixl_cu13"]),
     ],
 )
 def test_missing_backends_chain_first_import_error(monkeypatch, rocm, candidates):
