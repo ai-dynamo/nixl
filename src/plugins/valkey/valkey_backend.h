@@ -45,21 +45,6 @@ public:
     explicit nixlValkeyEngine(const nixlBackendInitParams *init_params);
     ~nixlValkeyEngine() override;
 
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
     // Also the plugin's list (valkey_plugin.cpp).
     static nixl_mem_list_t
     supportedMems() {

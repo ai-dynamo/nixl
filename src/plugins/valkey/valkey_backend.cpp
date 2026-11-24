@@ -85,7 +85,7 @@ inParallel(const std::vector<T *> &items, Fn fn) {
 } // namespace
 
 nixlValkeyEngine::nixlValkeyEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       config_(nixlValkeyConfig::fromBackendParams(init_params->customParams)) {
     if (!nixl::valkey::rdmaUsable()) {
         NIXL_ERROR << "VALKEY: GLIDE RDMA unavailable (built without the rdma feature, or "
