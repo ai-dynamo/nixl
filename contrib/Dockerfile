@@ -362,25 +362,21 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 # Build tools into system Python (no venv).
 RUN mkdir -p $UV_CACHE_DIR && uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Use system torch if present (>=2.7) and log which build it is: replacing a base
-# image's torch breaks packages built against it, and NVIDIA's own torch builds are
-# not affected by the issue below.
-# Otherwise install torch built with CUDA 13.4 (cu134, torch 2.15): older pip builds
-# make the driver re-finalize their sm_100 kernels for sm_103 (GB300/B300) on first use
-# in every process, costing seconds (pytorch/pytorch#202323). cu134 has no Python 3.10
-# wheels, so Ubuntu 22.04 keeps cu130 / torch 2.14. Only torch is installed: nothing
-# here uses torchvision/torchaudio, and cu134 has no builds of them for torch 2.15.
+# Use system torch if present (>=2.7), else install it from the cu134 index: torch
+# built with older CUDA makes the driver re-finalize its sm_100 kernels for sm_103
+# (GB300/B300) on first use in every process, costing seconds (pytorch/pytorch#202323).
+# cu134 has no Python 3.10 torch, so Python 3.10 uses cu130.
 RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
-        /usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; c=torch.version.cuda or '0.0'; print('Using PyTorch', torch.__version__, 'from system site-packages, built with CUDA', c)"; \
+        echo "Using PyTorch from system site-packages"; \
     else \
         echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
         if [ "${DEFAULT_PYTHON_VERSION}" = "3.10" ]; then \
-            torch_index=cu130 torch_version=2.14; \
+            torch_index=cu130; \
         else \
-            torch_index=cu134 torch_version=2.15; \
+            torch_index=cu134; \
         fi && \
         export UV_INDEX="https://download.pytorch.org/whl/${torch_index}" && \
-        uv pip install --system "torch==${torch_version}.*"; \
+        uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
 RUN uv pip install --system --upgrade 'setuptools>=80.9.0'
