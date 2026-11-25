@@ -13,6 +13,7 @@
 #include <chrono>
 #include <future>
 #include <optional>
+#include <utility>
 #include <vector>
 
 namespace {
@@ -64,24 +65,29 @@ public:
 
     nixl_status_t
     getOverallStatus() {
-        // Iterate front-to-back to detect failures in earlier futures even if
-        // later futures are not yet ready. This ensures we return errors as
-        // soon as they occur rather than waiting for all futures to complete.
+        // Requests write into caller-owned buffers, so the transfer is not done (and the
+        // buffers are not safe to reuse) until every request has completed. Consume completed
+        // futures, remember the first failure, and report it only once nothing is pending.
+        bool has_pending = false;
         auto it = statusFutures_.begin();
         while (it != statusFutures_.end()) {
             if (it->wait_for(std::chrono::seconds(0)) == std::future_status::ready) {
-                auto current_status = it->get();
-                if (current_status != NIXL_SUCCESS) {
-                    statusFutures_.clear();
-                    return current_status;
+                const auto current_status = it->get();
+                if (firstError_ == NIXL_SUCCESS) {
+                    firstError_ = current_status;
                 }
                 it = statusFutures_.erase(it);
             } else {
-                return NIXL_IN_PROG;
+                ++it;
+                has_pending = true;
             }
         }
-        return NIXL_SUCCESS;
+        // Reset so a prepared request that is posted again starts clean.
+        return has_pending ? NIXL_IN_PROG : std::exchange(firstError_, NIXL_SUCCESS);
     }
+
+private:
+    nixl_status_t firstError_ = NIXL_SUCCESS;
 };
 
 class nixlObjMetadata : public nixlBackendMD {

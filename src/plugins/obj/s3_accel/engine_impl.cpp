@@ -132,10 +132,17 @@ S3AccelObjEngineImpl::getClient() const {
     return s3Client_.get();
 }
 
+nixl_obj_rdma::SharedCuObjClient *
+S3AccelObjEngineImpl::rdmaClient() const {
+    const auto *client = dynamic_cast<const awsS3AccelClient *>(s3Client_.get());
+    return client != nullptr && client->supportsRdma() ?
+        nixl_obj_rdma::SharedCuObjClient::instance() :
+        nullptr;
+}
+
 bool
 S3AccelObjEngineImpl::rdmaEngReady() const {
-    const auto *client = dynamic_cast<const awsS3AccelClient *>(s3Client_.get());
-    return client != nullptr && client->supportsRdma();
+    return rdmaClient() != nullptr;
 }
 
 nixl_mem_list_t
@@ -160,7 +167,11 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     if (nixl_mem == OBJ_SEG) {
         auto obj_md = std::make_unique<accelObjMetadata>(
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
-        devIdToObjKey_[mem.devId] = obj_md->objKey;
+        if (!devIdToObjKey_.emplace(mem.devId, obj_md->objKey).second) {
+            NIXL_ERROR << "OBJ requires a unique devId per object (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         out = obj_md.release();
         return NIXL_SUCCESS;
     }
@@ -170,6 +181,9 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     // fast path is ready a registration failure is a hard error rather than a
     // silent success that fails later at transfer time.
     if (rdmaEngReady()) {
+        if (!mem.addr || !mem.len) {
+            return NIXL_ERR_BACKEND;
+        }
 #ifdef HAVE_CUDA
         std::optional<scopedCudaDevice> device;
         if (nixl_mem == VRAM_SEG) {
@@ -181,7 +195,7 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
             }
         }
 #endif
-        auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance();
+        auto *rdma = rdmaClient();
         if (!rdma || !rdma->registerBuffer(reinterpret_cast<void *>(mem.addr), mem.len)) {
             NIXL_ERROR << "RDMA buffer registration failed; the accelerated path has no HTTP "
                           "fallback";
@@ -205,7 +219,7 @@ S3AccelObjEngineImpl::deregisterMem(nixlBackendMD *meta) {
         if (obj_md->nixlMem == OBJ_SEG) {
             devIdToObjKey_.erase(obj_md->devId);
         } else if (obj_md->rdmaRegistered) {
-            if (auto *rdma = nixl_obj_rdma::SharedCuObjClient::instance()) {
+            if (auto *rdma = rdmaClient()) {
                 rdma->deregisterBuffer(reinterpret_cast<void *>(obj_md->localAddr));
             }
         }
