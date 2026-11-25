@@ -33,7 +33,8 @@ const std::string telemetryPluginPrefix = "libtelemetry_exporter_";
 const std::string tracePluginPrefix = "libtrace_backend_";
 const std::string kPluginSuffix = ".so";
 const std::string kUcxPluginName = "UCX";
-const std::string kUcxDeepBindVar = "NIXL_UCX_DEEPBIND";
+const std::string ucx_deep_bind_var = "NIXL_PLUGIN_UCX_DEEPBIND";
+const std::string deprecated_ucx_deep_bind_var = "NIXL_UCX_DEEPBIND";
 const std::string prometheus_plugin_name = "prometheus";
 const std::string prometheus_mp_plugin_name = "prometheus_mp";
 
@@ -321,10 +322,11 @@ shouldDeepBindPlugin(const std::string &plugin_name) {
 
     try {
         /* TODO: check if RTLD_DEEPBIND is needed at all for UCX/NIXL */
-        return nixl::config::getValueDefaulted<bool>(kUcxDeepBindVar, false);
+        return nixl::config::getValueDefaulted<bool>(
+            ucx_deep_bind_var, deprecated_ucx_deep_bind_var, false);
     }
     catch (const std::exception &e) {
-        NIXL_WARN << "Invalid " << kUcxDeepBindVar
+        NIXL_WARN << "Invalid " << ucx_deep_bind_var
                   << " value, enabling RTLD_DEEPBIND: " << e.what();
         return true;
     }
@@ -351,7 +353,7 @@ nixlPluginManager::loadPluginFromPath(const std::string &plugin_path,
 
     void *handle = dlopen(plugin_path.c_str(), flags);
     if (!handle) {
-        NIXL_INFO << "Failed to load plugin from " << plugin_path << ": " << dlerror();
+        NIXL_WARN << "Failed to load plugin from " << plugin_path << ": " << dlerror();
         return nullptr;
     }
 
@@ -868,6 +870,10 @@ void nixlPluginManager::registerBuiltinPlugins() {
 
 #ifdef STATIC_PLUGIN_REDIS
     NIXL_REGISTER_STATIC_PLUGIN(Backend, REDIS)
+#endif
+
+#ifdef STATIC_PLUGIN_DAOS
+    NIXL_REGISTER_STATIC_PLUGIN(Backend, DAOS)
 #endif
 
 #ifdef STATIC_PLUGIN_MOONCAKE
