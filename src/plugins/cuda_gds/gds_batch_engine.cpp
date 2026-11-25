@@ -189,6 +189,8 @@ nixlGdsIOBatch::checkStatus() {
             continue;
         }
         if (done < params->u.batch.size) {
+            NIXL_DEBUG << "GDS batch short completion: " << done << " of " << params->u.batch.size
+                       << " bytes, queuing remainder for resubmission";
             auto &tail = io_batch_tail_params[tail_count++];
             tail = *params;
             tail.u.batch.file_offset += done;
