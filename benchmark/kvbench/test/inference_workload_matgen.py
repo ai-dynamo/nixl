@@ -183,7 +183,7 @@ def gen_batches(
         - task_config: Task configuration
     """
     batches = []
-    curr = []
+    curr: List[UserRequest] = []
     curr_mem = 0
     for _ in range(num_user_requests):
         req = UserRequest.rand(
