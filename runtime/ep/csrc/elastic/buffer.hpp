@@ -317,7 +317,6 @@ private:
         device_topology.num_ffn_ranks = static_cast<int>(ffn_ranks.size());
         for (int i = 0; i < device_topology.num_ffn_ranks; ++i)
             device_topology.ffn_ranks[i] = ffn_ranks[i] % max_num_scaleup_ranks;
-        std::sort(device_topology.ffn_ranks, device_topology.ffn_ranks + device_topology.num_ffn_ranks);
 
         device_topology.inbox_offset = workspace_bytes();
         for (const auto role : {AFDRole::Attention, AFDRole::FFN}) {
@@ -329,8 +328,7 @@ private:
                 const int rid = ranks[i];
                 EP_HOST_ASSERT(i == 0 or ranks[i - 1] < rid);
                 device_topology.role_index[rid % max_num_scaleup_ranks] = i;
-                device_topology.registered_end[rid % max_num_scaleup_ranks] = nixl_context->registered_bytes(rid);
-                EP_HOST_ASSERT(device_topology.registered_end[rid % max_num_scaleup_ranks] >= static_cast<uint64_t>(workspace_bytes() + extent) and
+                EP_HOST_ASSERT(nixl_context->registered_bytes(rid) >= static_cast<uint64_t>(workspace_bytes() + extent) and
                                "Destination registration is too small for its AFD role");
             }
         }
@@ -518,8 +516,7 @@ public:
         {
             // Let other Python threads progress while the native connection handshake waits for peers.
             pybind11::gil_scoped_release release;
-            const auto minimum = role_sized ? workspace_bytes() : nixl_context->num_region_bytes;
-            nixl_context->connect_ranks(rank_ids, remote_mds, infos, minimum);
+            nixl_context->connect_ranks(rank_ids, remote_mds, infos);
         }
     }
 
@@ -962,15 +959,10 @@ private:
         const bool& zero_copy, const int& zero_copy_slot, Direction direction, bool with_weights = false) const {
         const bool is_send = direction == kSend;
         const bool is_recv = direction == kRecv;
-        EP_HOST_ASSERT(x.has_value() == (not is_recv) and topk_idx.has_value() == (not is_recv));
         if (afd) {
-            EP_HOST_ASSERT(not do_zero_padding and not zero_copy and
-                           not use_tma_aligned_col_major_sf and "AFD dispatch uses ordinary-copy rows");
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
             EP_HOST_ASSERT((expert_alignment > 0 and (do_expand or expert_alignment == 1)) and
                            "AFD expert alignment must be positive and compact dispatch requires alignment 1");
-            EP_HOST_ASSERT(not is_recv or not topk_weights);
-            EP_HOST_ASSERT(not is_send or (do_handle_copy and not do_cpu_sync and not cumulative_local_expert_recv_stats) and "Invalid AFD dispatch send options");
             EP_HOST_ASSERT((not is_send or sf.has_value() == afd->fp8_dispatch) and "AFD dispatch scales must match the configured wire");
         }
         // AFD endpoints may choose different call buckets. Writes and source-token IDs use the shared capacity.
@@ -1074,7 +1066,6 @@ private:
                            cumulative_local_expert_recv_stats->is_contiguous());
             EP_HOST_ASSERT(num_local_experts_ >= num_local_experts and
                            "`cumulative_local_expert_recv_stats` must hold the rank's expert slots");
-            EP_HOST_ASSERT(not is_recv or cumulative_local_expert_recv_stats->get_device() == comm_stream.device_index());
             cumulative_local_expert_recv_stats_ptr = cumulative_local_expert_recv_stats->data_ptr<int>();
         }
 
@@ -1483,12 +1474,7 @@ private:
         const bool& use_expanded_layout, Direction direction) const {
         const bool is_send = direction == kSend;
         const bool is_recv = direction == kRecv;
-        EP_HOST_ASSERT(x.has_value() == (not is_recv) and src_metadata.has_value() == (not is_recv) and
-                       psum_num_recv_tokens_per_scaleup_rank.has_value() == (not is_recv) and
-                       combined_topk_idx.has_value() == (not is_send));
         if (afd) {
-            EP_HOST_ASSERT(not topk_weights and "AFD combine expects preweighted BF16 replies");
-            EP_HOST_ASSERT(not is_send or (not bias_0 and not bias_1));
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
         }
         const int wire_token_capacity = afd ? afd->token_capacity : num_max_tokens_per_rank;

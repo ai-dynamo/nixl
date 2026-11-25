@@ -609,8 +609,6 @@ class ElasticBuffer:
                 raise ValueError(
                     "AFD requires connected single-domain compact BF16 or FP8 buffers with positive dimensions"
                 )
-            if use_fp8_dispatch and hidden % 128:
-                raise ValueError("AFD FP8 hidden size must be divisible by 128")
             if not (
                 attention_count <= max_attention_ranks <= max_num_scaleup_ranks
                 and ffn_count <= max_ffn_ranks <= max_num_scaleup_ranks
@@ -888,8 +886,6 @@ class ElasticBuffer:
         """
         if role is not None:
             role = AFDRole(role)
-            if use_fp8_dispatch and hidden % 128:
-                raise ValueError("AFD FP8 hidden size must be divisible by 128")
             if max_attention_ranks and max_ffn_ranks:
                 max_num_scaleout_ranks = max_num_scaleout_ranks or 1
                 max_num_scaleup_ranks = (

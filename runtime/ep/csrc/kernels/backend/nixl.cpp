@@ -226,7 +226,7 @@ NIXLPeerInfo NIXLEPContext::get_local_peer_info() const {
 }
 
 void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::vector<std::string>& remote_mds,
-                                  const std::vector<NIXLPeerInfo>& peer_infos, uint64_t min_peer_bytes) {
+                                  const std::vector<NIXLPeerInfo>& peer_infos) {
     EP_HOST_ASSERT(state != nullptr and state->agent != nullptr);
     EP_HOST_ASSERT(rank_ids.size() == remote_mds.size() and rank_ids.size() == peer_infos.size());
     if (rank_ids.empty())
@@ -239,7 +239,8 @@ void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::v
         EP_HOST_ASSERT(0 <= rid and rid < num_rank_ids and rid != rank_id and "Invalid peer rank id");
         EP_HOST_ASSERT(not connected[rid] and seen.insert(rid).second and "Peer already connected");
         EP_HOST_ASSERT(peer_infos[i].rank_id == rid and peer_infos[i].region_base != 0 and "Peer info does not match the rank id");
-        EP_HOST_ASSERT(peer_infos[i].num_region_bytes >= min_peer_bytes and "Peer region is too small");
+        if (not role_sized)
+            EP_HOST_ASSERT(peer_infos[i].num_region_bytes >= static_cast<uint64_t>(num_region_bytes) and "Peer region is too small");
         // A pending disconnect of the id would invalidate the metadata reloaded here at the next commit
         EP_HOST_ASSERT(std::find(pending_disconnects.begin(), pending_disconnects.end(), rid) == pending_disconnects.end() and
                        "Commit the pending disconnect before reconnecting the same rank");

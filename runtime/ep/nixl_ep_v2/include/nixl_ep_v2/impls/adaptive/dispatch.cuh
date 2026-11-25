@@ -261,7 +261,7 @@ __device__ __forceinline__ void write_direct_token(
     if constexpr (kDirection == kSend) {
         const auto bytes = recv_buffer.get_num_bytes_per_token();
         const auto row = static_cast<int64_t>(topo.afd->role_index[topo.scaleup_rank_idx]) * recv_buffer.num_max_tokens_per_rank + dst_slot_idx;
-        dst_ptr = afd_inbox_record(transport, topo, peer, pos, row * bytes, bytes);
+        dst_ptr = afd_inbox_record(transport, topo, peer, row * bytes);
     } else {
         dst_ptr = transport.get_p2p_ptr(recv_buffer.get_token_buffer(dst_slot_idx).get_base_ptr(), peer);
         EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");

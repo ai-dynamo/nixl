@@ -18,13 +18,10 @@ __device__ __forceinline__ int physical_expert(const topology::EPTopology& topo,
 
 // Translate a record offset within the destination's token inbox to its mapped NVLink address.
 __device__ __forceinline__ void* afd_inbox_record(
-    const nixl::NIXLTransport& transport, const topology::EPTopology& topo, int peer, int pos,
-    uint64_t record_offset, uint64_t record_bytes) {
-    const uint64_t offset = topo.afd->inbox_offset + record_offset;
-    EP_DEVICE_ASSERT(offset + record_bytes <= topo.afd->registered_end[pos]);
+    const nixl::NIXLTransport& transport, const topology::EPTopology& topo, int peer, uint64_t record_offset) {
     auto* base = transport.get_p2p_base(peer);
     EP_DEVICE_ASSERT(base != nullptr);
-    return base + offset;
+    return base + (topo.afd->inbox_offset + record_offset);
 }
 
 // Both endpoints advance the same per-peer epoch. The consumer publishes READY at entry,

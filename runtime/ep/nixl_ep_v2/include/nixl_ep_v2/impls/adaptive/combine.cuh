@@ -352,7 +352,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if constexpr (kDirection == kSend) {
                     const int pos = src_rank_idx % num_scaleup_ranks;
                     const auto offset = reinterpret_cast<uintptr_t>(ptr) - reinterpret_cast<uintptr_t>(buffer);
-                    return afd_inbox_record(transport, topo, scaleup_peer_id(pos), pos, offset, scaleup_buffer.get_num_bytes_per_token());
+                    return afd_inbox_record(transport, topo, scaleup_peer_id(pos), offset);
                 }
                 const auto dst_ptr = transport.get_p2p_ptr(ptr, scaleup_peer_id(src_rank_idx % num_scaleup_ranks));
                 EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");

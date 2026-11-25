@@ -76,7 +76,7 @@ public:
     // Load the peers' metadata, wire the endpoints up and stage new views; ids distinct, not ours, not connected; every peer calls this with us too.
     // A throw is fatal to the process, not retried: a peer may already have consumed our hello and be connected at this epoch, and a retry would move our epoch past it
     void connect_ranks(const std::vector<int>& rank_ids, const std::vector<std::string>& remote_mds,
-                       const std::vector<NIXLPeerInfo>& peer_infos, uint64_t min_peer_bytes);
+                       const std::vector<NIXLPeerInfo>& peer_infos);
 
     // Forget peers and stage new views; their metadata is invalidated at the next commit
     void disconnect_ranks(const std::vector<int>& rank_ids);

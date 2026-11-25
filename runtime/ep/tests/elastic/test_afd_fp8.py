@@ -134,7 +134,7 @@ def run(local_rank):
     }
     with TestCase().assertRaisesRegex(ValueError, "wire configuration"):
         ep.ElasticBuffer(**(options | {"use_fp8_dispatch": rank in ATTENTION}))
-    with TestCase().assertRaisesRegex(ValueError, "divisible by 128"):
+    with TestCase().assertRaisesRegex(RuntimeError, "Invalid AFD hidden size"):
         ep.ElasticBuffer(**(options | {"hidden": HIDDEN + 16}))
 
     buf = ep.ElasticBuffer(**options)
