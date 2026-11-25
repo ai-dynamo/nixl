@@ -174,9 +174,9 @@ struct S3RdmaControlPlane::Impl {
     Aws::String region;
     bool virtual_addressing = false;
     std::shared_ptr<Aws::Http::HttpClient> http;
-    Aws::String access_key;
-    Aws::String secret_key;
-    Aws::String session_token;
+    // Queried on every request, so rotated or refreshed credentials (STS,
+    // IRSA, instance roles) are picked up without re-creating the backend.
+    std::shared_ptr<Aws::Auth::AWSCredentialsProvider> credentials;
     std::unique_ptr<Aws::S3::S3Client> s3;
 
     // Build the token-carrying control-plane request, apply the op-specific
@@ -196,7 +196,16 @@ struct S3RdmaControlPlane::Impl {
         // leading fields, so it is sent as-is (no append).
         req->SetHeaderValue(amz_rdma_token, token);
         set_op_headers(*req);
-        signV4(*req, access_key, secret_key, session_token, region);
+        const Aws::Auth::AWSCredentials creds = credentials->GetAWSCredentials();
+        if (creds.GetAWSAccessKeyId().empty() || creds.GetAWSSecretKey().empty()) {
+            NIXL_ERROR << "S3 RDMA request not sent: no credentials available";
+            return nullptr;
+        }
+        signV4(*req,
+               creds.GetAWSAccessKeyId(),
+               creds.GetAWSSecretKey(),
+               creds.GetSessionToken(),
+               region);
         return http->MakeRequest(req);
     }
 
@@ -253,36 +262,28 @@ S3RdmaControlPlane::S3RdmaControlPlane(const nixl_b_params_t *custom_params) : i
             impl_->port = (impl_->scheme == "http") ? 80 : 443;
         }
 
-        // Resolve credentials once (explicit params, else the default chain) and
-        // store them for manual SigV4 signing (see signV4).
-        //
-        // KNOWN LIMITATION: credentials are captured at construction and not
-        // refreshed. A long-lived backend using rotating/temporary IAM session
-        // tokens will eventually sign with expired credentials; re-create the
-        // backend (or extend this to re-query the provider chain per request) to
-        // pick up rotated credentials.
-        Aws::Auth::AWSCredentials creds;
+        // Explicit params are fixed for the backend's life; otherwise the
+        // default chain is asked again at signing time and refreshes on its own.
         auto explicit_creds = nixl_s3_utils::createAWSCredentials(custom_params);
         if (explicit_creds.has_value()) {
-            creds = explicit_creds.value();
+            impl_->credentials =
+                std::make_shared<Aws::Auth::SimpleAWSCredentialsProvider>(explicit_creds.value());
         } else {
-            creds = Aws::Auth::DefaultAWSCredentialsProviderChain().GetAWSCredentials();
+            impl_->credentials = std::make_shared<Aws::Auth::DefaultAWSCredentialsProviderChain>();
         }
-        impl_->access_key = creds.GetAWSAccessKeyId();
-        impl_->secret_key = creds.GetAWSSecretKey();
-        impl_->session_token = creds.GetSessionToken();
+        const Aws::Auth::AWSCredentials creds = impl_->credentials->GetAWSCredentials();
 
         config.connectTimeoutMs = rdma_connect_timeout_secs * 1000;
         config.requestTimeoutMs = rdma_timeout_secs * 1000;
         impl_->http = Aws::Http::CreateHttpClient(config);
         impl_->s3 = std::make_unique<Aws::S3::S3Client>(
-            creds,
+            impl_->credentials,
             config,
             Aws::Client::AWSAuthV4Signer::PayloadSigningPolicy::RequestDependent,
             impl_->virtual_addressing);
 
-        valid_ = impl_->http != nullptr && impl_->s3 != nullptr && !impl_->access_key.empty() &&
-            !impl_->secret_key.empty();
+        valid_ = impl_->http != nullptr && impl_->s3 != nullptr &&
+            !creds.GetAWSAccessKeyId().empty() && !creds.GetAWSSecretKey().empty();
     }
     catch (const std::exception &e) {
         NIXL_WARN << "S3 RDMA control plane init failed: " << e.what();
