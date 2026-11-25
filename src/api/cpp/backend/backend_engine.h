@@ -131,7 +131,7 @@ class nixlBackendEngine {
             return supportsCapability(nixl_backend_capability_t::LOCAL);
         }
 
-        [[deprecated("Declare the NOTIF capability in the constructor instead")]]
+        // Deprecated: declare the NOTIF capability in the constructor instead.
         virtual bool
         supportsNotif() const {
             return supportsCapability(nixl_backend_capability_t::NOTIF);

@@ -413,7 +413,7 @@ setNotif(const nixlBackendEngine &engine,
         }
     }
 
-    if (opt_args.hasNotif && !engine.supportsCapability(nixl_backend_capability_t::NOTIF)) {
+    if (opt_args.hasNotif && !engine.supportsNotif()) {
         NIXL_ERROR << "the selected backend '" << engine.getType()
                    << "' does not support notifications";
         return NIXL_ERR_BACKEND;
@@ -609,7 +609,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::string conn_info;
 
     if (backend->supportsRemote()) {
-        if (!backend->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+        if (!backend->supportsNotif()) {
             NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
             return NIXL_ERR_BACKEND;
         }
@@ -1647,7 +1647,7 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            if (elm->getEngine()->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+            if (elm->getEngine()->supportsNotif()) {
                 backend_list->push_back(elm->getEngine());
             }
 
@@ -1705,7 +1705,7 @@ nixlAgent::genNotif(const std::string &remote_agent,
     } else {
         backend_list = &backend_list_value;
         for (auto &elm : extra_params->backends) {
-            if (elm->getEngine()->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+            if (elm->getEngine()->supportsNotif()) {
                 backend_list->push_back(elm->getEngine());
             }
         }
