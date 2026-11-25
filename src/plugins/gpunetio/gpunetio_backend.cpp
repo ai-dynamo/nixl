@@ -34,6 +34,38 @@
 const char info_delimiter = '-';
 
 namespace {
+doca_log_backend *
+initializeDocaLogging() {
+    static std::mutex mutex;
+    static bool standard_ready = false;
+    static doca_log_backend *sdk = nullptr;
+    static bool level_ready = false;
+    std::lock_guard lock(mutex);
+    if (!standard_ready) {
+        const auto rc = doca_log_backend_create_standard();
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA standard logger: ") +
+                                     doca_error_get_descr(rc));
+        }
+        standard_ready = true;
+    }
+    if (!sdk) {
+        const auto rc = doca_log_backend_create_with_file_sdk(stderr, &sdk);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger: ") + doca_error_get_descr(rc));
+        }
+    }
+    if (!level_ready) {
+        const auto rc = doca_log_backend_set_sdk_level(sdk, DOCA_LOG_LEVEL_ERROR);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger level: ") +
+                                     doca_error_get_descr(rc));
+        }
+        level_ready = true;
+    }
+    return sdk;
+}
+
 nixl_status_t
 completionStatus(const volatile uint32_t *error_flag) {
     return *error_flag == 0 ? NIXL_SUCCESS : NIXL_ERR_BACKEND;
@@ -255,20 +287,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         reserved.store(false, std::memory_order_relaxed);
     }
 
-    result = doca_log_backend_create_standard();
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_ERROR);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
+    sdk_log = initializeDocaLogging();
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
