@@ -38,6 +38,7 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
+ROCM_PATH=${ROCM_PATH:-/opt/rocm}
 TMPDIR=$(mktemp -d)
 
 # DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
@@ -426,16 +427,17 @@ else
     # This image is CUDA-free. Restrict building to plugins that do not require cuFile.
     # POSIX alone is enough to produce libnixl and nixlbench.
     NIXL_ENABLE_PLUGINS="${NIXL_ENABLE_PLUGINS:-POSIX}"
+    # wheel_variant unset: meson derives rocm<X>_<Y> from the ROCm install.
     # shellcheck disable=SC2086
     meson setup \
         ${NIXL_BUILD_DIR} \
         --prefix=${INSTALL_DIR} \
         -Ducx_path=${UCX_INSTALL_DIR} \
-        -Dwheel_variant=rocm \
         -Dbuild_docs=false \
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \
         -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" \
+        -Drocm_path="${ROCM_PATH}" \
         --buildtype=debug \
         -Denable_plugins="${NIXL_ENABLE_PLUGINS}"
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR}
@@ -450,8 +452,8 @@ else
         ${NIXLBENCH_BUILD_DIR} \
         -Dnixl_path=${INSTALL_DIR} \
         -Dprefix=${INSTALL_DIR} \
-        -Duse_rocm=true \
-        -Drocm_path="${ROCM_INSTALL_PATH}"
+        -Dnixlbench_gpu=rocm \
+        -Drocm_path="${ROCM_PATH}"
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR}
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} install
 fi # PRE_INSTALLED_NIXL_ENV

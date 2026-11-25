@@ -27,10 +27,9 @@ def package_tree(tmp_path):
     shutil.copyfile(
         ROOT / "src/bindings/python/nixl-meta/nixl/cute.py", package / "cute.py"
     )
-    (tmp_path / "nixl_meta_utils.py").write_text(
-        "import os\n"
-        "def detect_cuda_major(): return int(os.environ['TEST_CUDA_MAJOR'])\n"
-        "def detect_rocm(): return False\n"
+    shutil.copyfile(
+        ROOT / "src/bindings/python/nixl-meta/nixl_meta_utils.py",
+        tmp_path / "nixl_meta_utils.py",
     )
     for major in (12, 13):
         backend = tmp_path / f"nixl_cu{major}"
@@ -66,13 +65,13 @@ def package_tree(tmp_path):
 
 
 def run_import(package_tree, code, major=13):
+    setup = f"import nixl_meta_utils\nnixl_meta_utils.detect_cuda_major = lambda: {major}\n"
     result = subprocess.run(
-        [sys.executable, "-S", "-c", dedent(code)],
+        [sys.executable, "-S", "-c", setup + dedent(code)],
         cwd=package_tree,
         env={
             **os.environ,
             "PYTHONPATH": str(package_tree),
-            "TEST_CUDA_MAJOR": str(major),
         },
         capture_output=True,
         text=True,
