@@ -35,12 +35,20 @@ struct TraceContext;
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
+class nixlBackendReqCallback {
+public:
+    virtual ~nixlBackendReqCallback() = default;
+
+    virtual void
+    completed(nixl_status_t status) = 0;
+};
 
 struct nixlBackendOptionalArgs {
     // During postXfer, user might ask for a notification if supported
     nixl_blob_t notifMsg;
     bool        hasNotif = false;
     nixl_blob_t customParam;
+    nixlBackendReqCallback *callback = nullptr;
     // The request's trace context in prepXfer and the post's in postXfer: the trace
     // id and flags are the request's, and each post of a sampled request has a span
     // id of its own. Valid for the call only, so copy it at each post to keep it.

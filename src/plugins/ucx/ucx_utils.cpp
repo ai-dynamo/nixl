@@ -28,6 +28,7 @@
 
 #include <nixl_types.h>
 
+#include "backend/backend_aux.h"
 #include "common/hw_info.h"
 #include "common/nixl_log.h"
 #include "config.h"
@@ -219,10 +220,12 @@ nixlUcxEp::~nixlUcxEp() {
  * =========================================== */
 
 namespace {
-// An AM send in flight: its payload, and the status that a sender may wait for
+// An AM send in flight: its payload, the status that a sender may wait for, and the
+// callback to call on completion
 struct amSendCtx {
     std::string payload;
     std::shared_ptr<nixl::ucx::amSendStatus> sendStatus;
+    nixlBackendReqCallback *callback;
 };
 } // namespace
 
@@ -234,13 +237,18 @@ nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
     }
     std::unique_ptr<amSendCtx> ctx(static_cast<amSendCtx *>(user_data));
     const std::shared_ptr<nixl::ucx::amSendStatus> send_status = std::move(ctx->sendStatus);
+    nixlBackendReqCallback *const callback = ctx->callback;
     // Report the send last: once a sender sees it complete, its request and
-    // payload are already released
+    // payload are already released and the callback has returned
     ucp_request_free(request);
     ctx.reset();
+    const nixl_status_t result = nixl::ucx::ucsToNixlStatus(status);
+    const nixl_status_t final_status = (result == NIXL_IN_PROG) ? NIXL_ERR_BACKEND : result;
+    if (callback != nullptr) {
+        callback->completed(final_status);
+    }
     if (send_status) {
-        const nixl_status_t result = nixl::ucx::ucsToNixlStatus(status);
-        send_status->store((result == NIXL_IN_PROG) ? NIXL_ERR_BACKEND : result);
+        send_status->store(final_status);
     }
 }
 
@@ -248,7 +256,8 @@ nixl_status_t
 nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   std::string &&payload,
                   uint32_t flags,
-                  std::shared_ptr<nixl::ucx::amSendStatus> send_status) const {
+                  std::shared_ptr<nixl::ucx::amSendStatus> send_status,
+                  nixlBackendReqCallback *callback) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
@@ -256,7 +265,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    auto ctx = std::make_unique<amSendCtx>(amSendCtx{std::move(payload), std::move(send_status)});
+    auto ctx = std::make_unique<amSendCtx>(
+        amSendCtx{std::move(payload), std::move(send_status), callback});
 
     ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE |
