@@ -1654,13 +1654,18 @@ nixlAgent::registerNotifCallback(std::string_view prefix,
         return status;
     }
 
-    // Registration before any backend is loaded is allowed and stays silent.
+    // Registration stays silent until a backend that receives notifications is loaded,
+    // since the backend that will deliver them may be created later.
     NIXL_SHARED_LOCK_GUARD(data->lock);
     const auto &backends = data->backendEngines_;
+    const auto receives_notifs = [](const auto &backend) {
+        return backend.second->supportsNotif();
+    };
     const auto supports_callback = [](const auto &backend) {
         return backend.second->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK);
     };
-    if (!backends.empty() && std::none_of(backends.begin(), backends.end(), supports_callback)) {
+    if (std::any_of(backends.begin(), backends.end(), receives_notifs) &&
+        std::none_of(backends.begin(), backends.end(), supports_callback)) {
         NIXL_WARN << "Agent '" << data->name_
                   << "' registered a notification callback, but no loaded backend supports it";
     }

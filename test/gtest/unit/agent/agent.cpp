@@ -1195,6 +1195,24 @@ namespace agent {
         EXPECT_EQ(warning.count(), 0u);
     }
 
+    TEST_F(singleAgentSessionFixture, NotifCallbacksIgnoreBackendsWithoutNotifications) {
+        auto &engine = agent_helper_->getGMockEngine();
+        ON_CALL(engine, supportsRemote()).WillByDefault(testing::Return(false));
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(false));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        // A storage-like backend cannot deliver notifications, so a callback backend
+        // may still be added later.
+        const gtest::LogMessageCounter warning("no loaded backend supports it");
+        nixlNotifRegistration token;
+        ASSERT_EQ(agent_->registerNotifCallback(
+                      "prefix:", [](std::string_view, std::string_view) { return true; }, token),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(warning.count(), 0u);
+    }
+
     TEST_F(singleAgentSessionFixture, ActiveReleaseRequiresDrain) {
         selfXferSetup setup;
         nixl_b_params_t params;

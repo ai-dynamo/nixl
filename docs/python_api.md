@@ -70,8 +70,15 @@ with nixl_notification_monitor() as incoming:
   `get_new_notifs()` instead. If messages were redirected since the previous
   drain, `wait_any()` raises `nixlNotificationOverflowError`. Its `notifications`
   attribute contains the batch drained by that call, and `redirected` counts
-  only the new redirects. `overflow_count()` reports the monitor's lifetime
-  total. Backends without callback support keep their normal polling behavior.
+  only the new redirects across the monitor's subscriptions. Redirected messages
+  arrive only through `get_new_notifs()` of the receiving agent, and not in step
+  with the exception. With application-driven progress, the `get_new_notifs()`
+  call that received them has already returned them before `wait_any()` raises.
+  With a progress thread, they can appear shortly after the exception. To
+  recover them, keep the results of every `get_new_notifs()` call on the
+  subscribed agents, and poll with a deadline until the redirected messages have
+  arrived. `overflow_count()` reports the monitor's lifetime total. Backends
+  without callback support keep their normal polling behavior.
 - Use `fd()` or `fileno()` with poll or an event loop. The descriptor is borrowed.
   When it becomes readable, call `wait_any(timeout_ms=0)` to drain the monitor.
   Remove any external reader before closing the monitor. `close()`, including at

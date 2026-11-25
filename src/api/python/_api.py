@@ -148,21 +148,27 @@ class nixlNotificationOverflowError(RuntimeError):
     """The monitor redirected notifications to get_new_notifs().
 
     notifications contains the batch drained by this call. redirected counts
-    the notifications redirected since the previous drain.
+    the notifications redirected to get_new_notifs() since the previous drain.
+    A get_new_notifs() call may already have returned them, for example the
+    call that drove progress, or they may arrive there shortly after this
+    exception.
     """
 
     def __init__(
         self, notifications: list[tuple[str, str, bytes]], redirected: int
     ) -> None:
-        super().__init__(
-            f"Notification monitor overflow redirected {redirected} notifications "
-            "to get_new_notifs()"
-        )
+        super().__init__(notifications, redirected)
         self.notifications = notifications
         self.redirected = redirected
 
+    def __str__(self) -> str:
+        return (
+            f"Notification monitor overflow redirected {self.redirected} notifications "
+            "to get_new_notifs()"
+        )
 
-class nixl_notification_monitor(nixlBind.nixlNotificationMonitor):
+
+class nixl_notification_monitor(nixlBind._NotificationMonitor):
     """Wait on notifications that agents route to it by byte prefix.
 
     Subscribe with nixl_agent.add_notif_monitor(). Construct with max_queued to

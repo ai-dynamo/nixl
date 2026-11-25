@@ -3,6 +3,7 @@
 
 import gc
 import os
+import pickle
 import select
 import signal
 import sys
@@ -48,45 +49,79 @@ def _legacy_notifications(target, source, count):
     return received
 
 
-@pytest.mark.parametrize(
-    "enable_prog_thread",
-    [True, False],
-    ids=["before-backend-creation", "manual-progress"],
-)
-def test_add_notif_monitor_without_background_progress(enable_prog_thread):
+def _ucx_target_without_backends(enable_prog_thread):
     target = nixl_agent(
         f"target-{uuid.uuid4()}",
         nixl_agent_config(enable_prog_thread=enable_prog_thread, backends=[]),
     )
     if "UCX" not in target.get_plugin_list():
         pytest.skip("UCX is unavailable")
+    return target
+
+
+def test_add_notif_monitor_before_backend_creation():
+    target = _ucx_target_without_backends(enable_prog_thread=True)
     source = nixl_agent(f"source-{uuid.uuid4()}")
-    if not enable_prog_thread:
-        target.create_backend("UCX")
 
     with nixl_notification_monitor() as monitor:
         target.add_notif_monitor(monitor, b"watch:")
-        if enable_prog_thread:
-            target.create_backend("UCX")
+        target.create_backend("UCX")
         source.add_remote_agent(target.get_agent_metadata())
-        message = b"watch:ready"
-        source.send_notif(target.name, message)
+        source.send_notif(target.name, b"watch:ready")
 
-        if enable_prog_thread:
-            received = monitor.wait_any(timeout_ms=WAIT_MS)
-        else:
-            # Reading the monitor does not drive UCX. The separate source agent
-            # can make send progress, but the target has no progress thread.
-            assert monitor.wait_any(timeout_ms=0) == []
-            received = []
-            deadline = time.monotonic() + WAIT_MS / 1000
-            while not received and time.monotonic() < deadline:
-                assert target.get_new_notifs() == {}
-                received = monitor.wait_any(timeout_ms=0)
-                if not received:
-                    time.sleep(0.001)
+        assert monitor.wait_any(timeout_ms=WAIT_MS) == [
+            (target.name, source.name, b"watch:ready")
+        ]
 
-        assert received == [(target.name, source.name, message)]
+
+def test_add_notif_monitor_with_application_driven_progress():
+    target = _ucx_target_without_backends(enable_prog_thread=False)
+    target.create_backend("UCX")
+    source = nixl_agent(f"source-{uuid.uuid4()}")
+
+    with nixl_notification_monitor() as monitor:
+        target.add_notif_monitor(monitor, b"watch:")
+        source.add_remote_agent(target.get_agent_metadata())
+        source.send_notif(target.name, b"watch:ready")
+
+        # Reading the monitor does not drive UCX. The separate source agent
+        # can make send progress, but the target has no progress thread.
+        assert monitor.wait_any(timeout_ms=0) == []
+        received = []
+        deadline = time.monotonic() + WAIT_MS / 1000
+        while not received and time.monotonic() < deadline:
+            assert target.get_new_notifs() == {}
+            received = monitor.wait_any(timeout_ms=0)
+            if not received:
+                time.sleep(0.001)
+
+        assert received == [(target.name, source.name, b"watch:ready")]
+
+
+def test_application_driven_progress_returns_redirects_before_overflow_error():
+    target = _ucx_target_without_backends(enable_prog_thread=False)
+    target.create_backend("UCX")
+    source = nixl_agent(f"source-{uuid.uuid4()}")
+    capacity, extra = 2, 1
+    payloads = [b"flood:%d" % i for i in range(capacity + extra)]
+
+    with nixl_notification_monitor(max_queued=capacity) as monitor:
+        target.add_notif_monitor(monitor, b"flood:")
+        source.add_remote_agent(target.get_agent_metadata())
+        for message in payloads:
+            source.send_notif(target.name, message)
+
+        # The get_new_notifs() call that drives progress returns the redirect
+        # before wait_any() reports the overflow.
+        redirected = _legacy_notifications(target, source, extra)
+        assert len(redirected) == extra
+        assert monitor.overflow_count() == extra
+
+        with pytest.raises(nixlNotificationOverflowError) as raised:
+            monitor.wait_any(timeout_ms=0)
+        assert raised.value.redirected == extra
+        queued = [message for _, _, message in raised.value.notifications]
+        assert sorted(redirected + queued) == sorted(payloads)
 
 
 def test_notification_fd_and_legacy_fallback(ucx_peers):
@@ -193,6 +228,18 @@ def test_conflicting_subscription_requires_removal(ucx_peers):
         assert target.remove_notif_monitor(second, b"") is True
         source.send_notif(target.name, b"legacy fallback")
         assert _legacy_notifications(target, source, 1) == [b"legacy fallback"]
+
+
+def test_notification_overflow_error_pickle_round_trip():
+    notifications = [("target", "source", b"watch:\x00\xff")]
+    error = nixlNotificationOverflowError(notifications, 3)
+
+    restored = pickle.loads(pickle.dumps(error))
+
+    assert type(restored) is type(error)
+    assert restored.notifications == notifications
+    assert restored.redirected == 3
+    assert str(restored) == str(error)
 
 
 def test_full_queue_reports_each_overflow_and_preserves_notifications(ucx_peers):

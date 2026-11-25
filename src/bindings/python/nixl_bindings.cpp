@@ -256,7 +256,7 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
 
     py::class_<NotificationMonitor>(
-        m, "nixlNotificationMonitor", "Wait on notifications routed by an agent's byte prefixes.")
+        m, "_NotificationMonitor", "Wait on notifications routed by an agent's byte prefixes.")
         .def(py::init<std::size_t>(),
              py::arg("max_queued") = nixl::python::NotificationInbox::defaultMaxQueued)
         .def("fd",
