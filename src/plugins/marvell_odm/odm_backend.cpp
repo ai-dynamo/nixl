@@ -1658,9 +1658,9 @@ nixlOdmEngine::waitReqAsyncComplete(nixlOdmBackendReqH *req) const {
         return true;
     }
     OdmBatch &batch = req->async_batch_;
-    if (batch.remaining.load(std::memory_order_acquire) == 0) {
-        return true;
-    }
+    /* Always take batch.m, even if remaining is already 0. The last worker holds batch.m across
+     * its decrement and notify; acquiring it here means that worker has left the batch before
+     * releaseReqH() or a repost can free or reuse it. */
     std::unique_lock<std::mutex> lk(batch.m);
     batch.cv.wait(lk, [&] { return batch.remaining.load(std::memory_order_acquire) == 0; });
     return true;
