@@ -2037,10 +2037,9 @@ namespace agent {
 
         // Prep both sides using own name (simulates Python "" → self.name mapping)
         nixlDlistH *local_side = nullptr;
-        ASSERT_EQ(
-            agent_->prepXferDlist(
-                agent_helper_->getName(), setup.srcXferDlist, local_side, &setup.extraParams),
-            NIXL_SUCCESS);
+        ASSERT_EQ(agent_->prepXferDlist(
+                      agent_helper_->getName(), setup.srcXferDlist, local_side, &setup.extraParams),
+                  NIXL_SUCCESS);
 
         nixlDlistH *remote_side = nullptr;
         ASSERT_EQ(

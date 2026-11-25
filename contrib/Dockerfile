@@ -565,5 +565,5 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # torch - works on any base, no dependency on public torch wheels.
 # Redistributable wheels are produced by the wheel CI pipelines, not here.
 RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml && \
-    uv pip install --system --no-build-isolation . && \
+    uv pip install --system --no-build-isolation -Csetup-args=-Dbuild_nixl_ep="$BUILD_NIXL_EP" . && \
     uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl
