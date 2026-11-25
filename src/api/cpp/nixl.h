@@ -486,7 +486,7 @@ class nixlAgent {
          * @param  callback      Function that returns true when it consumes the notification
          * @param  registration  Token that receives ownership of the registration. It must
          *                       be empty or belong to an agent whose notification dispatcher
-         *                       has shut down, which happens when its destruction begins.
+         *                       has shut down.
          * @return NIXL_ERR_INVALID_PARAM for an overlapping prefix, an existing default, an
          *         empty function, or a token already in use
          */

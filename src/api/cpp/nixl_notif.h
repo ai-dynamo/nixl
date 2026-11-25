@@ -58,8 +58,7 @@ public:
 
     /**
      * Whether the token holds a registration with an active notification dispatcher.
-     * The dispatcher shuts down when its agent's destruction begins. The token then tests
-     * false and becomes reusable.
+     * The token tests false and becomes reusable once its notification dispatcher shuts down.
      */
     [[nodiscard]] explicit
     operator bool() const noexcept;
