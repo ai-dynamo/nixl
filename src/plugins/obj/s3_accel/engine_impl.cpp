@@ -181,6 +181,9 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     // fast path is ready a registration failure is a hard error rather than a
     // silent success that fails later at transfer time.
     if (rdmaEngReady()) {
+        if (!mem.addr || !mem.len) {
+            return NIXL_ERR_BACKEND;
+        }
 #ifdef HAVE_CUDA
         std::optional<scopedCudaDevice> device;
         if (nixl_mem == VRAM_SEG) {

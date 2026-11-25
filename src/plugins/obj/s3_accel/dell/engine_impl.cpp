@@ -51,20 +51,6 @@ S3DellObsObjEngineImpl::rdmaClient() const {
 }
 
 nixl_status_t
-S3DellObsObjEngineImpl::registerMem(const nixlBlobDesc &mem,
-                                    const nixl_mem_t &nixl_mem,
-                                    nixlBackendMD *&out) {
-    // cuObject decides how large a registration may be: CUDA 13.4 pins buffers well
-    // past 4 GiB, while older releases reject them in cuMemObjGetDescriptor, which
-    // surfaces as a logged registration failure. The per-request limit is enforced
-    // on each transfer by the client.
-    if ((nixl_mem == DRAM_SEG || nixl_mem == VRAM_SEG) && (!mem.addr || !mem.len)) {
-        return NIXL_ERR_BACKEND;
-    }
-    return S3AccelObjEngineImpl::registerMem(mem, nixl_mem, out);
-}
-
-nixl_status_t
 S3DellObsObjEngineImpl::prepXfer(const nixl_xfer_op_t &operation,
                                  const nixl_meta_dlist_t &local,
                                  const nixl_meta_dlist_t &remote,
