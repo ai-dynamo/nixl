@@ -75,8 +75,16 @@ __global__ void
 publicDefaultAdmission(nixlMemViewH local, nixlMemViewH remote, int *result) {
     nixl::gpu::gpunetio::experimental::readSession session;
     uint64_t ticket = 0;
-    *result = session.bind(local, remote) == NIXL_SUCCESS && session.acquire() == NIXL_SUCCESS &&
-            session.reserve(1, ticket) == NIXL_ERR_NOT_SUPPORTED &&
+    if (session.bind(local, remote) != NIXL_SUCCESS) {
+        *result = 1;
+        return;
+    }
+    const auto admission = session.acquire();
+    if (admission == NIXL_ERR_NOT_SUPPORTED) {
+        *result = 29;
+        return;
+    }
+    *result = admission == NIXL_SUCCESS && session.reserve(1, ticket) == NIXL_ERR_NOT_SUPPORTED &&
             session.poll(ticket) == NIXL_ERR_NOT_SUPPORTED && session.finish() == NIXL_SUCCESS &&
             session.acquireFifo() == NIXL_SUCCESS && session.finish() == NIXL_SUCCESS ?
         0 :
@@ -122,10 +130,17 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
         return;
     }
 
+    for (size_t i = 0; i < 256; ++i) {
+        if (destination[kScalarDst + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
+            *result = 14;
+            return;
+        }
+    }
+
     // A fixed-mode request records the selected mode in its active status.
     status = {};
     rc = nixl::gpu::get<nixl::gpu::level_t::THREAD, nixl::gpu::exec_mode_t::GPUNETIO_DIRECT>(
-        {local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
+        {local, 0, kScalarDst + 256}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
     if (rc != NIXL_IN_PROG) {
         *result = 25;
         return;
@@ -151,9 +166,15 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
         *result = 28;
         return;
     }
+    for (size_t i = 0; i < 256; ++i) {
+        if (destination[kScalarDst + 256 + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
+            *result = 14;
+            return;
+        }
+    }
     status = {};
-    rc =
-        nixl::gpu::get({local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
+    rc = nixl::gpu::get(
+        {local, 0, kScalarDst + 512}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
     if (rc != NIXL_IN_PROG) {
         *result = 30;
         return;
@@ -169,7 +190,7 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
     {
         // Consume immediately on the GPU, before a kernel boundary or CPU sync.
         for (size_t i = 0; i < 256; ++i) {
-            if (destination[kScalarDst + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
+            if (destination[kScalarDst + 512 + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
                 *result = 14;
                 break;
             }
@@ -710,11 +731,17 @@ main(int argc, char **argv) {
             int admission = 0;
             check(cudaMemcpy(&admission, device_result, sizeof(admission), cudaMemcpyDeviceToHost),
                   "read public default admission");
+            if (admission == 29) {
+                std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n"
+                          << std::flush;
+                std::_Exit(0);
+            }
             if (admission) {
                 throw std::runtime_error("public default lane admission failed");
             }
 #endif
-            check(cudaMemset(destination + kScalarDst, 0xa5, 256), "poison scalar destination");
+            check(cudaMemset(destination + kScalarDst, 0xa5, 3 * 256),
+                  "poison scalar destinations");
             scalarGet<<<1, 1>>>(local_view, remote_view, destination, device_result);
             check(cudaGetLastError(), "launch scalar GET");
             check(cudaDeviceSynchronize(), "complete scalar GET");
@@ -722,7 +749,8 @@ main(int argc, char **argv) {
             check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                   "read scalar status");
             if (result == 29) {
-                std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n"
+                          << std::flush;
                 std::_Exit(0);
             }
             if (result) {
@@ -739,7 +767,8 @@ main(int argc, char **argv) {
                 check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                       "read parallel batch status");
                 if (result == 29) {
-                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n"
+                              << std::flush;
                     std::_Exit(0);
                 }
                 if (result) {
@@ -755,42 +784,43 @@ main(int argc, char **argv) {
                 check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                       "read FIFO batch status");
                 if (result == 29) {
-                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n"
+                              << std::flush;
                     std::_Exit(0);
                 }
                 if (result) {
                     throw std::runtime_error("FIFO batch GET failed: " + std::to_string(result));
                 }
             }
-            uint64_t before = 0, after = 0;
+            uint64_t before_identity[3], after_identity[3], original_identity[3];
             inspectLane<<<1, 1>>>(local_view, device_generation, false);
             check(cudaDeviceSynchronize(), "read generation before");
-            check(cudaMemcpy(&before, device_generation, sizeof(before), cudaMemcpyDeviceToHost),
-                  "copy generation before");
+            check(cudaMemcpy(before_identity,
+                             device_generation,
+                             sizeof(before_identity),
+                             cudaMemcpyDeviceToHost),
+                  "copy lane identity before");
             auto hint = reader_hint;
             hint.customParam = "native_channel=" + std::to_string(channel);
             nixlMemViewH repeated = nullptr;
             check(reader.prepMemView(remote, repeated, &hint), "reprepare used channel");
             inspectLane<<<1, 1>>>(repeated, device_generation, false);
             check(cudaDeviceSynchronize(), "read generation after re-preparation");
-            check(cudaMemcpy(&after, device_generation, sizeof(after), cudaMemcpyDeviceToHost),
-                  "copy generation after");
-            uint64_t after_identity[3];
             check(cudaMemcpy(after_identity,
                              device_generation,
                              sizeof(after_identity),
                              cudaMemcpyDeviceToHost),
                   "copy re-prepared lane identity");
-            uint64_t before_identity[3];
             inspectLane<<<1, 1>>>(local_view, device_generation, false);
             check(cudaDeviceSynchronize(), "read original lane identity");
-            check(cudaMemcpy(before_identity,
+            check(cudaMemcpy(original_identity,
                              device_generation,
-                             sizeof(before_identity),
+                             sizeof(original_identity),
                              cudaMemcpyDeviceToHost),
                   "copy original lane identity");
-            if (!before || before != after || before_identity[1] != after_identity[1] ||
-                before_identity[2] != after_identity[2]) {
+            if (!before_identity[0] ||
+                !std::equal(before_identity, before_identity + 3, after_identity) ||
+                !std::equal(before_identity, before_identity + 3, original_identity)) {
                 throw std::runtime_error("channel lane or generation changed during preparation");
             }
             reader.releaseMemView(repeated);
@@ -800,8 +830,8 @@ main(int argc, char **argv) {
               "read destination");
         for (size_t i = 0; i < kBytes; ++i) {
             uint8_t expected = 0xa5;
-            if (i >= kScalarDst && i < kScalarDst + 256) {
-                expected = expected_source[17 + i - kScalarDst];
+            if (i >= kScalarDst && i < kScalarDst + 3 * 256) {
+                expected = expected_source[17 + (i - kScalarDst) % 256];
             }
             if (i >= kBatchDst && i < kBatchDst + kCount * kItemBytes) {
                 expected = expected_source[512 + i - kBatchDst];
@@ -978,7 +1008,7 @@ main(int argc, char **argv) {
                 if (error) {
                     throw std::runtime_error("failed channel reused");
                 }
-                check(cudaMemset(destination + kScalarDst, 0xa5, 256),
+                check(cudaMemset(destination + kScalarDst, 0xa5, 3 * 256),
                       "poison healthy scalar destination");
                 scalarGet<<<1, 1>>>(locals[0], remotes[0], destination, device_result);
                 check(cudaDeviceSynchronize(), "healthy channel after peer channel error");
