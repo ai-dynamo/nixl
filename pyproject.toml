@@ -18,13 +18,14 @@ requires = ["meson-python", "pybind11", "patchelf", "pyyaml", "types-PyYAML", "p
 build-backend = "mesonpy"
 
 [project]
-name = "nixl-cu12"
+name = "nixl-cu13"
 version = "1.6.0"
 description = "NIXL Python API"
 readme = "README.md"
 license = "MIT AND Apache-2.0"
 license-files = [
   "LICENSE",
+  "runtime/ep/LICENSE-DeepEP",
   "licenses/NVIDIA-proprietary-LICENSE.txt",
 ]
 requires-python = ">=3.10"
