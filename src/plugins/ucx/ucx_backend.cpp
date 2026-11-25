@@ -117,13 +117,10 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
       memoryPolicy_(std::move(policy)),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
-      sglEnabled_(sglEnabledFromConfig()),
+      sglEnabled_(!memoryPolicy_.isStrict() && sglEnabledFromConfig()),
       traceSink_(init_params.traceSink) {
     if (memoryPolicy_.validate && !memoryPolicy_.isStrict()) {
         throw std::invalid_argument("A memory policy must name its required device memory type");
-    }
-    if (memoryPolicy_.isStrict() && sglEnabled_) {
-        throw std::invalid_argument("Strict device memory policies do not support UCX SGL");
     }
     std::vector<std::string> devs; /* Empty vector */
     nixl_b_params_t *custom_params = init_params.customParams;
@@ -274,9 +271,6 @@ nixlUcxEngine::registerMem(const nixlBlobDesc &mem,
         out = priv.release();
         return NIXL_SUCCESS;
     }
-    // UCX returns status codes, but policy validation, metadata allocation, and rkey
-    // serialization are C++ operations that may throw. Convert those failures to
-    // the backend status while the scope cleanup releases any mapped memory.
     catch (const std::exception &error) {
         NIXL_ERROR << "Memory registration failed: " << error.what();
         return NIXL_ERR_BACKEND;

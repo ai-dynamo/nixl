@@ -56,7 +56,7 @@ ucx_impl_interface = declare_dependency(
     dependencies: ucx_backend_dependencies,
     include_directories: ucx_backend_includes)
 
-if enabled_plugins.get('UCX') and 'UCX' in static_plugins
+if 'UCX' in static_plugins
     ucx_backend_lib = static_library('UCX',
                'ucx_plugin.cpp',
                link_whole: ucx_impl_lib,
@@ -64,7 +64,7 @@ if enabled_plugins.get('UCX') and 'UCX' in static_plugins
                include_directories: ucx_backend_include_directories,
                install: false,
                name_prefix: 'libplugin_')  # Custom prefix for plugin libraries
-elif enabled_plugins.get('UCX')
+else
     ucx_backend_lib = shared_library('UCX',
                'ucx_plugin.cpp',
                link_whole: ucx_impl_lib,
@@ -85,6 +85,4 @@ elif enabled_plugins.get('UCX')
     endif
 endif
 
-if enabled_plugins.get('UCX')
-    ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)
-endif
+ucx_backend_interface = declare_dependency(link_with: ucx_backend_lib, include_directories: ucx_backend_includes)

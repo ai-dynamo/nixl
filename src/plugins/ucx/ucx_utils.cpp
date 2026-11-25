@@ -24,6 +24,7 @@
 #include <dlfcn.h>
 #include <cstring>
 #include <exception>
+#include <limits>
 #include <optional>
 #include <stdexcept>
 #include <string>
@@ -659,9 +660,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         }
     }
 
-    if (device_memory_type.empty()) {
-        config.validateTlsCudaSupport();
-    }
+    config.validateTlsCudaSupport();
 
     ucp_context_h new_ctx = nullptr;
     const auto status = ucp_init(&ucp_params, config.getUcpConfig(), &new_ctx);
@@ -679,11 +678,21 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
             throw std::runtime_error("Failed to query UCX memory capabilities: " +
                                      std::string(ucs_status_string(query_status)));
         }
-        requiredDeviceMemoryType_ =
-            nixl::ucx::findDeviceMemoryType({ucs_memory_type_names, UCS_MEMORY_TYPE_LAST},
-                                            device_memory_type,
-                                            attr.memory_types,
-                                            UCS_MEMORY_TYPE_HOST);
+        if (device_memory_type == "musa") {
+#ifdef HAVE_UCX_MUSA_MEMORY_TYPE
+            constexpr auto musa_type = static_cast<unsigned>(UCS_MEMORY_TYPE_MUSA);
+            if (musa_type < std::numeric_limits<uint64_t>::digits &&
+                (attr.memory_types & (uint64_t{1} << musa_type))) {
+                requiredDeviceMemoryType_ = musa_type;
+            }
+#endif
+        } else {
+            requiredDeviceMemoryType_ =
+                nixl::ucx::findDeviceMemoryType({ucs_memory_type_names, UCS_MEMORY_TYPE_LAST},
+                                                device_memory_type,
+                                                attr.memory_types,
+                                                UCS_MEMORY_TYPE_HOST);
+        }
         if (!requiredDeviceMemoryType_) {
             throw std::runtime_error("UCX does not advertise required device memory type '" +
                                      std::string(device_memory_type) +
