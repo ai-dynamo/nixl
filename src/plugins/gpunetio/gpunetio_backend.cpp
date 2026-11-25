@@ -581,11 +581,6 @@ nixlDocaEngine::~nixlDocaEngine() {
 
     *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
         DOCA_GPU_EXIT | DOCA_GPU_ABORT;
-    if (qpRollbackFailed_) {
-        NIXL_ERROR << "GPUNETIO QP construction rollback failed; retaining dependent resources";
-        retainedQp_.release();
-        return;
-    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
@@ -617,7 +612,7 @@ nixlDocaEngine::~nixlDocaEngine() {
         retained_closed = data_closed && notif_closed;
         qps_closed = retained_closed && qps_closed;
     }
-    if (!qps_closed) {
+    if (!qps_closed || qpRollbackFailed_) {
         NIXL_ERROR << "GPUNETIO QP teardown failed; retaining dependent resources";
         if (!retained_closed) {
             retainedQp_.release();
