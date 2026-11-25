@@ -52,8 +52,8 @@ constexpr char namespace_prefix[] = "nixl/agents";
 // called.
 constexpr long default_timeout_ms = 30000;
 
-// Bound on a single store operation once running. Kept well under the bring-up
-// budget so one degraded operation does not hold the worker for the window.
+// Default timeout for a single I/O operation and the connect-and-handshake
+// operation.
 constexpr long default_op_timeout_ms = 5000;
 
 [[nodiscard]] std::string

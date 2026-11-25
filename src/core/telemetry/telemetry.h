@@ -37,7 +37,7 @@ namespace asio {
 class thread_pool;
 } // namespace asio
 
-class __attribute__((visibility("default"))) nixlTelemetry {
+class nixlTelemetry {
 public:
     /**
      * @brief Creates a telemetry instance that records transfer events.

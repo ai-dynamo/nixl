@@ -149,6 +149,7 @@ def test_tcpstore_metadata_reconnection(monkeypatch, capfd):
 
         # Shutdown the TCPStore to simulate a network problem.
         del tcp_store
+        tcp_store = None
 
         # This should trigger I/O error and connection retry.
         source.invalidate_local_metadata()
