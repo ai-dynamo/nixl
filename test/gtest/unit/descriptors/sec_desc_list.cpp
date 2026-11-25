@@ -295,23 +295,38 @@ TEST_F(secDescListTest, PopulateWalksOrderedSectionsAndDevices) {
 
     nixlSecDescList registrations(DRAM_SEG);
     registrations.addDesc(nixlSectionDesc(100, 64, 1, &metadata1));
-    registrations.addDesc(nixlSectionDesc(200, 64, 1, &metadata2));
+    for (uintptr_t addr : {200, 300, 400}) {
+        registrations.addDesc(nixlSectionDesc(addr, 64, 1, &metadata1));
+    }
+    registrations.addDesc(nixlSectionDesc(500, 64, 1, &metadata2));
     registrations.addDesc(nixlSectionDesc(100, 64, 2, &metadata3));
 
     testMemSection section;
     section.addDescs(std::move(registrations));
 
-    nixl_xfer_dlist_t query(DRAM_SEG);
-    query.addDesc(nixlBasicDesc(112, 16, 1));
-    query.addDesc(nixlBasicDesc(208, 16, 1));
-    query.addDesc(nixlBasicDesc(112, 16, 2));
+    auto check = [&](auto &response) {
+        nixl_xfer_dlist_t query(DRAM_SEG);
+        query.addDesc(nixlBasicDesc(112, 16, 1));
+        query.addDesc(nixlBasicDesc(508, 16, 1));
+        query.addDesc(nixlBasicDesc(112, 16, 2));
 
-    nixl_meta_dlist_t response(DRAM_SEG);
-    ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
-    ASSERT_EQ(response.descCount(), 3);
-    EXPECT_EQ(response[0].metadataP, &metadata1);
-    EXPECT_EQ(response[1].metadataP, &metadata2);
-    EXPECT_EQ(response[2].metadataP, &metadata3);
+        ASSERT_EQ(section.populate(query, nullptr, response), NIXL_SUCCESS);
+        ASSERT_EQ(response.descCount(), 3);
+        EXPECT_EQ(response[0].metadataP, &metadata1);
+        EXPECT_EQ(response[1].metadataP, &metadata2);
+        EXPECT_EQ(response[2].metadataP, &metadata3);
+
+        query.clear();
+        query.addDesc(nixlBasicDesc(112, 16, 1));
+        query.addDesc(nixlBasicDesc(480, 16, 1));
+        if (section.populate(query, nullptr, response) != NIXL_ERR_UNKNOWN || !response.isEmpty()) {
+            ADD_FAILURE() << "An unregistered gap must fail and clear the response";
+        }
+    };
+    nixl_meta_dlist_t descriptors(DRAM_SEG);
+    nixl_meta_stride_dlist_t strides(DRAM_SEG);
+    check(descriptors);
+    check(strides);
 }
 
 TEST_F(secDescListTest, PopulateFallsBackForDisorderedQueries) {
