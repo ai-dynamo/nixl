@@ -22,6 +22,7 @@ import functools
 import math
 import os
 import pickle
+from dataclasses import dataclass, replace
 from datetime import timedelta
 from enum import Enum
 from typing import Dict, List, Optional, Sequence, Tuple, Union, cast
@@ -51,6 +52,30 @@ class AFDRole(str, Enum):
     FFN = "ffn"
 
 
+@dataclass(frozen=True)
+class _AFDSettings:
+    compact_wire: bool
+    use_fp8_dispatch: bool
+    hidden: int
+    num_topk: int
+    num_experts_per_rank: int
+    num_max_tokens_per_rank: int
+    allow_multiple_reduction: bool
+    max_num_scaleout_ranks: Optional[int]
+    max_num_scaleup_ranks: Optional[int]
+    max_attention_ranks: Optional[int]
+    max_ffn_ranks: Optional[int]
+
+
+@dataclass(frozen=True)
+class _AFDEndpoint:
+    role: AFDRole
+    num_bytes: Optional[int]
+    domain: Optional[int]
+    position: Optional[int]
+    settings: _AFDSettings
+
+
 class EPHandle:
     """
     Communication handle returned by `ElasticBuffer.dispatch`.
@@ -62,7 +87,8 @@ class EPHandle:
         num_max_tokens_per_rank: the call's token bucket. Regular EP requires the same bucket on every rank.
             AFD uses the shared configured capacity for the transport layout.
         num_sms: the SM count used during dispatch (reused in combine).
-        topk_idx: cloned top-k expert indices from dispatch, `[num_tokens, num_topk]`.
+        topk_idx: cloned top-k expert indices from dispatch, `[num_tokens, num_topk]`. Receive-only FFN handles
+            use `recv_src_metadata` for combine and carry `None` here.
         psum_num_recv_tokens_per_scaleup_rank: inclusive prefix sum of deduplicated received token counts
             per scaleup rank, shape `[max_num_scaleup_ranks + 1]`. A token is counted once per rank even if
             multiple of its top-k experts land on the same rank. The last element equals the total number
@@ -378,8 +404,8 @@ class ElasticBuffer:
                 If left at 0 with explicit `num_bytes`, supply it when calling dispatch.
             hidden: the hidden dimension of each token.
             num_topk: the number of top-k experts per token for sizing payload capacity; 0 reserves for 32.
-            use_fp8_dispatch: size for FP8 dispatch. For AFD, all endpoints must agree on this flag;
-                attention sends prequantized FP8 rows and FP32 scales when enabled, or BF16 rows by default.
+            use_fp8_dispatch: select the AFD dispatch wire format. Arena sizing reserves BF16 capacity. The
+                attention endpoint sends prequantized FP8 rows and FP32 scales when enabled, or BF16 rows by default.
             num_experts_per_rank: the fixed number of expert slots on every rank, in every live world: the expert count
                 of a world is its rank count times this, and slot `e` belongs to rank `e // num_experts_per_rank` of the
                 live world's packed numbering. Required (positive) for `dispatch` / `combine`; 0 for a buffer that only
@@ -416,11 +442,12 @@ class ElasticBuffer:
                 overwritten by the next dispatch into it: issue that dispatch after the slot's last reader (the GEMM,
                 and the combine through the handle); the returned tensors are views of the slot.
             zc_use_fp8_dispatch: with a zero-copy arena, lay the arena out for the FP8 wire (rows of `hidden` bytes plus their
-                scaling factors); the arena is BF16 by default. A zero-copy setting only: regular staged dispatch takes its format from the payload.
+                scaling factors); the arena is BF16 by default. A zero-copy setting only: regular EP staged dispatch takes its wire format
+                from the payload.
             zc_use_nvfp4_dispatch: with a zero-copy arena, lay the arena out for the NVFP4 wire (`hidden // 2` code bytes and
                 `hidden // 64` scale packs per row, `hidden % 64 == 0`); the two `zc_` flags exclude each other (also without an
                 arena, where neither lays anything out: `dispatch` accepts any wire's payload on any buffer).
-            role: fixed attention or FFN endpoint for eager AFD. The default enables regular EP.
+            role: fixed attention or FFN endpoint for AFD. The default enables regular EP.
             dynamic_take: the dynamic token take of the direct-mode kernels, OFF by default (`False`): the direct paths keep
                 their static token partition unless the caller asks for the take. `True` turns it on (measured faster or equal
                 at every batch size and active SM count on 1x16, where the static shares meet the per-SM egress arbitration
@@ -441,11 +468,7 @@ class ElasticBuffer:
 
         # Some useful utilities
         self.role = AFDRole(role) if role is not None else None
-        self._afd_members = None
-        self._afd_pending_handle: Optional[EPHandle] = None
-        self._afd_hidden = hidden
-        self._afd_topk = num_topk
-        self._afd_use_fp8_dispatch = use_fp8_dispatch
+        self._dispatch_topk = num_topk
         self.group = group
         if group is not None:
             if rank_idx not in (None, group.rank()) or num_ranks not in (
@@ -489,9 +512,7 @@ class ElasticBuffer:
                 and not zc_use_fp8_dispatch
                 and not zc_use_nvfp4_dispatch
             )
-            afd_config = (
-                self.role.value,
-                num_bytes,
+            settings = _AFDSettings(
                 compact_wire,
                 use_fp8_dispatch,
                 hidden,
@@ -503,6 +524,9 @@ class ElasticBuffer:
                 max_num_scaleup_ranks,
                 max_attention_ranks,
                 max_ffn_ranks,
+            )
+            afd_config = _AFDEndpoint(
+                self.role, num_bytes, scaleout_rank_idx, scaleup_rank_idx, settings
             )
         self._nixl_bootstrap = NixlBootstrap(
             bootstrap_store,
@@ -516,31 +540,12 @@ class ElasticBuffer:
         num_group_scaleout_ranks = cast(int, self._nixl_bootstrap.num_scaleout_ranks)
         num_group_scaleup_ranks = cast(int, self._nixl_bootstrap.num_scaleup_ranks)
 
-        configs = self._nixl_bootstrap.afd_configs
-        if any(config is not None for config in configs):
-            if (
-                any(config is None for config in configs)
-                or len({c[2:] for c in configs}) != 1
-            ):
-                raise ValueError(
-                    "AFD peers must agree on role-specific operation and wire configuration"
-                )
-            if {c[0] for c in configs} != {role.value for role in AFDRole}:
+        if self.role is not None:
+            configs = self._nixl_bootstrap.afd_configs
+            if {config.role for config in configs} != set(AFDRole):
                 raise ValueError(
                     "AFD needs at least one attention rank and one FFN rank"
                 )
-            if (
-                num_group_scaleout_ranks != 1
-                or not compact_wire
-                or min(hidden, num_topk, num_experts_per_rank, num_max_tokens_per_rank)
-                <= 0
-            ):
-                raise ValueError(
-                    "AFD requires connected single-domain compact eager BF16 or FP8 buffers with positive dimensions"
-                )
-            if use_fp8_dispatch and hidden % 128:
-                raise ValueError("AFD FP8 hidden size must be divisible by 128")
-
         # The declared maximum world and this rank's coordinates in it: explicit values win, else the cohort's layout
         max_num_scaleout_ranks = cast(
             int, max_num_scaleout_ranks or num_group_scaleout_ranks
@@ -557,11 +562,55 @@ class ElasticBuffer:
             value_or(scaleup_rank_idx, self.rank_idx % num_group_scaleup_ranks),
         )
 
+        afd_setup = None
         if self.role is not None:
-            attention_count = sum(c[0] == AFDRole.ATTENTION.value for c in configs)
-            ffn_count = len(configs) - attention_count
+            ranks: dict[AFDRole, list[int]] = {role: [] for role in AFDRole}
+            for rank, config in enumerate(configs):
+                domain = value_or(config.domain, rank // num_group_scaleup_ranks)
+                position = value_or(config.position, rank % num_group_scaleup_ranks)
+                ranks[config.role].append(domain * max_num_scaleup_ranks + position)
+            attention = sorted(ranks[AFDRole.ATTENTION])
+            ffn = sorted(ranks[AFDRole.FFN])
+            afd_setup = (
+                attention,
+                ffn,
+                hidden,
+                num_topk,
+                num_max_tokens_per_rank,
+                use_fp8_dispatch,
+            )
+            attention_count, ffn_count = len(attention), len(ffn)
             max_attention_ranks = max_attention_ranks or attention_count
             max_ffn_ranks = max_ffn_ranks or ffn_count
+            # Compare the layout peers will use after resolving cohort-derived bounds.
+            layouts = {
+                replace(
+                    config.settings,
+                    max_num_scaleout_ranks=config.settings.max_num_scaleout_ranks
+                    or num_group_scaleout_ranks,
+                    max_num_scaleup_ranks=config.settings.max_num_scaleup_ranks
+                    or num_group_scaleup_ranks,
+                    max_attention_ranks=config.settings.max_attention_ranks
+                    or attention_count,
+                    max_ffn_ranks=config.settings.max_ffn_ranks or ffn_count,
+                )
+                for config in configs
+            }
+            if len(layouts) != 1:
+                raise ValueError(
+                    "AFD peers must agree on wire configuration and layout"
+                )
+            if (
+                num_group_scaleout_ranks != 1
+                or not compact_wire
+                or min(hidden, num_topk, num_experts_per_rank, num_max_tokens_per_rank)
+                <= 0
+            ):
+                raise ValueError(
+                    "AFD requires connected single-domain compact BF16 or FP8 buffers with positive dimensions"
+                )
+            if use_fp8_dispatch and hidden % 128:
+                raise ValueError("AFD FP8 hidden size must be divisible by 128")
             if not (
                 attention_count <= max_attention_ranks <= max_num_scaleup_ranks
                 and ffn_count <= max_ffn_ranks <= max_num_scaleup_ranks
@@ -569,34 +618,9 @@ class ElasticBuffer:
                 raise ValueError(
                     "AFD role bounds must cover membership within the declared domain"
                 )
-            sizes = {
-                role.value: _C.calculate_afd_buffer_size(
-                    role == AFDRole.ATTENTION,
-                    max_attention_ranks,
-                    max_ffn_ranks,
-                    num_max_tokens_per_rank,
-                    hidden,
-                    num_topk,
-                    use_fp8_dispatch,
-                    allow_multiple_reduction,
-                )
-                for role in AFDRole
-            }
-            alignment = _C.get_elastic_buffer_alignment()
-            for peer_role, explicit, *_ in configs:
-                if explicit is not None and (
-                    explicit < sizes[peer_role] or explicit % alignment
-                ):
-                    raise ValueError(
-                        "AFD explicit token arena is too small or misaligned"
-                    )
-            if num_bytes is None:
-                num_bytes = sizes[self.role.value]
 
-        # Calculate buffer size (already 2 MB-aligned from hint functions / calculate_elastic_buffer_size)
-        if num_bytes is None:
-            # NOTES: we allow `num_topk == 0`, as the buffer size can also be calculated by number of ranks (maybe bigger though)
-            num_bytes = _C.calculate_elastic_buffer_size(
+        def arena_size(role):
+            return _C.calculate_elastic_buffer_size(
                 max_num_scaleout_ranks,
                 max_num_scaleup_ranks,
                 num_max_tokens_per_rank,
@@ -604,7 +628,26 @@ class ElasticBuffer:
                 num_topk,
                 use_fp8_dispatch,
                 allow_multiple_reduction,
+                None if role is None else getattr(_C.AFDRole, role.name),
+                max_attention_ranks or 0,
+                max_ffn_ranks or 0,
             )
+
+        if self.role is not None:
+            sizes = {role: arena_size(role) for role in AFDRole}
+            alignment = _C.get_elastic_buffer_alignment()
+            for config in configs:
+                explicit = config.num_bytes
+                if explicit is not None and (
+                    explicit < sizes[config.role] or explicit % alignment
+                ):
+                    raise ValueError(
+                        "AFD explicit token arena is too small or misaligned"
+                    )
+            if num_bytes is None:
+                num_bytes = sizes[self.role]
+        elif num_bytes is None:
+            num_bytes = arena_size(None)
 
         # The arena's wire: bytes per row and scale-factor packs per row (what the kernels move), from the constructor's `zc_` flags
         assert not (
@@ -701,7 +744,7 @@ class ElasticBuffer:
             num_experts_per_rank,
             num_zero_copy_bytes,
             dynamic_take_mode,
-            self.role is not None,
+            afd_setup,
         )
 
         if num_zero_copy_slots > 0:
@@ -736,39 +779,23 @@ class ElasticBuffer:
 
         # Connect the whole cohort and make it the live world (the constructor is collective over the cohort)
         if connect_group:
-            infos = self._gather_group_peer_infos()
-            peers = [rid for rid in infos if rid != self.rank_id]
-            self.connect_ranks(
-                peers,
-                [infos[rid][0] for rid in peers],
-                [infos[rid][1] for rid in peers],
-            )
-            if self.role is not None:
-                attention = sorted(
-                    r for r, c in zip(infos, configs) if c[0] == AFDRole.ATTENTION.value
-                )
-                ffn = sorted(
-                    r for r, c in zip(infos, configs) if c[0] == AFDRole.FFN.value
-                )
-                self._afd_members = sorted(infos)
-                try:
-                    self.runtime.configure_afd(
-                        attention,
-                        ffn,
-                        hidden,
-                        num_topk,
-                        num_max_tokens_per_rank,
-                        use_fp8_dispatch,
+            try:
+                infos = self._gather_group_peer_infos()
+                peers = [rid for rid in infos if rid != self.rank_id]
+                if peers:
+                    self.runtime.connect_ranks(
+                        peers,
+                        [infos[rid][0] for rid in peers],
+                        [infos[rid][1] for rid in peers],
                     )
-                except BaseException:
-                    # The committed topology still contains only this rank.
+                self.stage_topology(
+                    num_active_sms=self.num_launch_sms, active_ranks=sorted(infos)
+                )
+            except BaseException:
+                if self.role is not None:
                     self.runtime.destroy()
                     self.runtime = None
-                    raise
-            # The mode follows the cohort's domains (`mode_of`): direct iff the cohort is one NVLink domain
-            self.stage_topology(
-                num_active_sms=self.num_launch_sms, active_ranks=sorted(infos)
-            )
+                raise
             self.commit_topology()
 
         # Call a barrier to ensure initialization visibility for all peers
@@ -806,7 +833,6 @@ class ElasticBuffer:
         if self.runtime is not None:
             self.runtime.destroy()
             self.runtime = None  # Cannot use anymore
-            self._afd_pending_handle = None
 
     @property
     def has_zero_copy(self) -> bool:
@@ -861,7 +887,7 @@ class ElasticBuffer:
             size: the recommended buffer size in bytes (2 MB-aligned).
         """
         if role is not None:
-            AFDRole(role)
+            role = AFDRole(role)
             if use_fp8_dispatch and hidden % 128:
                 raise ValueError("AFD FP8 hidden size must be divisible by 128")
             if max_attention_ranks and max_ffn_ranks:
@@ -883,16 +909,8 @@ class ElasticBuffer:
             if max_num_scaleout_ranks != 1:
                 raise ValueError("AFD sizing requires one NVLink domain")
             # Without explicit role counts the remaining positions can all be peers.
-            return _C.calculate_afd_buffer_size(
-                AFDRole(role) == AFDRole.ATTENTION,
-                max_attention_ranks or max_num_scaleup_ranks - 1,
-                max_ffn_ranks or max_num_scaleup_ranks - 1,
-                num_max_tokens_per_rank,
-                hidden,
-                num_topk,
-                use_fp8_dispatch,
-                allow_multiple_reduction,
-            )
+            max_attention_ranks = max_attention_ranks or max_num_scaleup_ranks - 1
+            max_ffn_ranks = max_ffn_ranks or max_num_scaleup_ranks - 1
         # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
         return _C.calculate_elastic_buffer_size(
             max_num_scaleout_ranks,
@@ -902,6 +920,9 @@ class ElasticBuffer:
             num_topk,
             use_fp8_dispatch,
             allow_multiple_reduction,
+            None if role is None else getattr(_C.AFDRole, role.name),
+            max_attention_ranks or 0,
+            max_ffn_ranks or 0,
         )
 
     def barrier(
@@ -1183,7 +1204,7 @@ class ElasticBuffer:
         """
         if len(rank_ids) == 0:
             return
-        if self._afd_members is not None:
+        if self.role is not None:
             raise ValueError("AFD peer membership is fixed for this buffer")
         if remote_mds is None or peer_infos is None:
             store = value_or(store, self.store)
@@ -1208,7 +1229,7 @@ class ElasticBuffer:
         Forget peers whose process goes away (staged; dropped at the next `commit_topology`). Commit a topology without
         the peer first. A rank that stays alive but sits a world out is left out of `active_ranks` instead.
         """
-        if self._afd_members is not None and rank_ids:
+        if self.role is not None and rank_ids:
             raise ValueError("AFD peer membership is fixed for this buffer")
         self.runtime.disconnect_ranks(list(rank_ids))
 
@@ -1262,10 +1283,7 @@ class ElasticBuffer:
         )
         if mode is None:
             mode = self.mode_of(scaleout_mask)
-        if self.role is not None and (
-            mode != "direct"
-            or (active_ranks is not None and sorted(active_ranks) != self._afd_members)
-        ):
+        if self.role is not None and mode != "direct":
             raise ValueError("AFD requires its fixed single-domain membership")
         # The position mask crosses the extension as 64-bit words (a whole NVL72 domain needs more than 64 bits)
         words = [
@@ -1496,7 +1514,6 @@ class ElasticBuffer:
             handle: the returned communication handle.
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
-        self._require_role(None)
         check_torch_deterministic()
 
         if zero_copy:
@@ -1606,10 +1623,6 @@ class ElasticBuffer:
         # Return
         return recv_x, recv_topk_idx, recv_topk_weights, handle, event_overlap
 
-    def _require_role(self, role: Optional[AFDRole]) -> None:
-        if self.role != role:
-            raise ValueError(f"This operation requires role={role}, got {self.role}")
-
     def dispatch_send(
         self,
         x: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
@@ -1624,19 +1637,13 @@ class ElasticBuffer:
 
         FP8 send takes prequantized E4M3FN rows and FP32 block-128 scales.
         Use the same do_expand and expert_alignment on all endpoints of an exchange.
-        Each buffer supports one outstanding AFD exchange. The caller's CUDA
-        stream waits for communication, and this send waits for FFN receivers
+        The caller's CUDA stream waits for communication, and this send waits for FFN receivers
         to enter dispatch_recv. When switching streams, order the streams
         explicitly before using data or handles from this call.
         """
-        self._require_role(AFDRole.ATTENTION)
-        x, sf = self._afd_dispatch_payload(x)
-        if topk_idx.shape != (len(x), self._afd_topk):
-            raise ValueError(
-                "AFD route dimensions disagree with the buffer configuration"
-            )
+        x, sf = x if isinstance(x, tuple) else (x, None)
         bucket, alignment, num_sms = self._afd_dispatch_options(
-            num_max_tokens_per_rank, expert_alignment, do_expand, len(x)
+            num_max_tokens_per_rank, expert_alignment
         )
         result = self.runtime.dispatch_send(
             x, topk_idx, topk_weights, bucket, alignment, num_sms, sf, do_expand
@@ -1674,9 +1681,8 @@ class ElasticBuffer:
         reserves the worst-case expert selections and alignment padding.
         Use the handle's device counts to identify valid rows.
         """
-        self._require_role(AFDRole.FFN)
         bucket, alignment, num_sms = self._afd_dispatch_options(
-            num_max_tokens_per_rank, expert_alignment, do_expand, 0
+            num_max_tokens_per_rank, expert_alignment
         )
         result = self.runtime.dispatch_recv(
             bucket, alignment, num_sms, do_cpu_sync, do_expand, with_weights
@@ -1687,49 +1693,16 @@ class ElasticBuffer:
         payload = (recv_x, recv_sf) if recv_sf is not None else recv_x
         return payload, recv_ids, recv_weights, handle, event
 
-    def _afd_dispatch_payload(self, payload):
-        fp8 = self._afd_use_fp8_dispatch
-        if fp8 and (not isinstance(payload, tuple) or len(payload) != 2):
-            raise ValueError(
-                "AFD FP8 dispatch requires a pair of FP8 rows and FP32 scales"
-            )
-        x, sf = payload if fp8 else (payload, None)
-        dtype = torch.float8_e4m3fn if fp8 else torch.bfloat16
-        if (
-            not isinstance(x, torch.Tensor)
-            or x.dtype != dtype
-            or x.ndim != 2
-            or x.shape[1] != self._afd_hidden
-        ):
-            raise ValueError(
-                f"AFD dispatch requires {dtype} rows with the configured hidden size"
-            )
-        if fp8 and (
-            not isinstance(sf, torch.Tensor)
-            or sf.dtype != torch.float32
-            or sf.shape != (len(x), self._afd_hidden // 128)
-        ):
-            raise ValueError("AFD FP8 scales must be FP32 [tokens, hidden / 128]")
-        return x, sf
-
     def _dispatch_sms(self, num_topk, num_sms):
         return self._adaptive_active_sms(
             num_sms or self.get_theoretical_num_sms(num_topk)
         )
 
-    def _afd_dispatch_options(self, bucket, alignment, expand, num_tokens):
-        if self._afd_pending_handle is not None:
-            raise ValueError("AFD dispatch is pending combine")
+    def _afd_dispatch_options(self, bucket, alignment):
         check_torch_deterministic()
         bucket = value_or(bucket, self.num_max_tokens_per_rank)
         alignment = value_or(alignment, 1)
-        if alignment <= 0 or (not expand and alignment != 1):
-            raise ValueError(
-                "AFD expert alignment must be positive and compact dispatch requires alignment 1"
-            )
-        if not 0 < bucket <= self.num_max_tokens_per_rank or num_tokens > bucket:
-            raise ValueError("AFD token bucket outside configured capacity")
-        return bucket, alignment, self._dispatch_sms(self._afd_topk, 0)
+        return bucket, alignment, self._dispatch_sms(self._dispatch_topk, 0)
 
     def _unpack_result(
         self,
@@ -1776,9 +1749,6 @@ class ElasticBuffer:
             channel_linked_list,
             recv_count_is_exact=do_cpu_sync,
         )
-        if self.role is not None:
-            handle._afd_buffer = self
-            self._afd_pending_handle = handle
         return (
             recv_x,
             recv_sf,
@@ -1837,7 +1807,6 @@ class ElasticBuffer:
             combined_topk_weights: the reduced top-k weights, with shape `[num_combined_tokens, num_topk]` and type `torch.float`.
             event: the event after executing the kernel (valid only if `async_with_compute_stream` is set).
         """
-        self._require_role(None)
         check_torch_deterministic()
 
         # Automatic decide SM count
@@ -1878,17 +1847,16 @@ class ElasticBuffer:
     ) -> EventOverlap:
         """Return preweighted BF16 replies using the dispatch handle's layout.
 
-        Use the dispatch handle once. The caller's CUDA stream waits for
+        The caller's CUDA stream waits for
         communication, and this send waits for attention ranks to enter
         combine_recv. Order the expert outputs on the caller's stream before
         calling combine_send.
         """
-        self._require_role(AFDRole.FFN)
         if topk_weights is not None:
             raise ValueError(
                 "Apply routing weights to the BF16 replies before combine_send"
             )
-        self._check_afd_handle(handle)
+        check_torch_deterministic()
         _, _, event = self.runtime.combine_send(
             x,
             handle.recv_src_metadata,
@@ -1899,7 +1867,6 @@ class ElasticBuffer:
             handle.do_expand,
             handle.num_expanded_tokens,
         )
-        self._afd_pending_handle = None
         return EventOverlap(event)
 
     def combine_recv(
@@ -1908,9 +1875,8 @@ class ElasticBuffer:
         *,
         bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], EventOverlap]:
-        """Collect FFN replies in source-token order with a single-use dispatch handle."""
-        self._require_role(AFDRole.ATTENTION)
-        self._check_afd_handle(handle)
+        """Collect FFN replies in source-token order using the dispatch handle."""
+        check_torch_deterministic()
         bias_0, bias_1 = self._unpack_bias(bias)
         combined_x, weights, event = self.runtime.combine_recv(
             handle.topk_idx,
@@ -1920,14 +1886,4 @@ class ElasticBuffer:
             handle.num_sms,
             handle.do_expand,
         )
-        self._afd_pending_handle = None
         return combined_x, weights, EventOverlap(event)
-
-    def _check_afd_handle(self, handle):
-        if getattr(handle, "_afd_buffer", None) is not self:
-            raise ValueError(
-                "AFD combine requires a dispatch handle from this endpoint"
-            )
-        if self._afd_pending_handle is not handle:
-            raise ValueError("AFD dispatch handle was already consumed")
-        check_torch_deterministic()

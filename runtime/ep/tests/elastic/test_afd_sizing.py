@@ -179,6 +179,9 @@ def run(local_rank, layout, fp8):
             (RuntimeError, ValueError), "too small|smaller|must cover"
         ):
             ep.ElasticBuffer(**construction, num_bytes=token_bytes - ARENA_ALIGNMENT)
+        # Default and explicit bounds describe the same layout on these peers.
+        if role == ep.AFDRole.ATTENTION:
+            construction.update(max_attention_ranks=0, max_ffn_ranks=0)
         buf = ep.ElasticBuffer(**construction, num_bytes=token_bytes)
         registered_bytes = buf.get_local_peer_info()[3]
         workspace_bytes = registered_bytes - token_bytes

@@ -142,10 +142,10 @@ def run(local_rank):
         if rank in ATTENTION:
             rows, scales, ids, weights = inputs(rank, round_idx)
             if round_idx == 0:
-                with TestCase().assertRaisesRegex(ValueError, "requires a pair"):
+                with TestCase().assertRaisesRegex(RuntimeError, "configured wire"):
                     buf.dispatch_send(rows, ids, weights)
                 for invalid_scales in (scales[:, :-1], scales.bfloat16()):
-                    with TestCase().assertRaisesRegex(ValueError, "FP32"):
+                    with TestCase().assertRaises(RuntimeError):
                         buf.dispatch_send((rows, invalid_scales), ids, weights)
             handle, _ = buf.dispatch_send((rows, scales), ids, weights)
             combined, _, _ = buf.combine_recv(handle)

@@ -73,14 +73,16 @@ class NixlBootstrap:
             record = inspect_topology_device()
         except Exception as error:
             record = {"error": f"{type(error).__name__}: {error}"}
-        configurations = self._all_gather(
-            "topology", (world, num_scaleup_ranks, record, afd_config)
-        )
+        topology: Tuple[object, ...] = (world, num_scaleup_ranks, record)
+        if afd_config is not None:
+            topology += (afd_config,)
+        configurations = self._all_gather("topology", topology)
         if any(config[:2] != (world, num_scaleup_ranks) for config in configurations):
             raise ValueError(
                 "Constructor cohort disagrees on world or num_scaleup_ranks"
             )
-        self.afd_configs = tuple(config[3] for config in configurations)
+        if afd_config is not None:
+            self.afd_configs = tuple(config[3] for config in configurations)
         self.topology_records = tuple(config[2] for config in configurations)
         self.num_scaleout_ranks, self.num_scaleup_ranks = validate_topology_records(
             self.topology_records, num_scaleup_ranks

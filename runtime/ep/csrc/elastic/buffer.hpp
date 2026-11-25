@@ -43,6 +43,9 @@
 namespace nixl_ep_v2::elastic {
 
 using namespace adaptive;
+
+enum class AFDRole { Attention, FFN };
+
 class ElasticBuffer {
     // Buffer bytes (excludes workspace)
     // Memory layout: [[Workspace, including atomic token ready counters] GPU buffer [zero-copy arena]]
@@ -103,7 +106,6 @@ class ElasticBuffer {
         std::optional<EventHandle>>;
     using CombineResult = std::tuple<std::optional<torch::Tensor>, std::optional<torch::Tensor>, std::optional<EventHandle>>;
 
-    enum class AFDRole { Attention, FFN };
     static constexpr int kFP8ScaleBlock = 128;
 
     struct AFDConfig {
@@ -113,6 +115,8 @@ class ElasticBuffer {
         topology::ScaleupMask live_mask;
         torch::Tensor topology_tensor;
     };
+    using AFDSetup = std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool>;
+    std::optional<AFDSetup> pending_afd;
     std::optional<AFDConfig> afd;
 
     void require_regular_ep() const {
@@ -156,8 +160,8 @@ public:
                   const int& num_nixl_channels, const std::string& agent_name_prefix,
                   const int& num_experts_per_rank,
                   const int64_t& num_zero_copy_bytes,
-                  const int& dynamic_take_mode, bool role_sized = false):
-        num_buffer_bytes(num_buffer_bytes), role_sized(role_sized),
+                  const int& dynamic_take_mode, std::optional<AFDSetup> afd_setup = std::nullopt):
+        num_buffer_bytes(num_buffer_bytes), role_sized(afd_setup.has_value()),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
         allow_multiple_reduction(allow_multiple_reduction),
@@ -193,7 +197,7 @@ public:
         const int rank_id = topology::rank_id(scaleout_rank_idx, scaleup_rank_idx, max_num_scaleup_ranks);
         this->nixl_context = std::make_shared<nixl::NIXLEPContext>(
             agent_name_prefix + "_" + std::to_string(rank_id), rank_id, max_num_scaleout_ranks * max_num_scaleup_ranks,
-            max_num_scaleup_ranks, num_workspace_bytes + num_buffer_bytes + num_zero_copy_bytes, num_nixl_channels);
+            max_num_scaleup_ranks, num_workspace_bytes + num_buffer_bytes + num_zero_copy_bytes, num_nixl_channels, role_sized);
         workspace = this->nixl_context->region_base;
 
         // Topology descriptor (`EPTopology`); its `mode` follows the live domains: the Python layer derives it for every world it stages
@@ -228,6 +232,8 @@ public:
         CUDA_RUNTIME_CHECK(cudaMallocHost(&host_workspace, layout::WorkspaceLayout::get_num_bytes(), cudaHostAllocMapped));
         CUDA_RUNTIME_CHECK(cudaHostGetDevicePointer(&mapped_host_workspace, host_workspace, 0));
         std::memset(host_workspace, 0, layout::WorkspaceLayout::get_num_bytes());
+
+        pending_afd = std::move(afd_setup);
 
         // The constructor ends without a barrier: the first `commit_topology` of `connect_group` orders the cohort
     }
@@ -274,7 +280,8 @@ public:
     // Two-step and collective: `stage_topology_masks` validates a world on the host, `commit_topology` writes it to the device
     // with one stream-ordered copy (after the transport's view swap when peers changed). Membership: see `topology.cuh`
 
-    void configure_afd(const std::vector<int>& attention_ranks, const std::vector<int>& ffn_ranks,
+private:
+    void initialize_afd(const std::vector<int>& attention_ranks, const std::vector<int>& ffn_ranks,
                        int hidden, int num_topk, int token_capacity, bool fp8_dispatch) {
         EP_HOST_ASSERT(not afd and not adaptive_num_channels_per_sm and "AFD membership is configured once before dispatch");
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
@@ -313,13 +320,14 @@ public:
         std::sort(device_topology.ffn_ranks, device_topology.ffn_ranks + device_topology.num_ffn_ranks);
 
         device_topology.inbox_offset = workspace_bytes();
-        for (const auto* ranks : {&attention_ranks, &ffn_ranks}) {
-            const bool is_attention = ranks == &attention_ranks;
-            const auto extent = calculate_afd_buffer_size(is_attention, attention_ranks.size(), ffn_ranks.size(),
-                                                          token_capacity, hidden, num_topk, fp8_dispatch, allow_multiple_reduction);
-            for (int i = 0; i < static_cast<int>(ranks->size()); ++i) {
-                const int rid = (*ranks)[i];
-                EP_HOST_ASSERT(i == 0 or (*ranks)[i - 1] < rid);
+        for (const auto role : {AFDRole::Attention, AFDRole::FFN}) {
+            const auto& ranks = role == AFDRole::Attention ? attention_ranks : ffn_ranks;
+            const auto extent = calculate_buffer_size(max_num_scaleout_ranks, max_num_scaleup_ranks, token_capacity, hidden,
+                                                      num_topk, fp8_dispatch, allow_multiple_reduction, role,
+                                                      attention_ranks.size(), ffn_ranks.size());
+            for (int i = 0; i < static_cast<int>(ranks.size()); ++i) {
+                const int rid = ranks[i];
+                EP_HOST_ASSERT(i == 0 or ranks[i - 1] < rid);
                 device_topology.role_index[rid % max_num_scaleup_ranks] = i;
                 device_topology.registered_end[rid % max_num_scaleup_ranks] = nixl_context->registered_bytes(rid);
                 EP_HOST_ASSERT(device_topology.registered_end[rid % max_num_scaleup_ranks] >= static_cast<uint64_t>(workspace_bytes() + extent) and
@@ -333,6 +341,7 @@ public:
                               role, live_mask, std::move(descriptor)});
     }
 
+public:
     // Python-facing: the position mask as 64-bit words, least significant first (missing words are zero)
     void stage_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
                               const int& num_active_sms) {
@@ -350,6 +359,11 @@ public:
         EP_HOST_ASSERT((mode == topology::kModeHybrid or __builtin_popcount(scaleout_mask) == 1) and
                        "Direct mode needs one flat NVLink team (exactly one live NVLink domain)");
         EP_HOST_ASSERT(2 <= num_active_sms and num_active_sms <= topology::get_num_launch_sms() and num_active_sms % 2 == 0);
+        // Peer registration extents become available after the cohort connects.
+        if (pending_afd) {
+            std::apply([this](const auto&... args) { initialize_afd(args...); }, *pending_afd);
+            pending_afd.reset();
+        }
         if (afd) {
             EP_HOST_ASSERT(mode == topology::kModeDirect and scaleout_mask == (1u << scaleout_rank_idx) and
                            "AFD needs one NVLink domain");
@@ -618,10 +632,21 @@ public:
         return event;
     }
 
+    static int64_t afd_inbox_bytes(int64_t record_bytes, int sources, int capacity) {
+        const int64_t stride = record_bytes * sources;
+        EP_HOST_ASSERT(capacity <= (std::numeric_limits<int64_t>::max() - kNumAlignmentBytes - workspace_bytes()) / stride);
+        return stride * capacity;
+    }
+
     static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
                                             const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
+                                            std::optional<AFDRole> role = std::nullopt, int max_attention = 0) {
+        if (role == AFDRole::Attention)
+            return {0, 0};
         const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
+        if (role == AFDRole::FFN)
+            return {afd_inbox_bytes(token_layout.get_num_bytes<false, int64_t>(), max_attention, num_max_tokens_per_rank), 0};
 
         const auto scaleup_recv_buffer = layout::BufferLayout<false>(
             token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank);
@@ -636,8 +661,16 @@ public:
 
     static std::tuple<int64_t, int64_t> get_combine_buffer_size(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                           const bool& allow_multiple_reduction) {
+                                           const bool& allow_multiple_reduction, std::optional<AFDRole> role = std::nullopt,
+                                           int max_ffn = 0) {
+        if (role == AFDRole::FFN)
+            return {0, 0};
         const auto token_layout = get_combine_token_layout(hidden, sizeof(nv_bfloat16), num_topk);
+
+        if (role == AFDRole::Attention) {
+            const int sources = allow_multiple_reduction ? std::min(max_ffn, num_topk) : num_topk;
+            return {afd_inbox_bytes(token_layout.get_num_bytes<false, int64_t>(), sources, num_max_tokens_per_rank), 0};
+        }
 
         const int num_tokens_in_scaleup_layout = allow_multiple_reduction ? std::min(num_scaleup_ranks, num_topk) : num_topk;
         const int num_tokens_in_scaleout_layout = allow_multiple_reduction ? std::min(num_scaleout_ranks, num_topk) : num_topk;
@@ -657,12 +690,14 @@ public:
     // Their separate SEND regions sit at the end of the token arena.
     static std::tuple<int64_t, int64_t, int64_t> get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
                                                                   const bool& allow_multiple_reduction,
-                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+                                                                  const int& num_scaleout_ranks, const int& num_scaleup_ranks,
+                                                                  std::optional<AFDRole> role = std::nullopt, int max_attention = 0,
+                                                                  int max_ffn = 0) {
         // The BF16-wire dispatch record is the larger one (the FP8 and NVFP4 wires add their SF bytes to a half- or quarter-size row)
         const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
-            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks);
+            num_max_tokens_per_rank, hidden * sizeof(nv_bfloat16), 0, num_topk, num_scaleout_ranks, num_scaleup_ranks, role, max_attention);
         const auto [num_combine_recv_bytes, num_combine_send_bytes] = get_combine_buffer_size(
-            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction);
+            num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction, role, max_ffn);
         return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), num_dispatch_send_bytes, num_combine_send_bytes};
     }
 
@@ -670,27 +705,18 @@ public:
         return math::align<int64_t>(layout::WorkspaceLayout::get_num_bytes(), kNumAlignmentBytes);
     }
 
-    // Direct AFD writes into the destination's inbox at the common workspace offset.
-    // Only receive records occupy registered token memory. Expanded rows are ordinary tensors.
-    static int64_t calculate_afd_buffer_size(bool attention, int max_attention, int max_ffn,
-            int capacity, int hidden, int topk, bool fp8, bool multiple_reduction) {
-        EP_HOST_ASSERT(max_attention > 0 and max_attention <= topology::kNumMaxScaleupRanksCap and
-                       max_ffn > 0 and max_ffn <= topology::kNumMaxScaleupRanksCap);
-        EP_HOST_ASSERT(capacity > 0 and topk > 0 and topk <= 32);
-        EP_HOST_ASSERT(hidden > 0 and hidden % 256 == 0 and hidden <= std::numeric_limits<int>::max() / 4 and "Invalid AFD hidden size");
-        const auto record = attention ? get_combine_token_layout(hidden, sizeof(nv_bfloat16), topk) :
-            get_dispatch_token_layout(fp8 ? hidden : hidden * 2, fp8 ? hidden / 128 : 0, topk);
-        const int sources = attention ? (multiple_reduction ? std::min(max_ffn, topk) : topk) : max_attention;
-        const int64_t stride = record.get_num_bytes<false, int64_t>() * sources;
-        EP_HOST_ASSERT(capacity <= (std::numeric_limits<int64_t>::max() - kNumAlignmentBytes - workspace_bytes()) / stride);
-        return math::align(stride * capacity, kNumAlignmentBytes);
-    }
-
     // Buffer size for a declared maximum world (the live sub-layouts are prefixes of the maximum ones)
     static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
                                          const int& num_max_tokens_per_rank, const int& hidden,
                                          int num_topk, const bool& use_fp8_dispatch,
-                                         const bool& allow_multiple_reduction) {
+                                         const bool& allow_multiple_reduction, std::optional<AFDRole> role = std::nullopt,
+                                         int max_attention = 0, int max_ffn = 0) {
+        if (role.has_value()) {
+            EP_HOST_ASSERT(max_attention > 0 and max_attention <= topology::kNumMaxScaleupRanksCap and
+                           max_ffn > 0 and max_ffn <= topology::kNumMaxScaleupRanksCap);
+            EP_HOST_ASSERT(num_max_tokens_per_rank > 0 and num_topk > 0 and num_topk <= 32);
+            EP_HOST_ASSERT(hidden > 0 and hidden % 256 == 0 and hidden <= std::numeric_limits<int>::max() / 4 and "Invalid AFD hidden size");
+        }
         EP_HOST_ASSERT(num_max_tokens_per_rank > 0 and hidden > 0);
 
         // The worst case SF bytes must be less than the main part
@@ -701,7 +727,8 @@ public:
 
         // Shared receive regions and two send buffers, aligned to 2 MB
         const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena(
-            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
+            num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks,
+            role, max_attention, max_ffn);
         return math::align(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes, kNumAlignmentBytes);
     }
 
@@ -1646,18 +1673,21 @@ private:
 };
 
 static void register_apis(pybind11::module_& m) {
+    pybind11::enum_<AFDRole>(m, "AFDRole")
+        .value("ATTENTION", AFDRole::Attention)
+        .value("FFN", AFDRole::FFN);
+
     pybind11::class_<EventHandle>(m, "EventHandle")
         .def(pybind11::init<>())
         .def("current_stream_wait", &EventHandle::current_stream_wait);
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
         .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int>())
-        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, bool>())
+        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, std::optional<std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool>>>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("get_physical_domain_size", &ElasticBuffer::get_physical_domain_size)
         .def("get_logical_domain_size", &ElasticBuffer::get_logical_domain_size)
-        .def("configure_afd", &ElasticBuffer::configure_afd)
         .def("stage_topology_masks", &ElasticBuffer::stage_topology_masks)
         .def("commit_topology", &ElasticBuffer::commit_topology)
         .def("set_topology", &ElasticBuffer::set_topology)
@@ -1676,23 +1706,15 @@ static void register_apis(pybind11::module_& m) {
         .def("has_zero_copy", &ElasticBuffer::has_zero_copy)
         .def("get_zero_copy_num_slots", &ElasticBuffer::get_zero_copy_num_slots)
         .def("dispatch", &ElasticBuffer::dispatch)
-        .def("dispatch_send", &ElasticBuffer::dispatch_send,
-             pybind11::arg("x"), pybind11::arg("topk_idx"), pybind11::arg("topk_weights"),
-             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
-             pybind11::arg("sf") = pybind11::none(), pybind11::arg("do_expand") = false)
-        .def("dispatch_recv", &ElasticBuffer::dispatch_recv,
-             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("expert_alignment"), pybind11::arg("num_sms"),
-             pybind11::arg("do_cpu_sync"), pybind11::arg("do_expand") = false, pybind11::arg("with_weights") = false)
+        .def("dispatch_send", &ElasticBuffer::dispatch_send)
+        .def("dispatch_recv", &ElasticBuffer::dispatch_recv)
         .def("combine", &ElasticBuffer::combine)
-        .def("combine_send", &ElasticBuffer::combine_send,
-             pybind11::arg("x"), pybind11::arg("src_metadata"), pybind11::arg("psum_num_recv_tokens_per_scaleup_rank"),
-             pybind11::arg("recv_count_is_exact"), pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("num_sms"),
-             pybind11::arg("use_expanded_layout") = false, pybind11::arg("num_expanded_tokens") = 0)
-        .def("combine_recv", &ElasticBuffer::combine_recv,
-             pybind11::arg("combined_topk_idx"), pybind11::arg("bias_0"), pybind11::arg("bias_1"),
-             pybind11::arg("num_max_tokens_per_rank"), pybind11::arg("num_sms"),
-             pybind11::arg("use_expanded_layout") = false);
-    m.def("calculate_afd_buffer_size", &ElasticBuffer::calculate_afd_buffer_size);
+        .def("combine_send", &ElasticBuffer::combine_send)
+        .def("combine_recv", &ElasticBuffer::combine_recv);
+    m.def("calculate_elastic_buffer_size", [](int domains, int positions, int capacity, int hidden,
+                                              int topk, bool fp8, bool multiple_reduction) {
+        return ElasticBuffer::calculate_buffer_size(domains, positions, capacity, hidden, topk, fp8, multiple_reduction);
+    });
     m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
     m.def("calculate_zero_copy_arena_size", &ElasticBuffer::calculate_zero_copy_arena_size);
     m.def("get_elastic_buffer_alignment", [=]() {

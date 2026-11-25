@@ -72,9 +72,9 @@ struct NIXLAgentState {
 static const std::string kHelloPrefix = "nixl_ep_v2_hello:";
 
 NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& rank_id, const int& num_rank_ids,
-                             const int& num_scaleup_ranks_per_domain, const int64_t& num_region_bytes, const int& num_channels):
+                             const int& num_scaleup_ranks_per_domain, const int64_t& num_region_bytes, const int& num_channels, bool role_sized):
     rank_id(rank_id), num_rank_ids(num_rank_ids), num_scaleup_ranks_per_domain(num_scaleup_ranks_per_domain),
-    num_channels(num_channels), num_region_bytes(num_region_bytes), peers(num_rank_ids), connected(num_rank_ids, 0),
+    num_channels(num_channels), role_sized(role_sized), num_region_bytes(num_region_bytes), peers(num_rank_ids), connected(num_rank_ids, 0),
     remote_agent_names(num_rank_ids), connect_epoch(num_rank_ids, 0), known_agent_names(num_rank_ids) {
     EP_HOST_ASSERT(0 <= rank_id and rank_id < num_rank_ids and num_rank_ids <= topology::kNumMaxRankIds);
     EP_HOST_ASSERT(num_scaleup_ranks_per_domain >= 1 and num_rank_ids % num_scaleup_ranks_per_domain == 0);
@@ -222,7 +222,7 @@ std::string NIXLEPContext::get_local_metadata() const {
 }
 
 NIXLPeerInfo NIXLEPContext::get_local_peer_info() const {
-    return {reinterpret_cast<uint64_t>(region_base), device_id, rank_id, static_cast<uint64_t>(num_region_bytes)};
+    return {reinterpret_cast<uint64_t>(region_base), device_id, rank_id, role_sized ? static_cast<uint64_t>(num_region_bytes) : region.num_bytes};
 }
 
 void NIXLEPContext::connect_ranks(const std::vector<int>& rank_ids, const std::vector<std::string>& remote_mds,
@@ -377,7 +377,7 @@ void NIXLEPContext::stage_views() {
     nixl_remote_dlist_t remote_descs(VRAM_SEG);
     for (int r = 0; r < num_rank_ids; ++ r)
         remote_descs.addDesc(connected[r] ?
-            nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(peers[r].num_region_bytes), static_cast<uint64_t>(peers[r].device_id), remote_agent_names[r]) :
+            nixlRemoteDesc(static_cast<uintptr_t>(peers[r].region_base), static_cast<size_t>(role_sized ? peers[r].num_region_bytes : num_region_bytes), static_cast<uint64_t>(peers[r].device_id), remote_agent_names[r]) :
             nixlRemoteDesc(0, static_cast<size_t>(num_region_bytes), 0, nixl_null_agent));
     if (std::find(connected.begin(), connected.end(), 1) != connected.end())
         NIXL_CHECK(state->agent->prepMemView(remote_descs, state->staged_remote, &state->extra_params));

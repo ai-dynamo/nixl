@@ -56,13 +56,14 @@ public:
     int num_scaleup_ranks_per_domain;   // `max_num_scaleup_ranks`: rank ids `[d * n, (d + 1) * n)` form NVLink domain d
     int device_id;
     int num_channels;
+    const bool role_sized;
 
     // The region: `[workspace][buffer]`, `num_region_bytes` long (the allocation may be a little larger)
     void* region_base = nullptr;
     int64_t num_region_bytes = 0;
 
     NIXLEPContext(const std::string& agent_name, const int& rank_id, const int& num_rank_ids,
-                  const int& num_scaleup_ranks_per_domain, const int64_t& num_region_bytes, const int& num_channels);
+                  const int& num_scaleup_ranks_per_domain, const int64_t& num_region_bytes, const int& num_channels, bool role_sized = false);
     ~NIXLEPContext();
 
     // Release the views, deregister and free the region (idempotent)

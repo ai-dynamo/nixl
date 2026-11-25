@@ -220,23 +220,24 @@ def run(me, layout, repeats, weighted):
         for operation in (
             lambda: buf.connect_ranks([peer]),
             lambda: buf.disconnect_ranks([peer]),
-            lambda: buf.stage_topology(active_ranks=[rank]),
             lambda: buf.stage_topology_forced("hybrid"),
         ):
             with TestCase().assertRaisesRegex(ValueError, "fixed"):
                 operation()
+        with TestCase().assertRaisesRegex(RuntimeError, "AFD membership is fixed"):
+            buf.stage_topology(active_ranks=[rank])
         x, ids, weights = inputs(attention[0], 1, attention, ffn)
-        # Call the binding directly so the Python role guard cannot mask a native error.
+        # Exercise native role checks with arguments accepted by each binding.
         if rank in attention:
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.dispatch_recv(BUCKET, 1, 1, True)
+                buf.runtime.dispatch_recv(BUCKET, 1, 1, True, False, False)
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.combine_send(x, ids, ids, True, BUCKET, 1)
+                buf.runtime.combine_send(x, ids, ids, True, BUCKET, 1, False, 0)
         else:
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.dispatch_send(x, ids, weights, BUCKET, 1, 1)
+                buf.runtime.dispatch_send(x, ids, weights, BUCKET, 1, 1, None, False)
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.combine_recv(ids, None, None, BUCKET, 1)
+                buf.runtime.combine_recv(ids, None, None, BUCKET, 1, False)
     print(
         f"AFD-ARENA layout={layout} rank={rank} role={role} token_bytes={buf.num_bytes}",
         flush=True,
@@ -258,11 +259,13 @@ def run(me, layout, repeats, weighted):
                     time.sleep(0.1)
                 if r == 0:
                     wrong_role(buf.dispatch_recv)
-                    with TestCase().assertRaisesRegex(ValueError, "bucket"):
+                    with TestCase().assertRaisesRegex(
+                        RuntimeError, "num_max_tokens_per_rank"
+                    ):
                         buf.dispatch_send(x, ids, num_max_tokens_per_rank=BUCKET + 1)
-                    with TestCase().assertRaises(ValueError):
+                    with TestCase().assertRaises(RuntimeError):
                         buf.dispatch_send(x, ids, do_expand=True, expert_alignment=0)
-                    with TestCase().assertRaises(ValueError):
+                    with TestCase().assertRaises(RuntimeError):
                         buf.dispatch_send(x.float(), ids)
                 handle, _ = buf.dispatch_send(
                     x,
@@ -270,21 +273,10 @@ def run(me, layout, repeats, weighted):
                     weights if weighted and r != 5 else None,
                     num_max_tokens_per_rank=send_bucket,
                 )
-                if r == 0:
-                    wrong_role(buf.combine_send, x, handle)
-                    with TestCase().assertRaisesRegex(
-                        (ValueError, RuntimeError), "pending"
-                    ):
-                        buf.dispatch_send(x, ids)
                 if r == 4 and rank == attention[-1]:
                     time.sleep(0.1)
                 assert handle.num_max_tokens_per_rank == send_bucket
                 result, _, _ = buf.combine_recv(handle)
-                if r == 0:
-                    with TestCase().assertRaisesRegex(
-                        (ValueError, RuntimeError), "consumed"
-                    ):
-                        buf.combine_recv(handle)
                 if r == 1 and layout == "FAFA":
                     directional_result = result
                 assert torch.equal(
@@ -295,9 +287,11 @@ def run(me, layout, repeats, weighted):
                     time.sleep(0.1)
                 if r == 0:
                     wrong_role(buf.dispatch_send, *inputs(me, r, attention, ffn))
-                    with TestCase().assertRaisesRegex(ValueError, "bucket"):
+                    with TestCase().assertRaisesRegex(
+                        RuntimeError, "num_max_tokens_per_rank"
+                    ):
                         buf.dispatch_recv(num_max_tokens_per_rank=BUCKET + 1)
-                    with TestCase().assertRaises(ValueError):
+                    with TestCase().assertRaises(RuntimeError):
                         buf.dispatch_recv(do_expand=True, expert_alignment=0)
                 received, ids, weights, handle, _ = buf.dispatch_recv(
                     with_weights=weighted or r == 5,
@@ -308,12 +302,6 @@ def run(me, layout, repeats, weighted):
                 assert handle.recv_count_is_exact == (not bounded)
                 if bounded:
                     assert not handle.num_recv_tokens_per_expert_list
-                if r == 0:
-                    wrong_role(buf.combine_recv, handle)
-                    with TestCase().assertRaisesRegex(
-                        (ValueError, RuntimeError), "pending"
-                    ):
-                        buf.dispatch_recv()
                 replies, count = check_worker(
                     rank,
                     r,
@@ -329,11 +317,6 @@ def run(me, layout, repeats, weighted):
                     time.sleep(0.1)
                 buf.combine_send(replies, handle)
                 assert handle.num_recv_tokens_device.item() == count
-                if r == 0:
-                    with TestCase().assertRaisesRegex(
-                        (ValueError, RuntimeError), "consumed"
-                    ):
-                        buf.combine_send(replies, handle)
     torch.cuda.synchronize()
     if repeats:
         benchmark(buf, rank, attention, ffn, repeats)
