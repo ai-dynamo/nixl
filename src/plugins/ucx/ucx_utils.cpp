@@ -623,9 +623,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
 
     // NIXL only needs AMs to be visible after previous PUTs which RC already
     // provides without the need of strict order key.
-    if (device_memory_type.empty()) {
-        config.modify("RC_FENCE", "none");
-    }
+    config.modify("RC_FENCE", "none");
 
     if (device_memory_type.empty() && ucpVersion_ >= UCP_VERSION(1, 21)) {
         config.modify("RC_GDA_NUM_CHANNELS", std::to_string(num_device_channels));
