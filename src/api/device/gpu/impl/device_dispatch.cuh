@@ -65,29 +65,10 @@ flush(const nixlMemViewH &, unsigned) {
 } // namespace nixl::gpu::impl::ucx
 #endif
 
-#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
 #include <gpu/impl/gpunetio/device_gpunetio.cuh>
-
 namespace nixl::gpu::impl::gpunetio {
-inline constexpr bool available = true;
+inline constexpr bool available = NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE;
 }
-#else
-namespace nixl::gpu::impl::gpunetio {
-inline constexpr bool available = false;
-
-template<level_t level>
-__device__ nixl_status_t
-getXferStatus(xferStatusH &) {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<level_t level>
-__device__ nixl_status_t
-get(const memViewElem &, const memViewElem &, size_t, const memViewElem &, xferStatusH *) {
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-} // namespace nixl::gpu::impl::gpunetio
-#endif
 
 // The proxy implementation needs only CUDA, so unlike the UCX arm it is always
 // present and needs no capability gate.
@@ -190,8 +171,8 @@ put(const memViewElem &src,
 
 template<level_t level, exec_mode_t mode>
 __device__ nixl_status_t
-get(const memViewElem &src,
-    const memViewElem &dst,
+get(const memViewElem &dst,
+    const memViewElem &src,
     const memViewElem &scratch,
     size_t size,
     xferStatusH *status) {
@@ -211,8 +192,7 @@ get(const memViewElem &src,
         return NIXL_ERR_INVALID_PARAM;
     }
 #if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
-    if ((mode == exec_mode_t::GPUNETIO_DIRECT || status->mode == execution_mode) &&
-        gpunetio::isStatusInProgress(*status)) {
+    if (status->mode == execution_mode && gpunetio::isStatusInProgress(*status)) {
         return NIXL_ERR_REPOST_ACTIVE;
     }
 #endif
@@ -221,7 +201,9 @@ get(const memViewElem &src,
                                              size,
                                              {dump->backend_memview, scratch.index, scratch.offset},
                                              status);
-    detail::writeExecutionMode<level, mode>(status, result, execution_mode);
+    if (result == NIXL_IN_PROG) {
+        status->mode = execution_mode;
+    }
     return result;
 }
 

@@ -2,12 +2,12 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  */
-#ifndef NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_BATCH_CUH
-#define NIXL_SRC_API_DEVICE_GPU_NIXL_DEVICE_BATCH_CUH
+#ifndef NIXL_SRC_API_DEVICE_GPU_IMPL_GPUNETIO_DEVICE_GPUNETIO_BATCH_CUH
+#define NIXL_SRC_API_DEVICE_GPU_IMPL_GPUNETIO_DEVICE_GPUNETIO_BATCH_CUH
 
 #include <gpu/nixl_device.cuh>
 
-namespace nixl::gpu {
+namespace nixl::gpu::gpunetio::experimental {
 
 #if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
 /**
@@ -139,6 +139,10 @@ public:
             phase.store(gpunetio_lane_phase_failed, cuda::memory_order_release);
             return NIXL_ERR_BACKEND;
         }
+        if (compat::needsDump(qp_)) {
+            phase.store(gpunetio_lane_phase_idle, cuda::memory_order_release);
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
         cq_ = doca_gpu_dev_verbs_qp_get_cq_sq(qp_);
         if (!cq_ || qp_->sq_wqe_num < 2 || cq_->cqe_num < 2 ||
             deviceAtomic(lane_->generation).load(cuda::memory_order_relaxed) == ~uint64_t{0}) {
@@ -172,6 +176,9 @@ public:
      */
     __device__ nixl_status_t
     reserve(uint32_t count, uint64_t &first) {
+        if (acquired_ && impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
+            return NIXL_ERR_BACKEND;
+        }
 #if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
         if (acquired_ && !fifo_mode_) {
             return NIXL_ERR_NOT_SUPPORTED;
@@ -240,6 +247,9 @@ public:
      */
     __device__ nixl_status_t
     publish(uint64_t first, uint32_t count) {
+        if (acquired_ && impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
+            return NIXL_ERR_BACKEND;
+        }
         if (!acquired_ || !reserved_ || first != reserved_first_ || count != reserved_count_) {
             return NIXL_ERR_INVALID_PARAM;
         }
@@ -303,6 +313,11 @@ public:
      */
     __device__ nixl_status_t
     poll(uint64_t ticket) const {
+#if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
+        if (acquired_ && !fifo_mode_) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+#endif
         if (!acquired_ || fifo_mode_ ||
             ticket - next_retire_ >= outstanding_ - (reserved_ ? reserved_count_ : 0)) {
             return NIXL_ERR_INVALID_PARAM;
@@ -498,5 +513,5 @@ public:
     fail() {}
 };
 #endif
-} // namespace nixl::gpu
+} // namespace nixl::gpu::gpunetio::experimental
 #endif

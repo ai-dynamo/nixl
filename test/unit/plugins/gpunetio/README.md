@@ -10,16 +10,20 @@ strict registrations. Native pools still support one peer per engine.
 
 Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
 GET test below. It checks distinct lane/QP identities, mixed-channel rejection,
-generation preservation on re-preparation/MD reload, immediate GPU consumption,
-and repeated SQ/CQ wrap on every channel. The default remains the one-QP test.
+generation preservation on re-preparation, copied-status safety, fixed-mode
+submissions, immediate GPU consumption, and repeated SQ/CQ wrap on every
+channel. The default remains the one-QP test.
 
 The following are disposable-process fault modes; failed resources stay alive
 until process exit, not normal resource reclamation or recovery:
 
 - `NIXL_GPUNETIO_TEST_PEER_QPS=N` differing from the reader count requires
-  setup rejection during metadata/OOB exchange.
-- `NIXL_GPUNETIO_TEST_RETENTION=1` poisons the last channel and checks idle
-  view release plus failed-channel retention. Run under memory checking.
+  both counts to be at least two and checks `NIXL_ERR_INVALID_PARAM` from the
+  metadata load that validates the pool header. Equal counts are invalid for this
+  mismatch mode; omit the variable for the normal matching-count path.
+- `NIXL_GPUNETIO_TEST_RETENTION=1` requires `NIXL_GPUNETIO_TEST_QPS=2` or
+  greater, poisons the last channel and checks failed-channel retention. Run
+  under memory checking.
 - Add `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to use a real invalid-rkey READ instead
   of synthetic poisoning. It requires a CQ error, sticky refusal and continued
   healthy-channel progress before testing retention.
@@ -48,13 +52,15 @@ The following instructions assume DOCA libraries and NIXL libraries are set in L
 
 The native GET test also exercises FIFO pipelining and partial retirement over
 90 rounds per channel; it skips this part when MCST consistency is required.
-A captured two-CTA contention check verifies that only one session owns a lane,
-that the other is rejected, and that the lane can be reused across replays.
+An ordered graph test holds a session across kernel nodes, verifies a second
+acquisition is rejected while the lane is held, then retires and reuses the lane
+across replays without assuming concurrent block scheduling.
 With two or more QPs, two separately captured Graphs also publish independent
 READs on distinct lanes before either retires; destination bytes are checked.
 
-For the native GET test, add `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together
-with `NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
+For the native GET test, set `NIXL_GPUNETIO_TEST_QPS=2` or greater and add
+`NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together with
+`NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
 inject a bad key between two valid READs and check sticky FIFO error handling.
 Run this only in a disposable process; failed resources are retained until
 process exit. The public FIFO completion path is the default. Define
@@ -65,9 +71,6 @@ With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
 `nixl_gpunetio_device_get_test` exercises GPU-initiated GET from registered
 pinned Host or VRAM memory. It creates two agents on the selected GPUs and checks scalar and
 CTA-batched reads, individual completions, result bytes, and guard bytes.
-It also rejects a malformed metadata section and verifies that the same live
-peer can reload valid metadata and execute the reads. The malformed-section
-check emits an expected `NIXL_ERR_MISMATCH` log.
 Run it manually on a configured GPUNETIO system with two free consecutive OOB
 ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
 
@@ -76,8 +79,9 @@ ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
 ```
 
 The source type defaults to `DRAM`, and the reader GPU defaults to the owner
-GPU. The test requires the explicitly enabled DOCA 3.5 device API. Its
-same-host result does not establish cross-node correctness or performance.
+GPU. The test requires the explicitly enabled DOCA 3.5 device API. Native GET
+qualification prints a skip when the hardware requires MCST consistency, which
+the current GET path reports as unsupported. Its same-host result does not establish cross-node correctness or performance.
 
 Target should start first. A command line example:
 

@@ -16,7 +16,6 @@
 if get_option('install_headers')
     install_headers(
         'nixl_device.cuh',
-        'nixl_device_batch.cuh',
         'device_types.cuh',
         install_dir: prefix_inc + '/gpu',
     )
@@ -28,6 +27,7 @@ if get_option('install_headers')
     install_headers('impl/ucx/device_ucx.cuh', install_dir: prefix_inc + '/gpu/impl/ucx')
     install_headers(
         'impl/gpunetio/device_gpunetio.cuh',
+        'impl/gpunetio/device_gpunetio_batch.cuh',
         'impl/gpunetio/device_gpunetio_compat.cuh',
         'impl/gpunetio/device_gpunetio_types.h',
         install_dir: prefix_inc + '/gpu/impl/gpunetio',

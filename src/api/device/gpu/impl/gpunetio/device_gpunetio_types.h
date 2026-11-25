@@ -33,13 +33,13 @@ struct alignas(16) GpunetioDeviceLane {
     alignas(8) uint64_t generation;
     alignas(8) uint64_t active_ticket;
     // Reserved to preserve the layout used by existing native consumers.
-    alignas(8) uint64_t last_success_generation;
+    alignas(8) uint64_t reserved;
     alignas(4) uint32_t phase;
     alignas(4) uint32_t failed;
 };
 
-// The host allocates this once per native engine.  Every native local and
-// remote view for that engine carries the same context pointer.
+// The host allocates one context per channel. Local and remote views share
+// a context only when they belong to the same engine and channel.
 struct GpunetioDeviceContext {
     GpunetioDeviceLane *lane;
 };

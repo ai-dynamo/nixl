@@ -34,7 +34,7 @@ if cuda_dep.found()
                                                 link_with: [serdes_lib],
                                                 install: true)
 
-        if not get_option('gpunetio_device_api').disabled()
+        if get_option('gpunetio_device_api').enabled()
                 executable('nixl_gpunetio_device_get_test', 'nixl_gpunetio_device_get_test.cu',
                            dependencies: [nixl_dep, nixl_infra, cuda_dep, doca_gpunetio_dep],
                            include_directories: [nixl_inc_dirs, nixl_device_inc_dirs, utils_inc_dirs],

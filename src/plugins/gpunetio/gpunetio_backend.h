@@ -55,6 +55,12 @@ public:
     nixlDocaEngine(const nixlBackendInitParams *init_params);
     ~nixlDocaEngine();
 
+    /**
+     * Prepare a native view while the engine GPU is active on the calling thread.
+     * Select the same native_channel for matching local and remote views; remote
+     * descriptors require a completed connection to the engine's single peer.
+     * Keep registrations, buffers and views alive through kernels and NIC work.
+     */
     nixl_status_t
     prepMemView(const nixl_meta_dlist_t &,
                 nixlMemViewH &,
@@ -63,6 +69,11 @@ public:
     prepMemView(const nixl_remote_meta_dlist_t &,
                 nixlMemViewH &,
                 const nixl_opt_b_args_t *) const override;
+    /**
+     * Release a view after its kernels and accepted NIC work finish.
+     * Active or failed lanes retain the view and MR pins; their buffers must
+     * remain allocated until safe teardown. Release does not cancel GPU work.
+     */
     void releaseMemView(nixlMemViewH) const override;
 
     bool

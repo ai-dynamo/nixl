@@ -14,16 +14,16 @@
 #define NIXL_GPUNETIO_PUBLIC_FIFO_ONLY 1
 #endif
 
-// The direct device API is enabled explicitly and limited to the tested SDK.
+// The direct device API is enabled explicitly and requires DOCA 3.5 or newer.
 #if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
 #define NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE 1
 #include <cerrno>
 #include <doca_gpunetio_dev_verbs_cq.cuh>
 #include <doca_gpunetio_dev_verbs_onesided.cuh>
 #include <doca_version.h>
-#if DOCA_VERSION_MAJOR != 3 || DOCA_VERSION_MINOR != 5
+#if DOCA_VERSION_MAJOR < 3 || (DOCA_VERSION_MAJOR == 3 && DOCA_VERSION_MINOR < 5)
 #error \
-    "GPUNETIO device API profile requires DOCA 3.5; revalidate CQ and GET semantics for other versions"
+    "GPUNETIO device API requires DOCA 3.5 or newer"
 #endif
 #else
 #define NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE 0
@@ -47,11 +47,6 @@ ticketFromBits(uint64_t bits) {
     doca_gpu_dev_verbs_ticket_t ticket;
     __builtin_memcpy(&ticket, &bits, sizeof(ticket));
     return ticket;
-}
-
-__device__ inline void
-releaseFence() {
-    doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
 }
 
 __device__ inline bool

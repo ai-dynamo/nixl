@@ -81,16 +81,22 @@ put(const memViewElem &src,
     return impl::put<level, mode>(src, dst, size, channel_id, flags, xfer_status);
 }
 
-/** Post a GPU GET from a remote view to a local view. The registered scratch
- * byte must be disjoint from the destination and kept alive until completion. */
+/**
+ * Post an experimental THREAD-level GET from remote src into local dst.
+ * The registered scratch byte must be disjoint from dst and retained until
+ * completion. Start with a zero-initialized status and poll getXferStatus in
+ * the submission mode to a terminal result. Do not reuse an active status.
+ * Each lane permits one outstanding scalar GET; completion polling releases it.
+ * MCST-required hardware returns NIXL_ERR_NOT_SUPPORTED.
+ */
 template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
-get(const memViewElem &src,
-    const memViewElem &dst,
+get(const memViewElem &dst,
+    const memViewElem &src,
     const memViewElem &scratch,
     size_t size,
     xferStatusH *status) {
-    return impl::get<level, mode>(src, dst, scratch, size, status);
+    return impl::get<level, mode>(dst, src, scratch, size, status);
 }
 
 /**

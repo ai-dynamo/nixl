@@ -1,6 +1,8 @@
 // SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 // SPDX-License-Identifier: Apache-2.0
 #include "gpunetio_backend.h"
+#include "gpunetio_cuda_device_guard.h"
+#include <array>
 #include <gpu/impl/gpunetio/device_gpunetio_types.h>
 #include <limits>
 #include <algorithm>
@@ -11,11 +13,22 @@ using namespace nixl::gpu::impl::gpunetio;
 namespace {
 std::atomic<uint64_t> nextCookie{1};
 
-void
-checkAllocation(nixl_status_t status) {
-    if (status != NIXL_SUCCESS) {
-        throw std::runtime_error("GPUNETIO native state allocation/upload failed");
+bool
+copyOnStream(cudaStream_t stream, void *dst, const void *src, size_t size, cudaMemcpyKind kind) {
+    const auto result = cudaMemcpyAsync(dst, src, size, kind, stream);
+    return result == cudaSuccess && cudaStreamSynchronize(stream) == cudaSuccess;
+}
+
+bool
+allocateOnStream(const std::shared_ptr<nixlGpunetioNativeStream> &stream,
+                 size_t size,
+                 nixlGpunetioNativeMem &out) {
+    void *ptr = nullptr;
+    if (cudaMallocAsync(&ptr, size, stream->stream) != cudaSuccess) {
+        return false;
     }
+    out = nixlGpunetioNativeMem(ptr, nixlGpunetioNativeDeleter{stream});
+    return true;
 }
 
 bool
@@ -26,37 +39,44 @@ validRange(uint64_t base, uint64_t length) {
 
 void
 nixlDocaEngine::initializeNativeState() {
-    auto *ops = nixl::getDeviceOps();
-    if (!ops) {
-        throw std::runtime_error("CUDA device operations unavailable");
+    nixl::doca::cudaDeviceGuard guard(gdevs[0].first);
+    if (guard.status() != cudaSuccess) {
+        throw std::runtime_error("Cannot select native CUDA device");
     }
-    auto &allocator = *ops;
     auto state = std::make_unique<nixlGpunetioNativeState>();
-    state->ops = ops;
+    state->stream = std::make_shared<nixlGpunetioNativeStream>();
+    if (cudaStreamCreateWithFlags(&state->stream->stream, cudaStreamNonBlocking) != cudaSuccess) {
+        throw std::runtime_error("Cannot create native upload stream");
+    }
     state->cookie = nextCookie.fetch_add(1, std::memory_order_relaxed);
     if (state->cookie == 0) {
         throw std::runtime_error("GPUNETIO native context cookie exhausted");
     }
     state->laneCount = dataQpCount_;
     state->boundQps.resize(state->laneCount, nullptr);
-    checkAllocation(
-        allocator.allocDeviceMem(sizeof(GpunetioDeviceLane) * state->laneCount, state->lane));
-    checkAllocation(
-        allocator.allocDeviceMem(sizeof(GpunetioDeviceContext) * state->laneCount, state->context));
+    if (!allocateOnStream(
+            state->stream, sizeof(GpunetioDeviceLane) * state->laneCount, state->lane) ||
+        !allocateOnStream(
+            state->stream, sizeof(GpunetioDeviceContext) * state->laneCount, state->context)) {
+        throw std::runtime_error("GPUNETIO native allocation failed");
+    }
     std::vector<GpunetioDeviceLane> lanes(state->laneCount);
     std::vector<GpunetioDeviceContext> contexts(state->laneCount);
     for (uint32_t i = 0; i < state->laneCount; ++i) {
         contexts[i].lane = static_cast<GpunetioDeviceLane *>(state->lane.get()) + i;
     }
-    checkAllocation(allocator.copy(state->lane.get(),
-                                   lanes.data(),
-                                   sizeof(GpunetioDeviceLane) * lanes.size(),
-                                   nixl::deviceOps::copyDirection::HostToDevice));
-    checkAllocation(allocator.copy(state->context.get(),
-                                   contexts.data(),
-                                   sizeof(GpunetioDeviceContext) * contexts.size(),
-                                   nixl::deviceOps::copyDirection::HostToDevice));
-    checkAllocation(allocator.synchronize());
+    if (!copyOnStream(state->stream->stream,
+                      state->lane.get(),
+                      lanes.data(),
+                      sizeof(GpunetioDeviceLane) * lanes.size(),
+                      cudaMemcpyHostToDevice) ||
+        !copyOnStream(state->stream->stream,
+                      state->context.get(),
+                      contexts.data(),
+                      sizeof(GpunetioDeviceContext) * contexts.size(),
+                      cudaMemcpyHostToDevice)) {
+        throw std::runtime_error("GPUNETIO native upload failed");
+    }
     nativeState_ = std::move(state);
 }
 
@@ -94,9 +114,8 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
     if (!supported_type || count == 0 || count > SIZE_MAX / sizeof(GpunetioViewElem)) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    auto &allocator = *nativeState_->ops;
     int device = -1;
-    if (allocator.getActiveDevice(device) != NIXL_SUCCESS || device != int(gdevs[0].first)) {
+    if (cudaGetDevice(&device) != cudaSuccess || device != int(gdevs[0].first)) {
         return NIXL_ERR_INVALID_PARAM;
     }
     std::lock_guard lock(nativeState_->mutex);
@@ -153,6 +172,13 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
                     return NIXL_ERR_INVALID_PARAM;
                 }
                 elem.key = md->mr->get_rkey();
+                {
+                    std::lock_guard conn_lock(remoteConnLock);
+                    auto conn = remoteConnMap.find(peer);
+                    if (conn == remoteConnMap.end() || !conn->second.connected) {
+                        return NIXL_ERR_NOT_FOUND;
+                    }
+                }
                 std::lock_guard qp_lock(qpLock);
                 const auto it = qpMap.find(peer);
                 if (it == qpMap.end()) {
@@ -177,19 +203,21 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
         }
         if (qp) {
             doca_gpu_dev_verbs_nic_handler handler;
-            if (cudaMemcpy(&handler, &qp->nic_handler, sizeof(handler), cudaMemcpyDeviceToHost) !=
-                    cudaSuccess ||
+            if (!copyOnStream(nativeState_->stream->stream,
+                              &handler,
+                              &qp->nic_handler,
+                              sizeof(handler),
+                              cudaMemcpyDeviceToHost) ||
                 handler != DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB) {
                 return NIXL_ERR_NOT_SUPPORTED;
             }
         }
-        auto rc = allocator.allocDeviceMem(count * sizeof(GpunetioViewElem), storage.elements);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
-        }
-        rc = allocator.allocDeviceMem(sizeof(GpunetioDeviceView), storage.header);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+        if (!allocateOnStream(
+                nativeState_->stream, count * sizeof(GpunetioViewElem), storage.elements) ||
+            !allocateOnStream(nativeState_->stream, sizeof(GpunetioDeviceView), storage.header) ||
+            !allocateOnStream(
+                nativeState_->stream, sizeof(nixlDeviceMemViewWrapper), storage.wrapper)) {
+            return NIXL_ERR_BACKEND;
         }
         GpunetioDeviceView header{};
         header.abi_version = 1;
@@ -200,44 +228,35 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
         header.elems = static_cast<GpunetioViewElem *>(storage.elements.get());
         header.context =
             static_cast<GpunetioDeviceContext *>(nativeState_->context.get()) + channel;
-        rc = allocator.copy(storage.elements.get(),
-                            elements.data(),
-                            count * sizeof(GpunetioViewElem),
-                            nixl::deviceOps::copyDirection::HostToDevice);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
-        }
-        rc = allocator.copy(storage.header.get(),
-                            &header,
-                            sizeof(header),
-                            nixl::deviceOps::copyDirection::HostToDevice);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+        const auto stream = nativeState_->stream->stream;
+        if (!copyOnStream(stream,
+                          storage.elements.get(),
+                          elements.data(),
+                          count * sizeof(GpunetioViewElem),
+                          cudaMemcpyHostToDevice) ||
+            !copyOnStream(
+                stream, storage.header.get(), &header, sizeof(header), cudaMemcpyHostToDevice)) {
+            return NIXL_ERR_BACKEND;
         }
         // Bind the shared lane only once; later views must not reset its generation/credits.
         if (remote && nativeState_->boundQps[channel] == nullptr) {
             GpunetioDeviceLane lane{};
             lane.qp = qp;
-            rc = allocator.copy(static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) +
-                                    channel,
-                                &lane,
-                                sizeof(lane),
-                                nixl::deviceOps::copyDirection::HostToDevice);
-            if (rc != NIXL_SUCCESS) {
-                return rc;
+            if (!copyOnStream(stream,
+                              static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) + channel,
+                              &lane,
+                              sizeof(lane),
+                              cudaMemcpyHostToDevice)) {
+                return NIXL_ERR_BACKEND;
             }
         }
-        rc = allocator.synchronize();
-        if (rc != NIXL_SUCCESS) {
-            return rc;
+        const nixlDeviceMemViewWrapper wrapper{nixl_device_exec_mode_t::GPUNETIO_DIRECT,
+                                               storage.header.get()};
+        if (!copyOnStream(
+                stream, storage.wrapper.get(), &wrapper, sizeof(wrapper), cudaMemcpyHostToDevice)) {
+            return NIXL_ERR_BACKEND;
         }
-        nixlMemViewH handle = nullptr;
-        rc = nixl::deviceMemViewAllocate(
-            allocator, nixl_device_exec_mode_t::GPUNETIO_DIRECT, storage.header.get(), handle);
-        if (rc != NIXL_SUCCESS) {
-            return rc;
-        }
-        storage.wrapper = nixl::deviceMem(handle, nixl::deviceMemDeleter{&allocator});
+        nixlMemViewH handle = storage.wrapper.get();
         const auto [it, inserted] = nativeState_->views.emplace(handle, std::move(storage));
         if (!inserted) {
             return NIXL_ERR_BACKEND;
@@ -261,19 +280,27 @@ nixlDocaEngine::releaseMemView(nixlMemViewH handle) const {
         return;
     }
     // Caller must finish its CUDA kernels and retire accepted NIC work before release.
+    nixl::doca::cudaDeviceGuard guard(gdevs[0].first);
+    if (guard.status() != cudaSuccess) {
+        return;
+    }
     std::lock_guard lock(nativeState_->mutex);
     auto it = nativeState_->views.find(handle);
     if (it == nativeState_->views.end()) {
         return;
     }
-    auto &allocator = *nativeState_->ops;
+    const auto stream = nativeState_->stream->stream;
     GpunetioDeviceLane snapshot{};
-    if (allocator.copy(&snapshot,
-                       static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) +
-                           it->second.channel,
-                       sizeof(snapshot),
-                       nixl::deviceOps::copyDirection::DeviceToHost) != NIXL_SUCCESS ||
-        snapshot.phase != gpunetio_lane_phase_idle) {
+    if (!copyOnStream(stream,
+                      &snapshot,
+                      static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) +
+                          it->second.channel,
+                      sizeof(snapshot),
+                      cudaMemcpyDeviceToHost)) {
+        nativeState_->snapshotFailed = true;
+        return;
+    }
+    if (snapshot.phase != gpunetio_lane_phase_idle) {
         // No cancellation is implied by release: keep the view/MR pins until
         // engine teardown has successfully quiesced its QPs.
         return;
@@ -283,25 +310,46 @@ nixlDocaEngine::releaseMemView(nixlMemViewH handle) const {
     if (was_remote && --nativeState_->remoteViews == 0) {
         // Common-wrapper publication can fail after backend prep succeeded.
         // Undo an unused binding, never reset an operated/live lane or its credits.
-        std::vector<GpunetioDeviceLane> lanes(nativeState_->laneCount);
-        if (allocator.copy(lanes.data(),
-                           nativeState_->lane.get(),
-                           sizeof(GpunetioDeviceLane) * lanes.size(),
-                           nixl::deviceOps::copyDirection::DeviceToHost) == NIXL_SUCCESS &&
-            std::all_of(lanes.begin(), lanes.end(), [](const auto &lane) {
-                return lane.phase == gpunetio_lane_phase_idle && lane.generation == 0;
-            })) {
+        std::array<GpunetioDeviceLane, nixl::gpunetio::maxNativeQps> lanes{};
+        if (!copyOnStream(stream,
+                          lanes.data(),
+                          nativeState_->lane.get(),
+                          sizeof(GpunetioDeviceLane) * nativeState_->laneCount,
+                          cudaMemcpyDeviceToHost)) {
+            nativeState_->snapshotFailed = true;
+            return;
+        }
+        if (std::all_of(
+                lanes.begin(), lanes.begin() + nativeState_->laneCount, [](const auto &lane) {
+                    return lane.phase == gpunetio_lane_phase_idle && lane.generation == 0;
+                })) {
             for (auto &lane : lanes) {
                 lane.qp = nullptr;
             }
-            if (allocator.copy(nativeState_->lane.get(),
-                               lanes.data(),
-                               sizeof(GpunetioDeviceLane) * lanes.size(),
-                               nixl::deviceOps::copyDirection::HostToDevice) == NIXL_SUCCESS &&
-                allocator.synchronize() == NIXL_SUCCESS) {
+            if (copyOnStream(stream,
+                             nativeState_->lane.get(),
+                             lanes.data(),
+                             sizeof(GpunetioDeviceLane) * nativeState_->laneCount,
+                             cudaMemcpyHostToDevice)) {
                 nativeState_->peer.clear();
                 std::fill(nativeState_->boundQps.begin(), nativeState_->boundQps.end(), nullptr);
+            } else {
+                nativeState_->snapshotFailed = true;
             }
         }
     }
+}
+
+bool
+nixlGpunetioNativeState::lanesIdle() const {
+    std::array<GpunetioDeviceLane, nixl::gpunetio::maxNativeQps> lanes{};
+    return !snapshotFailed &&
+        copyOnStream(stream->stream,
+                     lanes.data(),
+                     lane.get(),
+                     sizeof(GpunetioDeviceLane) * laneCount,
+                     cudaMemcpyDeviceToHost) &&
+        std::all_of(lanes.begin(), lanes.begin() + laneCount, [](const auto &entry) {
+            return entry.phase == gpunetio_lane_phase_idle;
+        });
 }

@@ -251,19 +251,30 @@ sendDataQps(int fd, const nixlDocaRdmaQp &peer, uint32_t count) {
         (count == 1 || sendAll(fd, peer.qpn_write.data(), count * sizeof(uint32_t)));
 }
 
-bool
+nixl_status_t
 recvDataQps(int fd, uint32_t &data_qpn, std::vector<uint32_t> &write_qpns, uint32_t count) {
     if (count > 1) {
         uint32_t header[4]{};
-        if (!recvAll(fd, header, sizeof(header)) || header[0] != data_qp_protocol_magic ||
-            header[1] != data_qp_protocol_version || header[2] != count || header[3] != count + 1) {
-            return false;
+        if (!recvAll(fd, header, sizeof(header))) {
+            return NIXL_ERR_BACKEND;
+        }
+        if (header[0] != data_qp_protocol_magic || header[1] != data_qp_protocol_version ||
+            header[2] != count || header[3] != count + 1) {
+            return NIXL_ERR_INVALID_PARAM;
         }
         write_qpns.resize(count);
     }
-    return recvAll(fd, &data_qpn, sizeof(data_qpn)) && data_qpn != data_qp_protocol_magic &&
-        (count == 1 || recvAll(fd, write_qpns.data(), count * sizeof(uint32_t)));
+    if (!recvAll(fd, &data_qpn, sizeof(data_qpn))) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (data_qpn == data_qp_protocol_magic) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return count == 1 || recvAll(fd, write_qpns.data(), count * sizeof(uint32_t)) ?
+        NIXL_SUCCESS :
+        NIXL_ERR_BACKEND;
 }
+
 } // namespace
 
 /****************************************
@@ -664,7 +675,8 @@ nixlDocaEngine::~nixlDocaEngine() {
                                          "stream synchronize");
             nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
         }
-    } else if (cudaDeviceSynchronize() != cudaSuccess) {
+    } else if (nativeState_ && !nativeState_->lanesIdle()) {
+        NIXL_ERROR << "Native lanes not idle or snapshot failed; retaining dependent resources";
         nativeState_.release();
         retainedQp_.release();
         return;
@@ -1172,10 +1184,12 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "connectClientRdmaQp: Receive client remote data qp connection details";
-    if (!recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_)) {
+    const auto data_qp_status =
+        recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_);
+    if (data_qp_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
-        return NIXL_ERR_BACKEND;
+        return data_qp_status;
     }
 
     // Notif QP
@@ -1361,10 +1375,16 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "Server Receive client remote data qp connection details";
-    if (!recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_)) {
+    const auto data_qp_status =
+        recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_);
+    if (data_qp_status != NIXL_SUCCESS) {
+        if (data_qp_status == NIXL_ERR_INVALID_PARAM && dataQpCount_ > 1) {
+            // Let the peer diagnose the pool mismatch from our header, not EOF.
+            sendDataQps(oob_sock_client, *rdma_qp, dataQpCount_);
+        }
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
-        return NIXL_ERR_BACKEND;
+        return data_qp_status;
     }
 
     // Notif QP
@@ -1556,14 +1576,8 @@ nixlDocaEngine::loadRemoteConnInfo(const std::string &remote_agent,
     conn.connected = false;
     {
         std::lock_guard<std::mutex> lock(remoteConnLock);
-        auto [it, inserted] = remoteConnMap.emplace(remote_agent, conn);
-        if (!inserted) {
-            // Invalidation currently retains the QP. Re-handshake it so the
-            // existing route checks reject a peer that has restarted.
-            if (!it->second.connected) {
-                return NIXL_ERR_NOT_ALLOWED;
-            }
-            it->second.connected = false;
+        if (!remoteConnMap.emplace(remote_agent, conn).second) {
+            return NIXL_ERR_INVALID_PARAM;
         }
     }
     auto clear_pending = [&]() {
@@ -1704,14 +1718,14 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     // TODO: connection setup should move to connect
     nixlDocaConnection conn;
     auto md = std::make_unique<nixlDocaPublicMetadata>();
-    auto search = remoteConnMap.find(remote_agent);
-
-    if (search == remoteConnMap.end()) {
-        NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        auto search = remoteConnMap.find(remote_agent);
+        if (search == remoteConnMap.end() || (nativeMode_ && !search->second.connected)) {
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = search->second;
     }
-
-    conn = (nixlDocaConnection)search->second;
 
     // directly copy underlying conn struct
     md->conn = conn;

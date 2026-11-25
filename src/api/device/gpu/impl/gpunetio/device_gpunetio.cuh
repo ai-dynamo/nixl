@@ -88,11 +88,24 @@ getXferStatus(xferStatusH &xfer_status) {
     }
 
     auto *lane = payload->lane;
-    if (deviceAtomic(lane->phase).load(cuda::memory_order_acquire) != gpunetio_lane_phase_posted ||
-        deviceAtomic(lane->generation).load(cuda::memory_order_relaxed) != payload->generation ||
-        deviceAtomic(lane->active_ticket).load(cuda::memory_order_relaxed) != payload->ticket) {
-        failLane(payload);
+    const uint32_t phase = deviceAtomic(lane->phase).load(cuda::memory_order_acquire);
+    if (phase == gpunetio_lane_phase_failed) {
+        payload->cached_status = NIXL_ERR_BACKEND;
         return NIXL_ERR_BACKEND;
+    }
+    // A lane becomes idle or starts another generation only after this GET
+    // succeeds. Polling a stale copy must never fail its current owner.
+    if (phase == gpunetio_lane_phase_idle ||
+        deviceAtomic(lane->generation).load(cuda::memory_order_relaxed) != payload->generation) {
+        payload->cached_status = NIXL_SUCCESS;
+        return NIXL_SUCCESS;
+    }
+    if (phase != gpunetio_lane_phase_posted) {
+        return NIXL_IN_PROG;
+    }
+    if (deviceAtomic(lane->active_ticket).load(cuda::memory_order_relaxed) != payload->ticket) {
+        payload->cached_status = NIXL_SUCCESS;
+        return NIXL_SUCCESS;
     }
 
     if (payload->read_pending) {
@@ -200,6 +213,11 @@ get(const memViewElem &local_dst,
         return NIXL_ERR_BACKEND;
     }
 
+    // MCST-required hardware is not yet qualified for this device path.
+    if (compat::needsDump(lane->qp)) {
+        phase.store(gpunetio_lane_phase_idle, cuda::memory_order_release);
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     auto generation_ref = deviceAtomic(lane->generation);
     if (generation_ref.load(cuda::memory_order_relaxed) == ~uint64_t{0}) {
         phase.store(gpunetio_lane_phase_idle, cuda::memory_order_release);
@@ -207,7 +225,6 @@ get(const memViewElem &local_dst,
     }
     const uint64_t generation = generation_ref.fetch_add(1U, cuda::memory_order_relaxed) + 1U;
     doca_gpu_dev_verbs_ticket_t ticket{};
-    compat::releaseFence();
     if (compat::needsDump(lane->qp)) {
         doca_gpu_dev_verbs_get_thread<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
                                       DOCA_GPUNETIO_VERBS_NIC_HANDLER_AUTO,

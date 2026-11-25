@@ -58,6 +58,14 @@ DOCA GPUNetIO backend takes these input parameters:
 
 ### Experimental GPU-initiated GET
 
+Native view storage uses CUDA stream-ordered allocation and requires CUDA memory-pool support.
+Uploads and lane snapshots use an engine-private nonblocking stream. Callers must
+finish their kernels and retire NIC work before releasing views or destroying the engine;
+active or failed lanes retain their backing resources.
+DOCA QP unexport can wait in CUDA host-memory unregistration even for unrelated
+persistent kernels. Stop such kernels before destroying a backend. This SDK
+teardown constraint does not require a device-wide wait during view preparation.
+
 Build with `-Dgpunetio_device_api=enabled` and create a GPUNETIO backend with
 `native_device_api=true`. This mode supports GPU-initiated GET using local VRAM
 and registered remote VRAM or pinned Host memory. It does not support host
@@ -71,8 +79,8 @@ backend remains in stream mode.
 Prepare channel views once with `nixl_opt_args_t::customParam` set to
 `"native_channel=N"` in `prepMemView`; omitted/empty selects channel0. Valid
 indices are `[0,native_qp_count)`. Use matching local/remote/scratch channels.
-Existing GPU `get`, status, and `readSession` calls and the device-view ABI
-are unchanged. Views are long-lived prepared resources, not per-copy requests;
+The scalar overload uses local destination first: `get(dst, src, scratch, bytes, &status)`.
+Each scalar lane permits one outstanding GET until completion is polled. Views are long-lived prepared resources, not per-copy requests;
 the backend owns the QPs and shares their registered buffers. For example:
 
 ```cpp
@@ -109,16 +117,17 @@ Applications must still retire successful reads, perform any required
 consistency operation and keep all graph resources alive. The public FIFO mode has workload-dependent cost.
 
 CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
-`<gpu/nixl_device.cuh>` for scalar `get`, or `<gpu/nixl_device_batch.cuh>` for
-the split-phase `readSession`. The current implementation is restricted to
-DOCA 3.5. Its opt-in parallel batch completion path uses an internal SDK
+`<gpu/nixl_device.cuh>` for scalar `get`, or
+`<gpu/impl/gpunetio/device_gpunetio_batch.cuh>` for the backend-specific
+`nixl::gpu::gpunetio::experimental::readSession`. Builds require DOCA 3.5 or newer;
+hardware qualification uses DOCA 3.5. Its opt-in parallel batch completion path uses an internal SDK
 helper; that path has no SDK compatibility guarantee. Scalar GET requires a
 registered scratch byte disjoint from the destination. For batch reads, one CTA owns a session;
 the caller must synchronize WQE builders, poll every completion, retire in FIFO
 order, and keep the views, registrations and buffers alive until work retires.
 When required, `postConsistency` also needs a registered disjoint scratch byte.
-The MCST-required path has not been validated on hardware that requires MCST;
-support for such platforms remains unverified.
+Scalar GET and session acquisition return `NIXL_ERR_NOT_SUPPORTED` when the QP
+requires MCST. Such hardware remains outside the current qualification.
 An unsuccessful or abandoned operation must be failed and its resources kept
 until the engine is safely torn down. See the manual hardware test in
 `test/unit/plugins/gpunetio` for a complete small example.

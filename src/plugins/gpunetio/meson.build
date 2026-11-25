@@ -17,7 +17,7 @@ plugin_gpunetio_deps = [nixl_common_dep, dependency('libibverbs'), dependency('l
 
 # C++20 for CUDA is set project-wide in the root meson.build.
 gpunetio_compile_flags = ['-D DOCA_ALLOW_EXPERIMENTAL_API']
-if not get_option('gpunetio_device_api').disabled()
+if get_option('gpunetio_device_api').enabled()
     gpunetio_compile_flags += ['-DNIXL_GPUNETIO_DEVICE_API_HOST=1']
 endif
 

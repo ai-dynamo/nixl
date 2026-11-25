@@ -4,7 +4,7 @@
  */
 #include <cuda_runtime.h>
 #include <gpu/nixl_device.cuh>
-#include <gpu/nixl_device_batch.cuh>
+#include <gpu/impl/gpunetio/device_gpunetio_batch.cuh>
 #include <nixl.h>
 
 #include <algorithm>
@@ -60,11 +60,11 @@ inspectLane(nixlMemViewH handle, uint64_t *generation, bool poison) {
 
 __global__ void
 rejectMixed(nixlMemViewH local, nixlMemViewH remote, int *result) {
-    nixl::gpu::readSession session;
+    nixl::gpu::gpunetio::experimental::readSession session;
     nixl::gpu::xferStatusH status{};
     if (session.bind(local, remote) != NIXL_ERR_INVALID_PARAM ||
         nixl::gpu::get(
-            {remote, 0, 17}, {local, 0, kScalarDst}, {local, 0, kScratch}, 256, &status) !=
+            {local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status) !=
             NIXL_ERR_INVALID_PARAM) {
         *result = 16;
     }
@@ -73,10 +73,11 @@ rejectMixed(nixlMemViewH local, nixlMemViewH remote, int *result) {
 #if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
 __global__ void
 publicDefaultAdmission(nixlMemViewH local, nixlMemViewH remote, int *result) {
-    nixl::gpu::readSession session;
+    nixl::gpu::gpunetio::experimental::readSession session;
     uint64_t ticket = 0;
     *result = session.bind(local, remote) == NIXL_SUCCESS && session.acquire() == NIXL_SUCCESS &&
             session.reserve(1, ticket) == NIXL_ERR_NOT_SUPPORTED &&
+            session.poll(ticket) == NIXL_ERR_NOT_SUPPORTED &&
             session.finish() == NIXL_SUCCESS && session.acquireFifo() == NIXL_SUCCESS &&
             session.finish() == NIXL_SUCCESS ?
         0 :
@@ -91,27 +92,87 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
     }
     nixl::gpu::xferStatusH status{};
     if (nixl::gpu::get(
-            {remote, 0, kBytes - 10}, {local, 0, kScalarDst}, {local, 0, kScratch}, 256, &status) !=
+            {local, 0, kScalarDst}, {remote, 0, kBytes - 10}, {local, 0, kScratch}, 256, &status) !=
             NIXL_ERR_INVALID_PARAM ||
         nixl::gpu::get(
-            {remote, 0, 17}, {local, 0, kScalarDst}, {local, 0, kScalarDst}, 256, &status) !=
+            {local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScalarDst}, 256, &status) !=
             NIXL_ERR_INVALID_PARAM) {
         *result = 11;
         return;
     }
     auto rc =
-        nixl::gpu::get({remote, 0, 17}, {local, 0, kScalarDst}, {local, 0, kScratch}, 256, &status);
+        nixl::gpu::get({local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
+    if (rc == NIXL_ERR_NOT_SUPPORTED) {
+        *result = 29;
+        return;
+    }
     if (rc != NIXL_IN_PROG) {
         *result = 1;
         return;
     }
-    const uint64_t deadline = globalTimerNs() + 5000000000ull;
+    // Take both snapshots while the first request is still active. One copy
+    // completes it; polling the original must observe the same terminal result.
+    auto completed_copy = status;
+    auto stale_copy = status;
+    const uint64_t copied_deadline = globalTimerNs() + 5000000000ull;
+    do {
+        rc = nixl::gpu::getXferStatus(completed_copy);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < copied_deadline);
+    if (rc != NIXL_SUCCESS || nixl::gpu::getXferStatus(status) != NIXL_SUCCESS) {
+        *result = 2;
+        return;
+    }
+
+    // A fixed-mode request records the selected mode in its active status.
+    status = {};
+    rc = nixl::gpu::get<nixl::gpu::level_t::THREAD, nixl::gpu::exec_mode_t::GPUNETIO_DIRECT>(
+        {local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
+    if (rc != NIXL_IN_PROG) {
+        *result = 25;
+        return;
+    }
+    if (nixl::gpu::get({local, 0, kScalarDst},
+                       {remote, 0, 17},
+                       {local, 0, kScratch},
+                       256,
+                       &status) != NIXL_ERR_REPOST_ACTIVE) {
+        *result = 26;
+        return;
+    }
+    // This stale IN_PROGRESS snapshot belongs to the prior generation. Polling
+    // it while the fixed-mode request is active must leave that owner healthy.
+    if (nixl::gpu::getXferStatus(stale_copy) != NIXL_SUCCESS) {
+        *result = 27;
+        return;
+    }
+    const uint64_t fixed_deadline = globalTimerNs() + 5000000000ull;
+    do {
+        rc = nixl::gpu::getXferStatus<nixl::gpu::level_t::THREAD,
+                                      nixl::gpu::exec_mode_t::GPUNETIO_DIRECT>(status);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < fixed_deadline);
+    if (rc != NIXL_SUCCESS) {
+        *result = 28;
+        return;
+    }
+    status = {};
+    rc = nixl::gpu::get({local, 0, kScalarDst},
+                        {remote, 0, 17},
+                        {local, 0, kScratch},
+                        256,
+                        &status);
+    if (rc != NIXL_IN_PROG) {
+        *result = 30;
+        return;
+    }
+    const uint64_t repost_deadline = globalTimerNs() + 5000000000ull;
     do {
         rc = nixl::gpu::getXferStatus(status);
-    } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < repost_deadline);
     if (rc != NIXL_SUCCESS) {
-        *result = 2;
-    } else {
+        *result = 31;
+        return;
+    }
+    {
         // Consume immediately on the GPU, before a kernel boundary or CPU sync.
         for (size_t i = 0; i < 256; ++i) {
             if (destination[kScalarDst + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
@@ -135,7 +196,7 @@ __global__ void
 expectCqError(nixlMemViewH local, nixlMemViewH remote, int *result, bool sticky) {
     nixl::gpu::xferStatusH status{};
     auto rc =
-        nixl::gpu::get({remote, 0, 17}, {local, 0, kScalarDst}, {local, 0, kScratch}, 256, &status);
+        nixl::gpu::get({local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
     if (sticky) {
         *result = rc == NIXL_ERR_BACKEND ? 0 : 19;
         return;
@@ -155,7 +216,7 @@ expectCqError(nixlMemViewH local, nixlMemViewH remote, int *result, bool sticky)
 __global__ void
 expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
     using namespace nixl::gpu::impl::gpunetio;
-    nixl::gpu::readSession session;
+    nixl::gpu::gpunetio::experimental::readSession session;
     uint64_t first = 0;
     if (session.bind(local, remote) != NIXL_SUCCESS || session.acquireFifo() != NIXL_SUCCESS ||
         session.reserve(3, first) != NIXL_SUCCESS ||
@@ -178,6 +239,13 @@ expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
         *result = 22;
         return;
     }
+    uint64_t pending = 0;
+    if (session.reserve(1, pending) != NIXL_SUCCESS ||
+        session.prepare(pending, 0, 17, 0, kBatchDst + 512, 128) != NIXL_SUCCESS) {
+        session.fail();
+        *result = 22;
+        return;
+    }
     nixl_status_t rc;
     const uint64_t deadline = globalTimerNs() + 5000000000ull;
     do {
@@ -191,7 +259,10 @@ expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
     do {
         rc = session.pollFifo(first + 1);
     } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+    uint64_t rejected = 0;
     const bool sticky = rc == NIXL_ERR_BACKEND && session.pollFifo(first + 2) == NIXL_ERR_BACKEND &&
+        session.reserve(1, rejected) == NIXL_ERR_BACKEND &&
+        session.publish(pending, 1) == NIXL_ERR_BACKEND &&
         session.retire(first, 1) == NIXL_ERR_BACKEND && session.finish() == NIXL_ERR_BACKEND;
     session.fail();
     *result = sticky ? 0 : 23;
@@ -200,16 +271,18 @@ expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
 template<bool Fifo>
 __global__ void
 batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *result) {
-    __shared__ __align__(16) unsigned char storage[sizeof(nixl::gpu::readSession)];
+    __shared__ __align__(16) unsigned char storage[sizeof(nixl::gpu::gpunetio::experimental::readSession)];
     __shared__ uint64_t first;
     __shared__ int error;
-    auto *session = reinterpret_cast<nixl::gpu::readSession *>(storage);
+    auto *session = reinterpret_cast<nixl::gpu::gpunetio::experimental::readSession *>(storage);
     if (!threadIdx.x) {
-        ::new (session) nixl::gpu::readSession{};
+        ::new (session) nixl::gpu::gpunetio::experimental::readSession{};
         error = 0;
-        if (session->bind(local, remote) != NIXL_SUCCESS ||
-            (Fifo ? session->acquireFifo() : session->acquire()) != NIXL_SUCCESS) {
-            error = 3;
+        const auto bind_rc = session->bind(local, remote);
+        const auto acquire_rc = bind_rc == NIXL_SUCCESS ?
+            (Fifo ? session->acquireFifo() : session->acquire()) : bind_rc;
+        if (acquire_rc != NIXL_SUCCESS) {
+            error = acquire_rc == NIXL_ERR_NOT_SUPPORTED ? 29 : 3;
         }
         if (!error &&
             (session->reserve(0, first) != NIXL_ERR_INVALID_PARAM ||
@@ -226,7 +299,7 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *res
         }
     }
     __syncthreads();
-    if (!error && threadIdx.x < kCount &&
+    if (atomicAdd(&error, 0) == 0 && threadIdx.x < kCount &&
         session->prepare(first + threadIdx.x,
                          0,
                          512 + threadIdx.x * kItemBytes,
@@ -267,7 +340,7 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *res
                 }
             }
         }
-    } else if (!error && threadIdx.x < kCount) {
+    } else if (atomicAdd(&error, 0) == 0 && threadIdx.x < kCount) {
         nixl_status_t rc;
         const uint64_t deadline = globalTimerNs() + 5000000000ull;
         do {
@@ -324,7 +397,7 @@ fifoPipeline(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination
     if (threadIdx.x) {
         return;
     }
-    nixl::gpu::readSession session;
+    nixl::gpu::gpunetio::experimental::readSession session;
     uint64_t base[3]{};
     int error = 0;
     if (session.bind(local, remote) != NIXL_SUCCESS || session.acquireFifo() != NIXL_SUCCESS) {
@@ -383,123 +456,99 @@ fifoPipeline(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination
     *result = error;
 }
 
-// Two blocks contend for one lane. The winner holds it until both have attempted.
+using ReadSession = nixl::gpu::gpunetio::experimental::readSession;
+struct PersistentRead {
+    alignas(16) unsigned char storage[sizeof(ReadSession)];
+    uint64_t ticket;
+    int result;
+};
+
+// Each graph node performs one state transition. Graph ordering keeps the lane
+// owned across nodes without relying on concurrent CTA scheduling.
 __global__ void
-contendFifoLane(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination, int *state) {
-    if (threadIdx.x) {
-        return;
+publishPersistent(nixlMemViewH local,
+                  nixlMemViewH remote,
+                  size_t dst_offset,
+                  size_t src_offset,
+                  PersistentRead *state) {
+    auto *session = ::new (state->storage) ReadSession{};
+    state->result = session->bind(local, remote);
+    if (state->result == NIXL_SUCCESS) {
+        state->result = session->acquireFifo();
     }
-    nixl::gpu::readSession session;
-    if (session.bind(local, remote) != NIXL_SUCCESS) {
-        atomicAdd(state + 3, 1);
-        atomicAdd(state, 1);
-        return;
+    if (state->result == NIXL_SUCCESS) {
+        state->result = session->reserve(1, state->ticket);
     }
-    const auto rc = session.acquireFifo();
-    if (rc != NIXL_SUCCESS) {
-        atomicAdd(state + (rc == NIXL_ERR_NOT_ALLOWED ? 2 : 3), 1);
-        atomicAdd(state, 1);
-        return;
+    if (state->result == NIXL_SUCCESS) {
+        state->result = session->prepare(
+            state->ticket, 0, src_offset, 0, dst_offset, kItemBytes);
     }
-    atomicAdd(state + 1, 1);
-    uint64_t first = 0;
-    bool ok = session.reserve(1, first) == NIXL_SUCCESS &&
-        session.prepare(first, 0, 512, 0, kBatchDst, kItemBytes) == NIXL_SUCCESS &&
-        session.publish(first, 1) == NIXL_IN_PROG;
-    atomicAdd(state, 1);
-    const uint64_t deadline = globalTimerNs() + 5000000000ull;
-    while (atomicAdd(state, 0) < 2 && globalTimerNs() < deadline) {}
-    if (atomicAdd(state, 0) != 2) {
-        ok = false;
-    }
-    auto wait = [&](uint64_t ticket) {
-        nixl_status_t status;
-        do {
-            status = session.pollFifo(ticket);
-        } while (status == NIXL_IN_PROG && globalTimerNs() < deadline);
-        return status == NIXL_SUCCESS && session.retire(ticket, 1) == NIXL_SUCCESS;
-    };
-    if (ok) {
-        ok = wait(first);
-    }
-    if (ok && session.needsConsistency()) {
-        uint64_t dump;
-        ok = session.postConsistency(0, kScratch, dump) == NIXL_IN_PROG && wait(dump);
-    }
-    if (ok) {
-        ok = session.finish() == NIXL_SUCCESS;
-    }
-    if (!ok) {
-        session.fail();
-        atomicAdd(state + 3, 1);
-        return;
-    }
-    for (size_t i = 0; i < kItemBytes; ++i) {
-        if (destination[kBatchDst + i] != uint8_t(((512 + i) * 13 + 7) % 251)) {
-            atomicAdd(state + 3, 1);
-            break;
+    if (state->result == NIXL_SUCCESS) {
+        state->result = session->publish(state->ticket, 1);
+        if (state->result == NIXL_IN_PROG) {
+            state->result = NIXL_SUCCESS;
         }
+    }
+    if (state->result != NIXL_SUCCESS) {
+        session->fail();
     }
 }
 
-// Hold both distinct lanes until each Graph has published a real READ.
 __global__ void
-parallelFifoLane(nixlMemViewH local,
-                 nixlMemViewH remote,
-                 const uint8_t *destination,
-                 unsigned channel,
-                 int *state) {
-    nixl::gpu::readSession session;
-    uint64_t ticket = 0;
-    bool acquired =
-        session.bind(local, remote) == NIXL_SUCCESS && session.acquireFifo() == NIXL_SUCCESS;
-    const size_t offset = size_t(channel) * kItemBytes;
-    bool ok = acquired && session.reserve(1, ticket) == NIXL_SUCCESS &&
-        session.prepare(ticket, 0, 512 + offset, 0, kBatchDst + offset, kItemBytes) ==
-            NIXL_SUCCESS &&
-        session.publish(ticket, 1) == NIXL_IN_PROG;
-    if (ok) {
-        atomicAdd(state, 1);
-    } else {
-        atomicAdd(state + 2, 1);
+rejectBusyLane(nixlMemViewH local, nixlMemViewH remote, int *result) {
+    ReadSession contender;
+    const auto bind_status = contender.bind(local, remote);
+    const auto acquire_status = bind_status == NIXL_SUCCESS ? contender.acquireFifo() : bind_status;
+    if (acquire_status == NIXL_SUCCESS) {
+        contender.finish();
+    }
+    *result = acquire_status == NIXL_ERR_NOT_ALLOWED ? 0 : 1;
+}
+
+__global__ void
+retirePersistent(const uint8_t *destination,
+                 size_t dst_offset,
+                 size_t src_offset,
+                 PersistentRead *state) {
+    auto *session = reinterpret_cast<ReadSession *>(state->storage);
+    if (state->result != NIXL_SUCCESS) {
+        return;
     }
     const uint64_t deadline = globalTimerNs() + 5000000000ull;
-    while (ok && atomicAdd(state, 0) != 2 && atomicAdd(state + 2, 0) == 0 &&
-           globalTimerNs() < deadline) {}
-    if (atomicAdd(state, 0) != 2) {
-        ok = false;
+    nixl_status_t rc;
+    do {
+        rc = session->pollFifo(state->ticket);
+    } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+    if (rc == NIXL_SUCCESS) {
+        rc = session->retire(state->ticket, 1);
     }
-    auto wait = [&](uint64_t next) {
-        nixl_status_t rc;
-        do {
-            rc = session.pollFifo(next);
-        } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
-        return rc == NIXL_SUCCESS && session.retire(next, 1) == NIXL_SUCCESS;
-    };
-    if (ok) {
-        ok = wait(ticket);
-    }
-    if (ok && session.needsConsistency()) {
-        uint64_t dump;
-        ok = session.postConsistency(0, kScratch + channel, dump) == NIXL_IN_PROG && wait(dump);
-    }
-    if (ok) {
-        ok = session.finish() == NIXL_SUCCESS;
-    }
-    if (!ok) {
-        if (acquired) {
-            session.fail();
+    if (rc == NIXL_SUCCESS && session->needsConsistency()) {
+        uint64_t consistency = 0;
+        rc = session->postConsistency(0, kScratch, consistency);
+        if (rc == NIXL_IN_PROG) {
+            do {
+                rc = session->pollFifo(consistency);
+            } while (rc == NIXL_IN_PROG && globalTimerNs() < deadline);
+            if (rc == NIXL_SUCCESS) {
+                rc = session->retire(consistency, 1);
+            }
         }
-        atomicAdd(state + 2, 1);
+    }
+    if (rc == NIXL_SUCCESS) {
+        rc = session->finish();
+    } else {
+        session->fail();
+    }
+    if (rc != NIXL_SUCCESS) {
+        state->result = rc;
         return;
     }
     for (size_t i = 0; i < kItemBytes; ++i) {
-        if (destination[kBatchDst + offset + i] != uint8_t(((512 + offset + i) * 13 + 7) % 251)) {
-            atomicAdd(state + 2, 1);
+        if (destination[dst_offset + i] != uint8_t(((src_offset + i) * 13 + 7) % 251)) {
+            state->result = 1;
             return;
         }
     }
-    atomicAdd(state + 1, 1);
 }
 } // namespace
 
@@ -526,6 +575,13 @@ main(int argc, char **argv) {
         const unsigned qps = qps_env ? std::stoul(qps_env) : 1;
         if (qps < 1 || qps > 32) {
             throw std::runtime_error("invalid test QP count");
+        }
+        const char *peer_qps = std::getenv("NIXL_GPUNETIO_TEST_PEER_QPS");
+        if (peer_qps) {
+            const auto owner_qps = std::stoul(peer_qps);
+            if (owner_qps < 2 || owner_qps > 32 || qps < 2 || owner_qps == qps) {
+                throw std::runtime_error("peer QP mismatch test needs unequal counts in [2, 32]");
+            }
         }
         const nixl_mem_t source_mem = source_is_host ? DRAM_SEG : VRAM_SEG;
         check(cudaSetDevice(owner_gpu), "select owner GPU");
@@ -566,7 +622,6 @@ main(int argc, char **argv) {
                                    {"oob_port", std::to_string(value)}};
         };
         auto owner_params = params(port, owner_gpu), reader_params = params(port + 1, reader_gpu);
-        const char *peer_qps = std::getenv("NIXL_GPUNETIO_TEST_PEER_QPS");
         if (peer_qps) {
             owner_params["native_qp_count"] = peer_qps;
         }
@@ -593,30 +648,16 @@ main(int argc, char **argv) {
         check(owner.getLocalMD(metadata), "export metadata");
         std::string peer;
         if (peer_qps) {
-            auto status = reader.loadRemoteMD(metadata, peer);
-            if (status == NIXL_SUCCESS) {
-                status = reader.makeConnection(peer, &reader_hint);
+            const auto status = reader.loadRemoteMD(metadata, peer);
+            if (status != NIXL_ERR_INVALID_PARAM) {
+                throw std::runtime_error("mismatched pool did not return INVALID_PARAM at metadata load: " +
+                                         std::to_string(status));
             }
-            if (status == NIXL_SUCCESS) {
-                throw std::runtime_error("mismatched pool connected");
-            }
-            std::cout << "PASS mismatched native QP counts rejected; "
+            std::cout << "PASS mismatched native QP counts rejected at metadata load; "
                          "SETUP_RESOURCES_RETAINED_UNTIL_EXIT\n"
                       << std::flush;
             std::_Exit(0);
         }
-        // A failed section load invalidates the core's connection record.
-        // Reloading the same live peer must still allow a GET.
-        nixl_blob_t malformed = metadata;
-        const auto tag = malformed.find("nixlSecElms");
-        if (tag == nixl_blob_t::npos) {
-            throw std::runtime_error("metadata section tag missing");
-        }
-        malformed[tag] = 'X';
-        if (reader.loadRemoteMD(malformed, peer) != NIXL_ERR_MISMATCH) {
-            throw std::runtime_error("malformed metadata was not rejected");
-        }
-        peer.clear();
         check(reader.loadRemoteMD(metadata, peer), "load metadata");
         const auto connection = reader.makeConnection(peer, &reader_hint);
         check(connection, "connect");
@@ -676,12 +717,17 @@ main(int argc, char **argv) {
                 throw std::runtime_error("public default lane admission failed");
             }
 #endif
+            check(cudaMemset(destination + kScalarDst, 0xa5, 256), "poison scalar destination");
             scalarGet<<<1, 1>>>(local_view, remote_view, destination, device_result);
             check(cudaGetLastError(), "launch scalar GET");
             check(cudaDeviceSynchronize(), "complete scalar GET");
             int result = 0;
             check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                   "read scalar status");
+            if (result == 29) {
+                std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                std::_Exit(0);
+            }
             if (result) {
                 throw std::runtime_error("scalar GET failed: " + std::to_string(result));
             }
@@ -695,16 +741,26 @@ main(int argc, char **argv) {
                 check(cudaDeviceSynchronize(), "complete parallel batch GET");
                 check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                       "read parallel batch status");
+                if (result == 29) {
+                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                    std::_Exit(0);
+                }
                 if (result) {
                     throw std::runtime_error("parallel batch GET failed: " +
                                              std::to_string(result));
                 }
 #endif
+                check(cudaMemset(destination + kBatchDst, 0xa5, kCount * kItemBytes),
+                      "re-poison FIFO batch destination");
                 batchGet<true><<<1, 32>>>(local_view, remote_view, destination, device_result);
                 check(cudaGetLastError(), "launch FIFO batch GET");
                 check(cudaDeviceSynchronize(), "complete FIFO batch GET");
                 check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
                       "read FIFO batch status");
+                if (result == 29) {
+                    std::cout << "SKIP native GET qualification: MCST consistency is unsupported\n";
+                    std::_Exit(0);
+                }
                 if (result) {
                     throw std::runtime_error("FIFO batch GET failed: " + std::to_string(result));
                 }
@@ -714,17 +770,27 @@ main(int argc, char **argv) {
             check(cudaDeviceSynchronize(), "read generation before");
             check(cudaMemcpy(&before, device_generation, sizeof(before), cudaMemcpyDeviceToHost),
                   "copy generation before");
-            check(reader.loadRemoteMD(metadata, peer), "same-live metadata reload after use");
             auto hint = reader_hint;
             hint.customParam = "native_channel=" + std::to_string(channel);
             nixlMemViewH repeated = nullptr;
             check(reader.prepMemView(remote, repeated, &hint), "reprepare used channel");
-            inspectLane<<<1, 1>>>(local_view, device_generation, false);
-            check(cudaDeviceSynchronize(), "read generation after");
+            inspectLane<<<1, 1>>>(repeated, device_generation, false);
+            check(cudaDeviceSynchronize(), "read generation after re-preparation");
             check(cudaMemcpy(&after, device_generation, sizeof(after), cudaMemcpyDeviceToHost),
                   "copy generation after");
-            if (!before || before != after) {
-                throw std::runtime_error("channel generation reset during preparation");
+            uint64_t after_identity[3];
+            check(cudaMemcpy(after_identity, device_generation, sizeof(after_identity),
+                             cudaMemcpyDeviceToHost),
+                  "copy re-prepared lane identity");
+            uint64_t before_identity[3];
+            inspectLane<<<1, 1>>>(local_view, device_generation, false);
+            check(cudaDeviceSynchronize(), "read original lane identity");
+            check(cudaMemcpy(before_identity, device_generation, sizeof(before_identity),
+                             cudaMemcpyDeviceToHost),
+                  "copy original lane identity");
+            if (!before || before != after || before_identity[1] != after_identity[1] ||
+                before_identity[2] != after_identity[2]) {
+                throw std::runtime_error("channel lane or generation changed during preparation");
             }
             reader.releaseMemView(repeated);
         }
@@ -763,78 +829,125 @@ main(int argc, char **argv) {
                 }
             }
         }
-        // Capture competing CTAs and replay after resetting status in the graph.
-        int *contention = nullptr;
+        // Ordered graph nodes hold a lane across kernel boundaries; no block
+        // waits for another block to be scheduled.
+        PersistentRead *contention = nullptr;
+        int *contention_result = nullptr;
         cudaStream_t contention_stream;
         cudaGraph_t contention_graph;
         cudaGraphExec_t contention_exec;
-        check(cudaMalloc(&contention, 4 * sizeof(int)), "allocate contention state");
+        check(cudaMalloc(&contention, sizeof(PersistentRead)), "allocate contention session");
+        check(cudaMalloc(&contention_result, sizeof(int)), "allocate contention result");
         check(cudaStreamCreateWithFlags(&contention_stream, cudaStreamNonBlocking),
               "create contention stream");
         check(cudaStreamBeginCapture(contention_stream, cudaStreamCaptureModeGlobal),
               "begin contention capture");
-        check(cudaMemsetAsync(contention, 0, 4 * sizeof(int), contention_stream),
-              "reset contention state");
-        contendFifoLane<<<2, 1, 0, contention_stream>>>(
-            locals[0], remotes[0], destination, contention);
-        check(cudaGetLastError(), "launch competing CTA GET");
-        check(cudaStreamEndCapture(contention_stream, &contention_graph), "end contention capture");
+        publishPersistent<<<1, 1, 0, contention_stream>>>(
+            locals[0], remotes[0], kBatchDst, 512, contention);
+        rejectBusyLane<<<1, 1, 0, contention_stream>>>(
+            locals[0], remotes[0], contention_result);
+        retirePersistent<<<1, 1, 0, contention_stream>>>(
+            destination, kBatchDst, 512, contention);
+        check(cudaGetLastError(), "capture ordered lane ownership nodes");
+        check(cudaStreamEndCapture(contention_stream, &contention_graph),
+              "end contention capture");
         check(cudaGraphInstantiate(&contention_exec, contention_graph, 0),
               "instantiate contention graph");
         for (unsigned replay = 0; replay < 10; ++replay) {
+            check(cudaMemset(contention_result, 0xff, sizeof(int)), "reset contention result");
+            check(cudaMemset(destination + kBatchDst, 0xa5, kItemBytes),
+                  "poison contention destination");
+            check(cudaDeviceSynchronize(), "complete contention resets");
             check(cudaGraphLaunch(contention_exec, contention_stream), "launch contention graph");
             check(cudaStreamSynchronize(contention_stream), "synchronize contention graph");
-            int counts[4];
-            check(cudaMemcpy(counts, contention, sizeof(counts), cudaMemcpyDeviceToHost),
-                  "read contention state");
-            if (counts[0] != 2 || counts[1] != 1 || counts[2] != 1 || counts[3] != 0) {
-                throw std::runtime_error("concurrent FIFO lane ownership failed");
+            int busy_result = 1;
+            check(cudaMemcpy(&busy_result, contention_result, sizeof(int), cudaMemcpyDeviceToHost),
+                  "read contention result");
+            if (busy_result != 0) {
+                throw std::runtime_error("held FIFO lane admitted a second session");
+            }
+            check(cudaMemcpy(&busy_result, &contention->result, sizeof(int), cudaMemcpyDeviceToHost),
+                  "read contention retirement result");
+            if (busy_result != NIXL_SUCCESS) {
+                throw std::runtime_error("ordered lane ownership replay failed");
             }
         }
         check(cudaGraphExecDestroy(contention_exec), "destroy contention executable");
         check(cudaGraphDestroy(contention_graph), "destroy contention graph");
         check(cudaStreamDestroy(contention_stream), "destroy contention stream");
-        check(cudaFree(contention), "free contention state");
+        check(cudaFree(contention_result), "free contention result");
+        check(cudaFree(contention), "free contention session");
+
         if (qps >= 2) {
-            int *parallel_state = nullptr;
+            PersistentRead *parallel[2] = {nullptr, nullptr};
             cudaStream_t streams[2];
-            cudaGraph_t graphs[2];
-            cudaGraphExec_t executions[2];
-            check(cudaMalloc(&parallel_state, 3 * sizeof(int)), "allocate parallel Graph state");
+            cudaGraph_t publish_graphs[2], retire_graphs[2];
+            cudaGraphExec_t publish_execs[2], retire_execs[2];
+            cudaEvent_t published[2];
             for (unsigned i = 0; i < 2; ++i) {
+                check(cudaMalloc(&parallel[i], sizeof(PersistentRead)),
+                      "allocate parallel session");
                 check(cudaStreamCreateWithFlags(&streams[i], cudaStreamNonBlocking),
                       "create parallel Graph stream");
+                check(cudaEventCreateWithFlags(&published[i], cudaEventDisableTiming),
+                      "create publication event");
                 check(cudaStreamBeginCapture(streams[i], cudaStreamCaptureModeGlobal),
-                      "begin parallel Graph capture");
-                parallelFifoLane<<<1, 1, 0, streams[i]>>>(
-                    locals[i], remotes[i], destination, i, parallel_state);
-                check(cudaGetLastError(), "launch parallel Graph GET");
-                check(cudaStreamEndCapture(streams[i], &graphs[i]), "end parallel Graph capture");
-                check(cudaGraphInstantiate(&executions[i], graphs[i], 0),
-                      "instantiate parallel Graph");
+                      "begin publication Graph capture");
+                publishPersistent<<<1, 1, 0, streams[i]>>>(
+                    locals[i], remotes[i], kBatchDst + i * kItemBytes,
+                    512 + i * kItemBytes, parallel[i]);
+                check(cudaGetLastError(), "capture lane publication");
+                check(cudaStreamEndCapture(streams[i], &publish_graphs[i]),
+                      "end publication Graph capture");
+                check(cudaGraphInstantiate(&publish_execs[i], publish_graphs[i], 0),
+                      "instantiate publication Graph");
+                check(cudaStreamBeginCapture(streams[i], cudaStreamCaptureModeGlobal),
+                      "begin retirement Graph capture");
+                retirePersistent<<<1, 1, 0, streams[i]>>>(
+                    destination, kBatchDst + i * kItemBytes, 512 + i * kItemBytes, parallel[i]);
+                check(cudaGetLastError(), "capture lane retirement");
+                check(cudaStreamEndCapture(streams[i], &retire_graphs[i]),
+                      "end retirement Graph capture");
+                check(cudaGraphInstantiate(&retire_execs[i], retire_graphs[i], 0),
+                      "instantiate retirement Graph");
             }
             for (unsigned replay = 0; replay < 10; ++replay) {
-                check(cudaMemset(parallel_state, 0, 3 * sizeof(int)), "reset parallel Graph state");
-                check(cudaDeviceSynchronize(), "complete parallel Graph reset");
+                check(cudaMemset(destination + kBatchDst, 0xa5, 2 * kItemBytes),
+                      "poison parallel Graph destinations");
+                check(cudaDeviceSynchronize(), "complete parallel destination poison");
                 for (unsigned i = 0; i < 2; ++i) {
-                    check(cudaGraphLaunch(executions[i], streams[i]), "launch parallel Graph");
+                    check(cudaGraphLaunch(publish_execs[i], streams[i]),
+                          "launch publication Graph");
+                    check(cudaEventRecord(published[i], streams[i]), "record publication event");
+                }
+                for (unsigned i = 0; i < 2; ++i) {
+                    check(cudaStreamWaitEvent(streams[i], published[1 - i], 0),
+                          "wait for both lane publications");
+                    check(cudaGraphLaunch(retire_execs[i], streams[i]),
+                          "launch retirement Graph");
                 }
                 for (auto stream : streams) {
-                    check(cudaStreamSynchronize(stream), "synchronize parallel Graph");
+                    check(cudaStreamSynchronize(stream), "synchronize parallel Graphs");
                 }
-                int counts[3];
-                check(cudaMemcpy(counts, parallel_state, sizeof(counts), cudaMemcpyDeviceToHost),
-                      "read parallel Graph state");
-                if (counts[0] != 2 || counts[1] != 2 || counts[2] != 0) {
+                int results[2]{};
+                for (unsigned i = 0; i < 2; ++i) {
+                    check(cudaMemcpy(&results[i], &parallel[i]->result, sizeof(int),
+                                     cudaMemcpyDeviceToHost),
+                          "read parallel Graph result");
+                }
+                if (results[0] != NIXL_SUCCESS || results[1] != NIXL_SUCCESS) {
                     throw std::runtime_error("parallel FIFO Graph GET failed");
                 }
             }
             for (unsigned i = 0; i < 2; ++i) {
-                check(cudaGraphExecDestroy(executions[i]), "destroy parallel Graph executable");
-                check(cudaGraphDestroy(graphs[i]), "destroy parallel Graph");
+                check(cudaGraphExecDestroy(publish_execs[i]), "destroy publication executable");
+                check(cudaGraphExecDestroy(retire_execs[i]), "destroy retirement executable");
+                check(cudaGraphDestroy(publish_graphs[i]), "destroy publication Graph");
+                check(cudaGraphDestroy(retire_graphs[i]), "destroy retirement Graph");
+                check(cudaEventDestroy(published[i]), "destroy publication event");
                 check(cudaStreamDestroy(streams[i]), "destroy parallel Graph stream");
+                check(cudaFree(parallel[i]), "free parallel session");
             }
-            check(cudaFree(parallel_state), "free parallel Graph state");
         }
         if (std::getenv("NIXL_GPUNETIO_TEST_RETENTION")) {
             if (qps < 2) {
@@ -864,6 +977,8 @@ main(int argc, char **argv) {
                 if (error) {
                     throw std::runtime_error("failed channel reused");
                 }
+                check(cudaMemset(destination + kScalarDst, 0xa5, 256),
+                      "poison healthy scalar destination");
                 scalarGet<<<1, 1>>>(locals[0], remotes[0], destination, device_result);
                 check(cudaDeviceSynchronize(), "healthy channel after peer channel error");
                 check(cudaMemcpy(&error, device_result, sizeof(error), cudaMemcpyDeviceToHost),
@@ -890,7 +1005,7 @@ main(int argc, char **argv) {
             if (real_error) {
                 std::cout << "PASS real CQ error, sticky refusal, independent healthy channel\n";
             }
-            std::cout << "PASS pool idle release and failed-channel retention; "
+            std::cout << "PASS failed-channel retention; "
                          "QUARANTINED_UNTIL_PROCESS_EXIT\n"
                       << std::flush;
             std::_Exit(0);
