@@ -35,6 +35,7 @@
 #include "utils/memos_key.h"
 #include "utils/scope_guard.h"
 #include "utils/utils.h"
+#include "utils/fixed_pacer.h"
 #include <unistd.h>
 #include <utility>
 #include <sys/time.h>
@@ -1909,7 +1910,27 @@ prepareSlot(nixlAgent *agent,
 // Post the slot's request and record post_duration. Marks the slot
 // in-flight; the caller drives completion via getXferStatus.
 static nixl_status_t
-postSlot(nixlAgent *agent, xferBenchStats &thread_stats, slotState &slot) {
+postSlot(nixlAgent *agent,
+         xferBenchStats &thread_stats,
+         slotState &slot,
+         nixlbench::FixedPacer &pacer,
+         uint64_t request_bytes,
+         const std::atomic<int> *terminate_ptr) {
+    if (xferBenchConfig::pacing_bytes_per_sec) {
+        try {
+            if (!pacer.wait(
+                    request_bytes,
+                    [] { return nixlbench::FixedPacer::Clock::now(); },
+                    [](auto duration) { std::this_thread::sleep_for(duration); },
+                    [terminate_ptr] { return terminate_ptr && terminate_ptr->load(); })) {
+                return NIXL_ERR_UNKNOWN;
+            }
+        }
+        catch (const std::invalid_argument &error) {
+            std::cerr << error.what() << std::endl;
+            return NIXL_ERR_INVALID_PARAM;
+        }
+    }
     const nixlTime::us_t post_start = nixlTime::getUs();
     nixl_status_t rc = agent->postXferReq(slot.req);
     if (rc != NIXL_SUCCESS && rc != NIXL_IN_PROG) {
@@ -2012,6 +2033,20 @@ execTransferLoop(nixlAgent *agent,
         slots[s].remote_iov.assign(rb, rb + entries_per_slot);
     }
 
+    nixlbench::FixedPacer pacer(xferBenchConfig::pacing_bytes_per_sec);
+    uint64_t request_bytes = 0;
+    if (xferBenchConfig::pacing_bytes_per_sec) {
+        try {
+            // Pacing supports one slot; check actual descriptors before creating a request.
+            request_bytes = nixlbench::boundedRequestBytes(
+                local_iov, xferBenchConfig::pacing_max_request_bytes);
+        }
+        catch (const std::invalid_argument &error) {
+            std::cerr << error.what() << std::endl;
+            return -1;
+        }
+    }
+
     int issued = 0;
     int completed = 0;
 
@@ -2028,7 +2063,7 @@ execTransferLoop(nixlAgent *agent,
             cleanupSlots(agent, backend_engine, slots);
             return -1;
         }
-        rc = postSlot(agent, thread_stats, slots[s]);
+        rc = postSlot(agent, thread_stats, slots[s], pacer, request_bytes, terminate_ptr);
         if (rc != NIXL_SUCCESS) [[unlikely]] {
             std::cerr << "postSlot failed for slot " << s << ": " << nixlEnumStrings::statusStr(rc)
                       << std::endl;
@@ -2090,7 +2125,7 @@ execTransferLoop(nixlAgent *agent,
                 }
             }
 
-            rc = postSlot(agent, thread_stats, slots[s]);
+            rc = postSlot(agent, thread_stats, slots[s], pacer, request_bytes, terminate_ptr);
             if (rc != NIXL_SUCCESS) [[unlikely]] {
                 std::cerr << "postSlot failed on resubmit for slot " << s << ": "
                           << nixlEnumStrings::statusStr(rc) << std::endl;

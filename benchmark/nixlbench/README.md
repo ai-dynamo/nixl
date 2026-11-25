@@ -65,6 +65,53 @@ A comprehensive benchmarking tool for the NVIDIA Inference Xfer Library (NIXL) t
   - Comprehensive performance metrics with latency percentiles
   - Data consistency validation for reliability testing
 
+## Fixed application-request pacing
+
+For a controlled congestion experiment, set `--pacing_bytes_per_sec=N` and
+`--pacing_max_request_bytes=N`. Both default to zero, retaining unpaced behavior.
+Pacing currently supports the host `nixl` worker with `UCX`, `SG`, one benchmark
+thread, pipeline depth one, READ or WRITE, and the `pairwise`, `manytoone` and
+`onetomany` schemes. Device API, MG and tensor-parallel schemes are rejected.
+The raw POSIX subcommand does not accept these options.
+
+The rate is application bytes per second **per initiating rank**, including all
+local descriptors in its request. The byte limit caps the whole request, rather
+than each descriptor. Select small block/batch sizes to produce bounded chunks;
+oversize requests fail before posting. This version does not split descriptors.
+At most one application request is outstanding. NIXL and UCX may packetize and
+burst that request internally, so this is not a wire-rate or packet-rate limit.
+
+For example, add these options to each existing WRITE initiator's launch:
+
+```bash
+--pacing_bytes_per_sec=4000000000 --pacing_max_request_bytes=1048576 \
+--start_block_size=1048576 --max_block_size=1048576 \
+--start_batch_size=1 --max_batch_size=1 --num_threads=1 --pipeline_depth=1
+```
+
+Eight active WRITE initiators given 4 GB/s each have a combined configured share
+of 32 GB/s. On a 40 GB/s cut, that leaves 8 GB/s for background traffic and
+headroom. A launcher must also keep the sum of shares into each receiver below
+its available capacity. This calculation counts data direction: a READ initiator
+receives the requested data from the target, so pacing that initiator limits
+requested return data. Count every active initiating rank separately; the rate
+is not divided automatically by rank count or tensor-parallel size. In a
+one-to-many request the byte budget covers the aggregate descriptors, rather
+than assigning separate shares to each target. Use separate pairwise streams
+when different receivers require different shares.
+
+The launcher assigns fixed shares; NIXLBench does not discover link capacity,
+measure background traffic or coordinate rates between processes. Leave room
+for transport overhead and changing background traffic. There is no synchronized
+start phase or automatic receiver bandwidth allocation.
+
+Each submission waits until its application-byte interval has elapsed, including
+the first submission and warmup. Late wakes earn no accumulated catch-up credit.
+Pacing waits are included in reported total duration, bandwidth and average
+latency. Per-transfer service duration still starts after the backend post returns. A
+comparison must transfer identical useful bytes and include these waits; a
+lower drop count alone does not establish an improvement.
+
 ## System Requirements
 
 ### Hardware Requirements

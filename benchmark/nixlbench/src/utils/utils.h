@@ -217,6 +217,8 @@ public:
     static bool reregister_mem;
     static bool prepared_xfer;
     static int pipeline_depth;
+    static uint64_t pacing_bytes_per_sec;
+    static uint64_t pacing_max_request_bytes;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;

@@ -40,6 +40,7 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/neuron.h"
 #include "utils/utils.h"
+#include "utils/fixed_pacer.h"
 
 namespace {
 
@@ -176,6 +177,10 @@ NB_ARG_BOOL(prepared_xfer,
             false,
             "Use prepared transfer API (prepare+make), incompatible with reregister_mem");
 NB_ARG_INT32(pipeline_depth, 1, "Number of transfer requests in flight simultaneously");
+NB_ARG_UINT64(pacing_bytes_per_sec,
+              0,
+              "Application bytes/s per initiating rank; 0 disables pacing");
+NB_ARG_UINT64(pacing_max_request_bytes, 0, "Maximum application bytes per paced request");
 NB_ARG_INT32(large_blk_iter_ftr,
              16,
              "factor to reduce test iteration when testing large block size(>1MB)");
@@ -443,6 +448,8 @@ bool xferBenchConfig::storage_enable_direct = false;
 bool xferBenchConfig::reregister_mem = false;
 bool xferBenchConfig::prepared_xfer = false;
 int xferBenchConfig::pipeline_depth = 1;
+uint64_t xferBenchConfig::pacing_bytes_per_sec = 0;
+uint64_t xferBenchConfig::pacing_max_request_bytes = 0;
 long xferBenchConfig::page_size = sysconf(_SC_PAGESIZE);
 std::string xferBenchConfig::obj_access_key = "";
 std::string xferBenchConfig::obj_secret_key = "";
@@ -961,6 +968,24 @@ xferBenchConfig::loadParams(void) {
         return -1;
     }
     use_device_api = NB_ARG(use_device_api);
+    pacing_bytes_per_sec = NB_ARG(pacing_bytes_per_sec);
+    pacing_max_request_bytes = NB_ARG(pacing_max_request_bytes);
+    try {
+        nixlbench::validatePacingConfiguration(pacing_bytes_per_sec,
+                                               pacing_max_request_bytes,
+                                               worker_type,
+                                               backend,
+                                               mode,
+                                               scheme,
+                                               num_threads,
+                                               pipeline_depth,
+                                               op_type,
+                                               use_device_api);
+    }
+    catch (const std::invalid_argument &error) {
+        std::cerr << error.what() << std::endl;
+        return -1;
+    }
     device_channel_num = NB_ARG(device_channel_num);
     device_mode = NB_ARG(device_mode);
     device_proxy_threads = NB_ARG(device_proxy_threads);
@@ -1210,6 +1235,11 @@ xferBenchConfig::printConfig() {
         printOption("Prepared xfer (prep+make) (--prepared_xfer=[0,1])",
                     std::to_string(prepared_xfer));
         printOption("Pipeline depth (--pipeline_depth=N)", std::to_string(pipeline_depth));
+        if (pacing_bytes_per_sec) {
+            printOption("Pacing application bytes/s per initiating rank",
+                        std::to_string(pacing_bytes_per_sec));
+            printOption("Pacing maximum request bytes", std::to_string(pacing_max_request_bytes));
+        }
         printOption("Use hugepages (--use_hugepages=[0,1])", std::to_string(use_hugepages));
 
         // Print GDS options if backend is GDS

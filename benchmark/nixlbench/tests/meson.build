@@ -37,3 +37,10 @@ if gtest_dep.found()
 else
   message('GoogleTest not found. Skipping NIXLBench tests.')
 endif
+
+fixed_pacer_tests = executable(
+  'fixed_pacer_tests',
+  'fixed_pacer_test.cpp',
+  include_directories: inc_dir,
+)
+test('fixed_pacer_tests', fixed_pacer_tests, suite: 'nixlbench')
