@@ -36,9 +36,9 @@ public:
            const int& num_nixl_channels, const std::string& agent_name_prefix,
            const int& num_experts_per_rank, const int& num_launch_sms);
 
-    ~buffer() noexcept(false);
+    ~buffer() noexcept;
 
-    void destroy();
+    void destroy() noexcept;
 
     torch::Stream get_comm_stream() const;
 

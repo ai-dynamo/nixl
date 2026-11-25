@@ -9,6 +9,7 @@
 #include <sstream>
 #include <thread>
 #include <unordered_set>
+#include <utility>
 
 #include <cuda_runtime.h>  // before the nixl_ep_v2 headers: under g++ their `__device__` annotations are macros from here
 #include <nixl.h>
@@ -70,9 +71,9 @@ static void cleanup(const char* what, const func_t& func) noexcept {
     try {
         func();
     } catch (const std::exception& e) {
-        NIXL_ERROR << "NIXL EP cleanup (" << what << ") failed: " << e.what();
+        NIXL_WARN << "NIXL EP cleanup (" << what << ") failed: " << e.what();
     } catch (...) {
-        NIXL_ERROR << "NIXL EP cleanup (" << what << ") failed: unknown exception";
+        NIXL_WARN << "NIXL EP cleanup (" << what << ") failed: unknown exception";
     }
 }
 
@@ -243,23 +244,22 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
                << (region.is_vmm ? "VMM with a fabric handle" : "cudaMalloc") << ")";
 }
 
-NIXLEPContext::~NIXLEPContext() {
-    try {
-        finalize();
-    } catch (const std::exception& e) {
-        NIXL_ERROR << "NIXL EP context finalization failed: " << e.what();
-    }
+NIXLEPContext::~NIXLEPContext() noexcept {
+    finalize();
 }
 
-void NIXLEPContext::finalize() {
+void NIXLEPContext::finalize() noexcept {
     if (state == nullptr)
         return;
-    CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
+    cleanup("synchronize device", [&] { CUDA_RUNTIME_CHECK(cudaDeviceSynchronize()); });
     if (state->agent != nullptr) {
-        release_staged_views();
-        release_active_views();
+        for (auto* view: {&state->staged_remote, &state->active_remote}) {
+            const auto handle = std::exchange(*view, nullptr);
+            if (handle != nullptr)
+                cleanup("release memory view", [&] { state->agent->releaseMemView(handle); });
+        }
         for (int wr = 0; wr < num_world_ranks; ++ wr) if (endpoint_connected[wr])
-            invalidate_remote_md(*state->agent, known_agent_names[wr]);
+            cleanup("invalidate peer metadata", [&] { NIXL_CHECK(invalidate_remote_md(*state->agent, known_agent_names[wr])); });
     }
     state.reset();
     ctx_device.reset();

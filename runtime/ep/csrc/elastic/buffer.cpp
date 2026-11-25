@@ -123,7 +123,7 @@ buffer::buffer(const int64_t& num_buffer_bytes,
     // Construction is local; callers connect peers and commit the active world explicitly.
 }
 
-buffer::~buffer() noexcept(false) {
+buffer::~buffer() noexcept {
     if (not explicitly_destroy and not destroyed)
         destroy();
 
@@ -132,14 +132,17 @@ buffer::~buffer() noexcept(false) {
     }
 }
 
-void buffer::destroy() {
-    EP_HOST_ASSERT(not destroyed);
+void buffer::destroy() noexcept {
+    if (destroyed)
+        return;
 
-    // Finalization synchronizes the local device before releasing any resources.
+    // Finalization attempts local synchronization and every resource release, warning on failure.
     nixl_context->finalize();
 
     // Deallocate host workspaces
-    CUDA_RUNTIME_CHECK(cudaFreeHost(host_workspace));
+    if (const auto status = cudaFreeHost(host_workspace); status != cudaSuccess)
+        NIXL_WARN << "NIXL EP cleanup (free host workspace) failed: " << cudaGetErrorString(status);
+    host_workspace = nullptr;
     profile_storage = torch::Tensor();
 
     // Cannot use anymore

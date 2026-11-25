@@ -68,10 +68,10 @@ public:
 
     NIXLEPContext(const std::string& agent_name, const int& world_rank, const int& num_world_ranks,
                   const int& max_num_scaleup_ranks, const int64_t& num_region_bytes, const int& num_channels);
-    ~NIXLEPContext();
+    ~NIXLEPContext() noexcept;
 
-    // Release the views, deregister and free the region (idempotent)
-    void finalize();
+    // Attempt all releases, warning on failure (idempotent).
+    void finalize() noexcept;
 
     std::string get_local_agent_name() const;
     std::string get_local_metadata() const;

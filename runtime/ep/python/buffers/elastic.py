@@ -394,6 +394,7 @@ class ElasticBuffer:
 
         Drain the old world and complete its host rendezvous before destruction.
         Peers must no longer access this buffer; other ranks need not call `destroy`.
+        Cleanup failures are logged as warnings; the buffer cannot be reused after this call.
         """
         assert self.explicitly_destroy
 
