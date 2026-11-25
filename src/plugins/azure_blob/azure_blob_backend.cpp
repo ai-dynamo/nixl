@@ -155,7 +155,7 @@ waitForQueryMemFutures(std::vector<std::future<void>> &futures,
 // -----------------------------------------------------------------------------
 
 nixlAzureBlobEngine::nixlAzureBlobEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       executor_(std::make_shared<asio::thread_pool>(getNumThreads(init_params->customParams))),
       blobClient_(std::make_shared<azureBlobClient>(init_params->customParams, executor_)) {
     NIXL_INFO << "Azure Blob backend initialized with Blob client wrapper";
@@ -164,7 +164,7 @@ nixlAzureBlobEngine::nixlAzureBlobEngine(const nixlBackendInitParams *init_param
 // Used for testing to inject a mock Blob client dependency
 nixlAzureBlobEngine::nixlAzureBlobEngine(const nixlBackendInitParams *init_params,
                                          std::shared_ptr<iBlobClient> blob_client)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       executor_(std::make_shared<asio::thread_pool>(std::thread::hardware_concurrency())),
       blobClient_(blob_client) {
     blobClient_->setExecutor(executor_);
