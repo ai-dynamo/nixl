@@ -113,20 +113,25 @@ public:
      * @param phase     Which phase; see @ref nixl_trace_phase_t.
      * @param label     Name for a @ref nixl_trace_phase_t::OTHER phase. Recorded
      *                  as an attribute for every phase, and additionally used as
-     *                  the span name for `OTHER`. May be empty.
+     *                  the event name for `OTHER`. May be empty.
      * @param timestamp Microsecond reading of the monotonic `nixlTime` clock
      *                  (`nixlTime::getUs()`, backed by `std::chrono::steady_clock`),
-     *                  not a wall clock. Recorded verbatim on the span as
-     *                  `nixl.phase.timestamp_us`.
+     *                  not a wall clock. Recorded verbatim as the event's time and
+     *                  as `nixl.phase.timestamp_us`.
      * @param attrs     Extra attributes; see @ref nixlBackendTraceAttr for the
      *                  lifetime rule, which applies to @p label as well.
      * @param context   Trace context the phase belongs to, or null: the request's
      *                  own for a local phase, the sender's for a phase observed on
      *                  receipt. Valid for the call only; recorded as
-     *                  `nixl.traceparent`, and the span is correlated on it.
+     *                  `nixl.traceparent`.
+     * @param request_id Request id of the phase's transfer request, or 0 for none;
+     *                   recorded as `nixl.xfer_request_id` when non-zero, and the
+     *                   event is correlated on it.
+     * @param execution Execution number of the post the phase belongs to, or 0 for
+     *                  none; recorded as `nixl.xfer_execution` when non-zero.
      *
      * Safe to call concurrently from any thread, including a progress thread;
-     * each call produces a span scoped to the calling thread. `noexcept`
+     * each call records one point event, whichever thread makes it. `noexcept`
      * because backends call it from completion callbacks and other contexts
      * that cannot absorb an exception -- a failure to record is dropped rather
      * than propagated, since tracing must never break a transfer.
@@ -136,7 +141,9 @@ public:
                 std::string_view label,
                 nixlTime::us_t timestamp,
                 std::span<const nixlBackendTraceAttr> attrs = {},
-                const nixl::trace::TraceContext *context = nullptr) noexcept = 0;
+                const nixl::trace::TraceContext *context = nullptr,
+                std::uint64_t request_id = 0,
+                std::uint64_t execution = 0) noexcept = 0;
 };
 
 #endif // NIXL_SRC_CORE_TRACING_BACKEND_TRACE_H

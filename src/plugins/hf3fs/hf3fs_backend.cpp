@@ -34,8 +34,11 @@
 
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
+// File operations - target is the distributed FS
+// So no requirements to connect to target.
+// Just treat it locally.
 nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO),
       iopool_size(HF3FS_DEFAULT_IOPOOL_SIZE) {
     hf3fs_utils = new hf3fsUtil();
@@ -505,13 +508,6 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
 
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
 
-    // Check if IOR is initialized
-    // TODO: This doesn't check anything...
-    // if (&hf3fs_handle->ior == nullptr) {
-    //     HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-    //         "Error: IOR is not initialized in checkXfer");
-    // }
-
     if (hf3fs_handle->io_status.thread == nullptr) {
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
             "Error: io thread is not initialized in checkXfer");
@@ -592,14 +588,27 @@ nixlHf3fsDramZCMetadata::nixlHf3fsDramZCMetadata(uint8_t *addr, size_t len, hf3f
      * without the pwrite here the memory will be all 0s after mmap.
      *
      * TODO: Is it a valid operation to write to the shared memory fd?
+     *
+     * Linux moves at most 0x7ffff000 bytes per write call, so a single pwrite
+     * cannot copy a region of 2 GiB or more. Loop until the whole region is copied.
      */
-    ssize_t written = pwrite(shm_fd, addr, len, 0);
-    if (written < 0 || written != (ssize_t)len) {
-        NIXL_PERROR << "Failed to write to shared memory";
-        close(shm_fd);
-        shm_unlink(shm_name.c_str());
-        throw nixlHf3fsShmException("Failed to write to shared memory: " +
-                                    std::string(strerror(errno)));
+    size_t written = 0;
+    while (written < len) {
+        ssize_t ret = pwrite(shm_fd, addr + written, len - written, static_cast<off_t>(written));
+        if (ret < 0 && errno == EINTR) {
+            continue;
+        }
+        if (ret <= 0) {
+            if (ret == 0) {
+                errno = EIO;
+            }
+            NIXL_PERROR << "Failed to write to shared memory";
+            close(shm_fd);
+            shm_unlink(shm_name.c_str());
+            throw nixlHf3fsShmException("Failed to write to shared memory: " +
+                                        std::string(strerror(errno)));
+        }
+        written += static_cast<size_t>(ret);
     }
 
     mapped_addr = mmap(addr, len, PROT_READ | PROT_WRITE, MAP_SHARED | MAP_FIXED, shm_fd, 0);

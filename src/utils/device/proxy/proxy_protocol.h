@@ -18,6 +18,7 @@
 #ifndef NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_PROTOCOL_H
 #define NIXL_SRC_UTILS_DEVICE_PROXY_PROXY_PROTOCOL_H
 
+#include <cassert>
 #include <cstddef>
 #include <cstdint>
 
@@ -43,12 +44,15 @@ enum class nixl_proxy_control_state_t : uint32_t {
 
 struct nixlProxyDeviceContextData;
 
-/** A prepared memory view as device code sees it; `direct_ptr_count` pointers follow it. */
+/**
+ * A prepared memory view as device code sees it; `direct_ptr_count` pointers follow it,
+ * then one peer per remote descriptor.
+ */
 struct nixlProxyDeviceMemView {
     uint64_t host_view = 0;
     const nixlProxyDeviceContextData *context = nullptr;
     uint32_t direct_ptr_count = 0;
-    uint32_t reserved = 0;
+    uint32_t peer_count = 0;
 };
 
 NIXL_PROXY_PROTO_FN void **
@@ -61,10 +65,18 @@ nixlProxyDeviceMemViewDirectPtrs(const nixlProxyDeviceMemView *view) {
     return reinterpret_cast<void *const *>(view + 1);
 }
 
-/** Bytes to allocate for a view carrying `count` direct pointers. */
+NIXL_PROXY_PROTO_FN uint32_t
+nixlProxyDeviceMemViewPeer(const nixlProxyDeviceMemView *view, size_t index) {
+    assert(index < view->peer_count);
+    return reinterpret_cast<const uint32_t *>(nixlProxyDeviceMemViewDirectPtrs(view) +
+                                              view->direct_ptr_count)[index];
+}
+
+/** Bytes to allocate for a view carrying `ptr_count` direct pointers and `peer_count` peers. */
 NIXL_PROXY_PROTO_FN size_t
-nixlProxyDeviceMemViewBytes(size_t count) {
-    return sizeof(nixlProxyDeviceMemView) + count * sizeof(void *);
+nixlProxyDeviceMemViewBytes(size_t ptr_count, size_t peer_count) {
+    return sizeof(nixlProxyDeviceMemView) + ptr_count * sizeof(void *) +
+        peer_count * sizeof(uint32_t);
 }
 
 /**
@@ -82,8 +94,7 @@ nixlProxyDeviceMemViewBytes(size_t count) {
  *   | dst_view   | destination view token  | counter view token  |
  *   | dst_index  | destination descriptor  | counter descriptor  |
  *
- * The destination descriptor index is also the peer slot the command goes to.
- * The ring the command is written into implies its channel.
+ * The ring the command is written into implies its channel and peer.
  * For ATOMIC_ADD the size field is unused and the host uses 8 bytes.
  */
 struct alignas(64) nixlProxyCommand {
@@ -109,12 +120,6 @@ struct alignas(64) nixlProxyCommand {
     NIXL_PROXY_PROTO_FN uint64_t
     atomicValue() const {
         return operand;
-    }
-
-    /** The peer slot the command goes to. */
-    NIXL_PROXY_PROTO_FN uint32_t
-    peerIndex() const {
-        return dst_index;
     }
 };
 

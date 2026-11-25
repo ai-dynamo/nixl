@@ -33,13 +33,16 @@ gtest_inc_dirs = include_directories('.')
 # Sanitizer runtime configuration. Built once and shared by every instrumented
 # test (tagged with the 'sanitizer' suite) so `meson test --suite sanitizer`
 # runs them with halt-on-error semantics and the third-party suppression lists.
-# When -Dsanitizer=none the environment stays empty, so tagging tests with the
-# suite is harmless for normal builds.
-sanitizer_opts = get_option('sanitizer').split(',')
+# Without -Dsanitizer or -Db_sanitize the environment stays empty, so tagging
+# tests with the suite is harmless for normal builds.
+sanitizer_opts = get_option('sanitizer').split(',') + get_option('b_sanitize').split(',')
 sanitizer_env = environment()
 sanitizer_supp_dir = meson.current_source_dir() / 'sanitizer'
 if sanitizer_opts.contains('address')
-    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1')
+    # The Mooncake Transfer Engine's libstdc++ calls bind to NIXL's
+    # instrumented copies, and with stack-use-after-return detection
+    # RandomSizes alone takes more than 5 minutes.
+    sanitizer_env.set('ASAN_OPTIONS', 'halt_on_error=1:abort_on_error=1:detect_leaks=1:detect_stack_use_after_return=0')
     sanitizer_env.set('LSAN_OPTIONS', 'suppressions=' + sanitizer_supp_dir / 'lsan.supp')
 endif
 if sanitizer_opts.contains('undefined')
@@ -52,34 +55,14 @@ endif
 subdir('mocks')
 subdir('plugins')
 
-if ucx_gpu_device_api_available
-    subdir('device_api')
-endif
-
 plugin_dirs_arg = '--tests_plugin_dirs=' + mocks_dep.get_variable('path')
-
-# ROCm detection (mutually exclusive with CUDA; default off)
-rocm_path = get_option('rocm_path')
-if rocm_path != ''
-    if not fs.exists(rocm_path)
-        error('rocm_path set but ROCm install root not found at ' + rocm_path +
-              '. Set -Drocm_path=<prefix> to the correct ROCm install root.')
-    endif
-    rocm_lib_path = rocm_path + '/lib'
-    rocm_inc_path = rocm_path + '/include'
-    rocm_dep = declare_dependency(
-        link_args : ['-L' + rocm_lib_path, '-lamdhip64', '-lhiprtc'],
-        include_directories : include_directories(rocm_inc_path))
-else
-    rocm_dep = disabler()
-endif
 
 cpp_flags = []
 
 gpu_dependencies = []
 if rocm_dep.found()
     gpu_dependencies = [rocm_dep]
-    cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-D__HIP_PLATFORM_AMD__', '-Wno-deprecated-declarations']
+    cpp_flags += ['-DHAVE_GPU', '-DHAVE_ROCM', '-Wno-deprecated-declarations']
 elif cuda_dep.found()
     gpu_dependencies = [cuda_dep]
     cpp_flags += ['-DHAVE_GPU', '-DHAVE_CUDA']
@@ -89,6 +72,10 @@ subdir('unit')
 
 if enabled_plugins.get('LIBFABRIC') and libfabric_dep.found()
     cpp_flags += '-DHAVE_LIBFABRIC'
+endif
+
+if is_variable('mooncake_backend_interface')
+    cpp_flags += '-DHAVE_MOONCAKE'
 endif
 
 if get_option('test_all_plugins')
@@ -110,24 +97,30 @@ gtest_sources = [
     'common.cpp',
     'query_mem.cpp',
     'telemetry_test.cpp',
-    'telemetry_prometheus_test.cpp',
     'telemetry_mp_store_test.cpp',
     'telemetry_histogram_test.cpp',
-    'telemetry_prometheus_stress_test.cpp',
     'telemetry_stress_test.cpp',
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'blocking_queue_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
+    'trace_recorder_test.cpp',
     # Hidden in libnixl_common, so the oversized-record test links its own copy.
     '../../src/utils/common/nixl_log_file_sink.cpp',
     ]
 
-if ucx_gpu_device_api_available
-    gtest_sources += device_api_test_sources
-    device_api_inc = [nixl_device_inc_dirs, include_directories('device_api')]
-    device_api_dep = [ucx_dep, doca_gpunetio_dep]
+if cuda_dep.found() and ucx_dep.found() and is_variable('ucx_backend_interface')
+    # The UCX device API tests also run the proxy mode, which needs only CUDA and the UCX backend.
+    gtest_sources += [
+        'device/gpu/device_gpu_agent.cpp',
+        'device/gpu/device_gpu_test.cu',
+    ]
+    device_api_inc = nixl_device_api_inc_dirs
+    device_api_dep = [ucx_dep]
+    if ucx_gpu_device_api_available
+        device_api_dep += [doca_gpunetio_dep]
+    endif
 else
     device_api_inc = []
     device_api_dep = []
@@ -135,7 +128,10 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
+    gtest_sources += 'ucx_config_test.cpp'
     gtest_sources += 'ucx_trace_context_test.cpp'
+    gtest_sources += 'ucx_request_release_test.cpp'
+    gtest_sources += 'ucx_notif_test.cpp'
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else
@@ -171,6 +167,19 @@ test_exe = executable('gtest',
     install : true
 )
 
+gtest_depends = [trace_recorder_plugin]
+if ucx_dep.found() and is_variable('ucx_backend_interface')
+    ucx_trace_receiver = executable('ucx_trace_receiver',
+        sources : ['main.cpp', 'common.cpp', 'ucx_trace_receiver.cpp'],
+        include_directories: [nixl_inc_dirs, utils_inc_dirs],
+        cpp_args : cpp_flags,
+        dependencies : [nixl_dep, nixl_common_dep, gpu_dependencies, gtest_dep, gmock_dep],
+        link_with: [nixl_build_lib],
+        install : true
+    )
+    gtest_depends += [ucx_trace_receiver]
+endif
+
 # MetadataExchangeTestFixture rapidly creates and tears down comm-thread agents,
 # which trips the GCC 13.3 libsanitizer thread-registry crash (a flaky SIGSEGV in
 # the ASan/TSan runtime on thread create/destroy -- a toolchain bug, not a NIXL
@@ -180,7 +189,8 @@ gtest_args = [plugin_dirs_arg]
 if get_option('sanitizer') != 'none'
     gtest_args += '--gtest_filter=-MetadataExchangeTestFixture.*'
 endif
-test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer')
+test('gtest', test_exe, args: gtest_args, env: sanitizer_env, suite: 'sanitizer',
+     depends: gtest_depends)
 
 # Telemetry hot-path microbenchmark (NVBug 5876558). The cases are DISABLED_ so
 # they never run in the normal 'gtest' suite; this dedicated entry opts them in.

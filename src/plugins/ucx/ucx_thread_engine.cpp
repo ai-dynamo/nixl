@@ -22,12 +22,13 @@
 #include "common/scoped_fd.h"
 
 #include <algorithm>
+#include <cerrno>
 #include <chrono>
 #include <limits>
 #include <stdexcept>
 #include <vector>
 #include <poll.h>
-#include <unistd.h>
+#include <sys/eventfd.h>
 
 #include "ucx_utils.h"
 
@@ -38,13 +39,11 @@ public:
     nixlUcxSharedThread(const nixlUcxEngine *engine,
                         std::vector<nixlUcxWorker *> workers,
                         nixlTime::us_t delay)
-        : nixlUcxThread(engine, std::move(workers)) {
-        int control_pipe[2];
-        if (pipe(control_pipe) < 0) {
-            throw std::runtime_error("Couldn't create progress thread control pipe");
+        : nixlUcxThread(engine, std::move(workers)),
+          controlFd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
+        if (!controlFd_.valid()) {
+            throw std::runtime_error("Failed to create progress thread control eventfd");
         }
-        controlPipe_[0] = nixl::scopedFd(control_pipe[0]);
-        controlPipe_[1] = nixl::scopedFd(control_pipe[1]);
 
         // TODO: We need delay to manual periodic wakeup/polling as a temporary
         // workaround for UCX bug (poll wouldn't wake up some fds in particular
@@ -53,14 +52,14 @@ public:
         // This will ensure that the resulting delay is at least 1ms and fits into int in order for
         // it to be compatible with poll()
         const int delay_us =
-            static_cast<int>(std::min<nixlTime::us_t>(delay, std::numeric_limits<int>::max()));
+            static_cast<int>(std::clamp<nixlTime::us_t>(delay, 1, std::numeric_limits<int>::max()));
         delay_ = std::chrono::ceil<std::chrono::milliseconds>(std::chrono::microseconds(delay_us));
 
         pollFds_.reserve(getWorkers().size() + 1);
         for (const auto *worker : getWorkers()) {
             pollFds_.push_back({worker->getEfd(), POLLIN, 0});
         }
-        pollFds_.push_back({controlPipe_[0].get(), POLLIN, 0});
+        pollFds_.push_back({controlFd_.get(), POLLIN, 0});
         thread_ = startThread();
     }
 
@@ -68,11 +67,14 @@ protected:
     void
     run(std::stop_token token) override {
         NIXL_DEBUG << "shared " << *this << " running";
-        // A stop request wakes the poll below through the control pipe
+        // A stop request wakes the poll below through the control eventfd
         const std::stop_callback wake(token, [this]() {
-            const char signal = 'X';
-            if (write(controlPipe_[1].get(), &signal, sizeof(signal)) < 0) {
-                NIXL_PERROR << "write to progress thread control pipe failed";
+            int ret;
+            do {
+                ret = eventfd_write(controlFd_.get(), 1);
+            } while ((ret < 0) && (errno == EINTR));
+            if (ret < 0) {
+                NIXL_PERROR << "Failed to write to progress thread control eventfd";
             }
         });
 
@@ -99,13 +101,8 @@ protected:
             if (!ret) {
                 timeout = true;
             } else if (pollFds_.back().revents & POLLIN) {
-                pollFds_.back().revents = 0;
-
-                char signal;
-                int ret = read(pollFds_.back().fd, &signal, sizeof(signal));
-                if (ret < 0) {
-                    NIXL_PERROR << "read() on control pipe failed";
-                }
+                // The eventfd is signaled only for shutdown, no need to read anything.
+                break;
             }
         }
 
@@ -114,7 +111,7 @@ protected:
 
 private:
     std::chrono::milliseconds delay_;
-    nixl::scopedFd controlPipe_[2];
+    const nixl::scopedFd controlFd_;
     std::vector<pollfd> pollFds_;
     std::jthread thread_;
 };

@@ -90,6 +90,16 @@ else
     SUDO=""
 fi
 
+# Install prefixes may live under a root-owned parent (e.g. /opt). Create and
+# own them once up front so the builds below install without sudo; sudo-created
+# dirs would otherwise be root-owned and break later non-sudo steps.
+_prefixes=("$INSTALL_DIR" "$LIBFABRIC_INSTALL_DIR")
+# A pre-installed UCX is not rebuilt, so its prefix is left untouched.
+[ -z "$PRE_INSTALLED_UCX_ENV" ] && _prefixes+=("$UCX_INSTALL_DIR")
+for _prefix in "${_prefixes[@]}"; do
+    $SUDO mkdir -p "$_prefix" && $SUDO chown -R "$(id -u):$(id -g)" "$_prefix"
+done
+
 ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 
@@ -141,6 +151,9 @@ else
                                  protobuf-compiler-grpc \
                                  pybind11-dev \
                                  etcd-server \
+                                 redis-server \
+                                 redis-tools \
+                                 libevent-dev \
                                  net-tools \
                                  iproute2 \
                                  pciutils \
@@ -161,6 +174,31 @@ else
         $SUDO pip3 install --upgrade pip
     fi
 
+    # Build hiredis from source (apt ships 0.14.x on Ubuntu 22.04 and 1.2.0 on
+    # Ubuntu 24.04; build a consistent version everywhere to match contrib/Dockerfile).
+    $SUDO apt-get remove -y libhiredis-dev 2>/dev/null || true
+    HIREDIS_VERSION="1.4.0"
+    ( \
+      cd "${BUILD_TMP}" && \
+      wget -q --tries=3 "https://github.com/redis/hiredis/archive/refs/tags/v${HIREDIS_VERSION}.tar.gz" \
+          -O "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      tar -xzf "hiredis-${HIREDIS_VERSION}.tar.gz" && \
+      mkdir -p "hiredis-${HIREDIS_VERSION}/build" && \
+      cd "hiredis-${HIREDIS_VERSION}/build" && \
+      cmake .. \
+          "${DEPS_SANITIZE_CMAKE_ARGS[@]}" \
+          -DCMAKE_INSTALL_PREFIX="${INSTALL_DIR}" \
+          -DCMAKE_INSTALL_LIBDIR=lib \
+          -DCMAKE_BUILD_TYPE=Release \
+          -DBUILD_SHARED_LIBS=ON && \
+      make -j"$NPROC" && \
+      make install && \
+      $SUDO ldconfig && \
+      pkg-config --atleast-version=1.0.1 hiredis && \
+      cd "${BUILD_TMP}" && \
+      rm -rf "hiredis-${HIREDIS_VERSION}" "hiredis-${HIREDIS_VERSION}.tar.gz" \
+    )
+
     # Install python dependencies and upgrade to latest version
     $SUDO pip3 --no-cache-dir install --break-system-packages \
         meson meson-python pybind11 patchelf \
@@ -169,35 +207,34 @@ else
         mpmath typing-extensions sympy numpy \
         networkx MarkupSafe fsspec filelock jinja2 nanobind
 
-    # Use system torch if present (>=2.7), else install it from the CUDA-matched
-    # PyTorch index. Detection mirrors contrib/Dockerfile (#1383); the
-    # nvcr.io/nvidia/pytorch base ships torch and has no cu133 wheel index.
+    # Use system torch if present (>=2.7), else install it from the PyTorch
+    # index; the nvcr.io/nvidia/pytorch base ships torch.
     if _torch_check_err=$(python3 -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
-        if [ -z "$cuda_version" ]; then
-            echo "ERROR: unable to determine CUDA version from nvcc" >&2
-            exit 1
-        fi
-        if [ "${cuda_version%%.*}" = "13" ]; then
-            torch_cu_tag="cu130"
-        else
-            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
-        fi
+        torch_cu_tag="cu130"
         $SUDO pip3 --no-cache-dir install --break-system-packages \
             --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
 
     # DOCA + RDMA build dependencies.
+    #  - AWS EFA environments (TEST_LIBFABRIC=true): install the distro RDMA
+    #    packages directly. The DOCA host repo's ibverbs-providers package only
+    #    ships mlx5.driver and strips /etc/libibverbs.d/efa.driver, hiding EFA
+    #    devices from ibv_devinfo, libfabric, and UCX.
     #  - Bases without DOCA (cuda-dl-base, nvidia/cuda, ubuntu22.04): add the pinned
     #    DOCA host repo (wget below), install the SDK + headers, then reinstall the
     #    RDMA packages to repair cuda-dl-base's broken libibverbs-dev.
     #  - Bases that already ship DOCA (nvcr.io/nvidia/pytorch bundles >=3.4): use that
     #    stack as-is. Adding a second DOCA repo would only downgrade/mismatch it, so
     #    skip the whole repo add + SDK install + RDMA reinstall.
-    if dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
+    if [ "${TEST_LIBFABRIC}" = "true" ]; then
+        echo "TEST_LIBFABRIC=true; installing distro RDMA packages (preserving efa.driver) and skipping DOCA repo"
+        $SUDO apt-get -qq -y install \
+            --reinstall libibverbs-dev rdma-core ibverbs-utils libibumad-dev \
+            libnuma-dev librdmacm-dev ibverbs-providers
+    elif dpkg -s libdoca-sdk-gpunetio-dev >/dev/null 2>&1; then
         echo "DOCA $(dpkg-query -W -f='${Version}' libdoca-sdk-gpunetio-dev) provided by base image; skipping DOCA repo add, SDK install, and RDMA reinstall"
     else
         ARCH_SUFFIX=$(if [ "${ARCH}" = "aarch64" ]; then echo "arm64"; else echo "amd64"; fi)
@@ -218,7 +255,7 @@ else
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
     chmod +x ${BUILD_TMP}/rustup-init
-    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.95.0
 
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
     chmod +x ${BUILD_TMP}/install_uv.sh
@@ -231,7 +268,16 @@ else
     export NVM_DIR=${HOME}/.nvm
     [ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh"
     nvm install --lts  # install nodejs
-    npm install -g azurite@${AZURITE_VER}
+    # npm's fetch-retries don't cover a connection dropped mid-download
+    for i in {1..3}; do
+        npm install -g "azurite@${AZURITE_VER}" && break
+        if [ "$i" = 3 ]; then
+            echo "ERROR: failed to install azurite@${AZURITE_VER}" >&2
+            exit 1
+        fi
+        echo "npm install azurite failed (attempt $i), retrying..." >&2
+        sleep $((10 * i))
+    done
 
     wget --tries=3 --waitretry=5 -O "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" "https://github.com/ofiwg/libfabric/releases/download/${LIBFABRIC_VERSION}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2"
     tar xjf "${BUILD_TMP}/libfabric-${LIBFABRIC_VERSION#v}.tar.bz2" -C ${BUILD_TMP}
@@ -270,7 +316,7 @@ else
           -DABSL_PROPAGATE_CXX_STD=ON \
           -DABSL_ENABLE_INSTALL=ON && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf abseil-cpp \
@@ -298,7 +344,7 @@ else
           -DgRPC_PROTOBUF_PROVIDER=module \
           -DgRPC_ZLIB_PROVIDER=package && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig && \
       cd ${BUILD_TMP} && \
       rm -rf grpc \
@@ -320,7 +366,7 @@ else
           -DCMAKE_INSTALL_LIBDIR=lib \
           -DCMAKE_PREFIX_PATH="${INSTALL_DIR}" && \
       make -j"$NPROC" && \
-      $SUDO make install && \
+      make install && \
       $SUDO ldconfig \
     )
 
@@ -348,7 +394,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
@@ -356,7 +402,7 @@ else
       sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -G Ninja && \
       ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \
@@ -425,9 +471,10 @@ else
             --with-verbs \
             --with-dm \
             --without-gdrcopy \
+            --with-efa \
             ${UCX_CUDA_BUILD_ARGS} && \
           make -j"$NPROC" && \
-          $SUDO make -j install-strip && \
+          make -j install-strip && \
           $SUDO ldconfig \
     )
 fi # PRE_INSTALLED_UCX_ENV end

@@ -27,6 +27,8 @@ if torch_check.returncode() != 0
     subdir_done()
 endif
 
+torch_target_version = '0x020e000000000000'  # 2.14
+
 # Get PyTorch base directory from Python
 torch_dir = run_command(py, '-c', 'import torch, os; print(os.path.dirname(torch.__file__))', check: true).stdout().strip()
 torch_include_base = join_paths(torch_dir, 'include')
@@ -36,14 +38,12 @@ torch_lib_dir = join_paths(torch_dir, 'lib')
 torch_inc_dirs = [
     include_directories(torch_include_base),
     include_directories(join_paths(torch_include_base, 'torch')),
-    include_directories(join_paths(torch_include_base, 'torch', 'csrc', 'api', 'include')),
-    include_directories(join_paths(torch_include_base, 'ATen')),
 ]
 
 # Create Torch dependency with includes and libraries
 torch_dep = declare_dependency(
     include_directories: torch_inc_dirs,
-    link_args: ['-L' + torch_lib_dir, '-ltorch', '-ltorch_python', '-ltorch_cuda']
+    link_args: ['-L' + torch_lib_dir, '-ltorch', '-ltorch_cuda']
 )
 
 pybind_dep = dependency('pybind11', required: false)
@@ -68,11 +68,27 @@ nixl_ep_sources = [
     'csrc/kernels/nixl_ep_ll.cu',
 ]
 
+# Torch bundles its own pybind11 headers. Put the standalone pybind11 first so that
+# <pybind11/...> never resolves to the bundled copy.
+pybind_include_cmd = run_command(py, '-c', 'import pybind11; print(pybind11.get_include())',
+    check: false)
+pybind_include = ''
+if pybind_include_cmd.returncode() == 0
+    pybind_include = pybind_include_cmd.stdout().strip()
+else
+    pybind_include = pybind_dep.get_variable(pkgconfig: 'includedir', cmake: 'PACKAGE_INCLUDE_DIRS', default_value: '')
+endif
+if pybind_include == ''
+    warning('pybind11 include dir not found, skipping nixl_ep build')
+    subdir_done()
+endif
+
 nixl_ep_inc_dirs = [
     nixl_inc_dirs,
     nixl_device_api_inc_dirs,
     include_directories('csrc'),
     include_directories('csrc/kernels'),
+    include_directories(pybind_include.split(';')),
     torch_inc_dirs,
 ]
 
@@ -89,6 +105,7 @@ nixl_ep_ext_name = 'nixl_ep_cpp_torch' + torch_ver
 nixl_ep_cpp_args = [
     '-DHAVE_CUDA',
     '-DTORCH_EXTENSION_NAME=' + nixl_ep_ext_name,
+    '-DTORCH_TARGET_VERSION=' + torch_target_version,
     '-Wno-deprecated-declarations',
     '-Wno-unused-variable',
     '-Wno-sign-compare',
@@ -114,14 +131,6 @@ topk_idx_bits = meson.get_external_property('topk_idx_bits', '32')
 nixl_ep_cpp_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 nixl_ep_cuda_args += ['-DTOPK_IDX_BITS=' + topk_idx_bits]
 
-# NVCC 12.9 workaround for bug (https://nvbugspro.nvidia.com/bug/5595631)
-# This workaround is needed because NVCC 12.9 has a bug which fails UCX compilation
-nvcc = meson.get_compiler('cuda')
-if nvcc.version().version_compare('>=12.9') and nvcc.version().version_compare('<12.10')
-    nixl_ep_cpp_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-    nixl_ep_cuda_args += ['-D_LIBCUDACXX_ATOMIC_UNSAFE_AUTOMATIC_STORAGE']
-endif
-
 nixl_ep_rpath = torch_lib_dir
 nixl_ep_rpath += ':' + nixl_lib_dir
 nixl_ep_rpath += ':' + join_paths(nixl_lib_dir, 'core')
@@ -142,8 +151,8 @@ nixl_ep_install_rpath = join_paths(get_option('prefix'), get_option('libdir'))
 nixl_ep_install_rpath += ':' + join_paths(get_option('prefix'), get_option('libdir'), 'plugins')
 nixl_ep_install_rpath += ':' + torch_lib_dir
 
-# CUDA-versioned install dir so cu12 and cu13 wheels don't collide.
-nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]  # nixl_ep_cu12 or nixl_ep_cu13
+# Install dir follows the wheel variant.
+nixl_ep_install_dir = 'nixl_ep_' + cuda_wheel_dir.split('_')[-1]
 
 nixl_ep_ext = py.extension_module(nixl_ep_ext_name,
     nixl_ep_sources,

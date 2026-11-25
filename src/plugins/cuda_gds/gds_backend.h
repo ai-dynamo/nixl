@@ -18,6 +18,7 @@
 #define NIXL_SRC_PLUGINS_CUDA_GDS_GDS_BACKEND_H
 
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <string>
 #include <unordered_map>
@@ -32,15 +33,27 @@
 #include "file/file_path_mode.h"
 #include "gds_utils.h"
 
+// Resolved base pointer and offset for a descriptor within a registered buffer.
+struct gdsResolvedBuffer {
+    void *dev_ptr_base;
+    size_t dev_ptr_offset;
+};
+
 // One logical mem<->file I/O produced by the shared preparation path. The
 // concrete engines turn these into their own posted, pollable request handles.
 struct gdsXferReq {
     void *addr;
+    void *dev_ptr_base;
+    size_t dev_ptr_offset;
     size_t size;
     size_t file_offset;
     CUfileHandle_t fh;
     CUfileOpcode_t op;
 };
+
+// Precondition: descriptor_addr lies within the buffer at registered_base.
+gdsResolvedBuffer
+gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noexcept;
 
 // Abstract base for the GDS family of backends. It owns everything that is
 // identical between "GDS" and "GDS_MT": the cuFile driver lifecycle, memory and
@@ -57,21 +70,6 @@ public:
     nixlGdsEngine(const nixlGdsEngine &) = delete;
     nixlGdsEngine &
     operator=(const nixlGdsEngine &) = delete;
-
-    bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    bool
-    supportsLocal() const override {
-        return true;
-    }
 
     nixl_mem_list_t
     getSupportedMems() const override {

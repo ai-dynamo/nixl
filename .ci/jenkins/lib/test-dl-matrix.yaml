@@ -22,16 +22,15 @@ job: nixl-ci-dl-gpu
 # Fail job if one of the steps fails or continue
 failFast: false
 
-timeout_minutes: 240
+timeout_minutes: 420
 
-registry_host: artifactory.nvidia.com
-registry_auth: svc-nixl-new-artifactory-token
+registry_host: il.artifactory.nvidia.com
+registry_auth: svc-nixl-il-artifactory-token
 registry_path: /sw-nbu-swx-nixl-docker-local/ci
 
 kubernetes:
   cloud: il-ipp-blossom-prod
   namespace: nbu-swx-nixl
-  imagePullSecrets: "['artifactory-pull-secret']"
   limits: "{memory: 16Gi, cpu: 16000m}"
   requests: "{memory: 8Gi, cpu: 8000m}"
   privileged: true
@@ -40,7 +39,7 @@ credentials:
   - credentialsId: 'svc-nixl-github-read-only-token'
     usernameVariable: 'NIXL_GITHUB_USER'
     passwordVariable: 'NIXL_GITHUB_TOKEN'
-  - {credentialsId: 'svc-nixl-new-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
+  - {credentialsId: 'svc-nixl-il-artifactory-token', usernameVariable: 'REPO_USER', passwordVariable: 'REPO_PASS'}
 
 env:
   ARTIFACTORY_PATH: /sw-nbu-swx-nixl-docker-local/ci
@@ -56,7 +55,7 @@ env:
   SLURM_MEM: 128G
   SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
-  SLURM_IMMEDIATE_TIMEOUT: 3600
+  SLURM_IMMEDIATE_TIMEOUT: 14400
   SSH_CREDENTIALS_ID: 'svc-nixl-ssh_key'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   TEST_TIMEOUT: 50
@@ -110,7 +109,7 @@ steps:
   - name: Compiling NIXL Docker Image for DL
     containerSelector: "{name: 'build_helper_dl'}"
     credentialsId:
-      - 'svc-nixl-new-artifactory-token'
+      - 'svc-nixl-il-artifactory-token'
       - 'svc-nixl-github-read-only-token'
     parallel: false
     run: |

@@ -40,15 +40,8 @@ proxyChannel::allocate(deviceOps &allocator, uint32_t depth, proxyControlBuffer 
 }
 
 void
-proxyChannel::deallocate() noexcept {
-    for (proxyRing &ring : rings_) {
-        ring.deallocate();
-    }
-}
-
-void
-proxyChannel::submitReady(proxyTransport &transport) {
-    for (uint32_t peer = 0; peer < rings_.size(); ++peer) {
+proxyChannel::submitReady(proxyTransport &transport, proxyPeerSlice peers) {
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         uint32_t slot = 0;
         const std::optional<nixlProxyCommand> submission = rings_[peer].tryDequeue(slot);
         if (submission) {
@@ -68,15 +61,6 @@ proxyChannel::submitRecord(proxyTransport &transport,
     proxyRing &ring = rings_[peer];
     proxyRequestState inflight{};
     inflight.op_idx = submission.op_idx;
-
-    // dst_index is also the peer slot; this ring's quiesce covers no other peer.
-    if (submission.peerIndex() != peer) {
-        NIXL_ERROR << "proxyChannel::submitRecord: command for peer " << submission.peerIndex()
-                   << " on the ring of peer " << peer << " op_idx=" << submission.op_idx;
-        inflight.status = NIXL_ERR_INVALID_PARAM;
-        ring.recordInflight(slot, inflight);
-        return;
-    }
 
     proxyBackendSubmission prepared_submission;
     nixl_status_t status = resolveSubmission(submission, id_, peer, prepared_submission);
@@ -116,15 +100,15 @@ proxyChannel::submitRecord(proxyTransport &transport,
 }
 
 void
-proxyChannel::progress(proxyTransport &transport) {
-    for (uint32_t peer = 0; peer < rings_.size(); ++peer) {
+proxyChannel::progress(proxyTransport &transport, proxyPeerSlice peers) {
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         transport.progress(id_, peer);
     }
 }
 
 void
-proxyChannel::publishCompletions(proxyTransport &transport) {
-    for (uint32_t peer = 0; peer < rings_.size(); ++peer) {
+proxyChannel::publishCompletions(proxyTransport &transport, proxyPeerSlice peers) {
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         proxyRing &ring = rings_[peer];
         while (proxyRequestState *front = ring.oldestInflight()) {
             nixl_status_t st;
@@ -145,9 +129,9 @@ proxyChannel::publishCompletions(proxyTransport &transport) {
 }
 
 bool
-proxyChannel::drained() const noexcept {
-    for (const proxyRing &ring : rings_) {
-        if (!ring.drained()) {
+proxyChannel::drained(proxyPeerSlice peers) const noexcept {
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
+        if (!rings_[peer].drained()) {
             return false;
         }
     }
@@ -155,17 +139,17 @@ proxyChannel::drained() const noexcept {
 }
 
 bool
-proxyChannel::skipAbandonedTickets() noexcept {
+proxyChannel::skipAbandonedTickets(proxyPeerSlice peers) noexcept {
     bool skipped = false;
-    for (proxyRing &ring : rings_) {
-        skipped = ring.skipAbandonedTickets() || skipped;
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
+        skipped = rings_[peer].skipAbandonedTickets() || skipped;
     }
     return skipped;
 }
 
 void
-proxyChannel::drainAndRearm(proxyTransport &transport) noexcept {
-    for (uint32_t peer = 0; peer < rings_.size(); ++peer) {
+proxyChannel::drainAndRearm(proxyTransport &transport, proxyPeerSlice peers) noexcept {
+    for (uint32_t peer = peers.first; peer < rings_.size(); peer += peers.stride) {
         proxyRing &ring = rings_[peer];
         if (!ring.allocated()) {
             continue;

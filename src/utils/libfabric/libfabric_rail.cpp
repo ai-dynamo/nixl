@@ -29,6 +29,22 @@
 #include <stdexcept>
 #include <stack>
 
+/*
+ * The value of the following libfabric EFA provider option is hard-coded on purpose.
+ * FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV first appears in the libfabric 2.5 headers, but NIXL (e.g.
+ * the PyPI wheels) can be built against older headers and still run on libfabric >= 2.5, where
+ * unsolicited write recv is on by default and can silently lose remote write completions. With the
+ * hard-coded value, the LIBFABRIC backend always calls fi_setopt() to disable it whenever the
+ * runtime libfabric supports the option, regardless of the headers it was built against. The value
+ * is ABI-stable, is checked by the static_assert below whenever the headers declare it, and older
+ * runtimes reject it with -FI_ENOPROTOOPT. Remove once all builds use libfabric >= 2.5 headers.
+ */
+#define NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV (-FI_PROV_SPECIFIC_EFA + 8)
+#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
+static_assert(NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV == FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+              "NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV does not match libfabric's value");
+#endif
+
 namespace {
 
 // Whether libfabric's shared memory (shm) provider can move data for an HMEM runtime.
@@ -601,12 +617,11 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
         }
 
         if (provider_name == "efa") {
-#ifdef HAVE_FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV
             // Disable unsolicited write recv for EFA RDM to reduce CQ overflow likelihood
             const bool use_unsolicited_write_recv = false; // Set to false to disable the feature
             ret = fi_setopt(&endpoint->fid,
                             FI_OPT_ENDPOINT,
-                            FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
+                            NIXL_OPT_EFA_USE_UNSOLICITED_WRITE_RECV,
                             &use_unsolicited_write_recv,
                             sizeof(use_unsolicited_write_recv));
             if (ret && ret != -FI_ENOSYS && ret != -FI_ENOPROTOOPT) {
@@ -615,10 +630,10 @@ nixlLibfabricRail::nixlLibfabricRail(const std::string &device,
             } else if (ret == 0) {
                 NIXL_INFO << "Successfully disabled unsolicited write recv for rail " << rail_id;
             } else if (ret == -FI_ENOSYS || ret == -FI_ENOPROTOOPT) {
-                NIXL_DEBUG << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
-                           << rail_id << " (provider: " << provider_name << ") - skipping";
+                NIXL_INFO << "FI_OPT_EFA_USE_UNSOLICITED_WRITE_RECV not supported for rail "
+                          << rail_id << " (provider: " << provider_name
+                          << ") - skipping. Set FI_EFA_USE_UNSOLICITED_WRITE_RECV=0 to disable";
             }
-#endif
 
             size_t rnr_retry = 7; // EFA_RNR_INFINITE_RETRY
             ret = fi_setopt(&endpoint->fid,
@@ -786,6 +801,73 @@ nixlLibfabricRail::setHandshakeCallback(std::function<void(const std::string &)>
 void
 nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
     progress_thread_enabled_ = enabled;
+}
+
+void
+nixlLibfabricRail::addVramDevice(int device_id) {
+    if (device_id < 0) {
+        return;
+    }
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    ++vram_device_refs_[device_id];
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::removeVramDevice(int device_id) {
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    auto it = vram_device_refs_.find(device_id);
+    if (it == vram_device_refs_.end()) {
+        return;
+    }
+    if (--it->second == 0) {
+        vram_device_refs_.erase(it);
+    }
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::updateVramDeviceLocked() {
+    // Most live registrations wins. std::map iterates in device order, so a tie keeps the lower id.
+    int selected = VRAM_DEVICE_NONE;
+    size_t selected_refs = 0;
+    for (const auto &[device_id, refs] : vram_device_refs_) {
+        if (refs > selected_refs) {
+            selected = device_id;
+            selected_refs = refs;
+        }
+    }
+    vram_device_id_.store(selected, std::memory_order_relaxed);
+
+    if (vram_device_refs_.size() > 1 && !vram_shared_warned_) {
+        vram_shared_warned_ = true;
+        std::string devices;
+        for (const auto &[device_id, refs] : vram_device_refs_) {
+            devices += (devices.empty() ? "" : ", ") + std::to_string(device_id);
+        }
+        NIXL_WARN << "Rail " << rail_id << " has VRAM from CUDA devices " << devices
+                  << ". Progress uses device " << selected
+                  << ", so same-host (shm) RMA into the other devices' buffers may be slower";
+    }
+}
+
+void
+nixlLibfabricRail::applyVramDeviceForProgress() const {
+#ifdef HAVE_CUDA
+    const int device_id = vram_device_id_.load(std::memory_order_relaxed);
+    if (device_id < 0) {
+        return;
+    }
+    int current_device = -1;
+    if (cudaGetDevice(&current_device) == cudaSuccess && current_device == device_id) {
+        return;
+    }
+    const cudaError_t cuda_ret = cudaSetDevice(device_id);
+    if (cuda_ret != cudaSuccess) {
+        NIXL_WARN << "Failed to set CUDA device " << device_id << " for progress on rail "
+                  << rail_id << ": " << cudaGetErrorString(cuda_ret);
+    }
+#endif
 }
 
 bool

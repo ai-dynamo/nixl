@@ -26,6 +26,7 @@ ucx_backend_sources = ['config.cpp',
                        'ucx_sgl.cpp',
                        'ucx_enums.cpp',
                        'ucx_plugin.cpp',
+                       'ucx_proxy_engine.cpp',
                        'ucx_utils.cpp']
 
 # The engine hands out tagged device memory-view handles, which needs the
@@ -36,7 +37,8 @@ ucx_backend_dependencies = [nixl_common_dep,
                             dl_dep,
                             thread_dep,
                             ucx_dep,
-                            device_utils_interface]
+                            device_utils_interface,
+                            device_proxy_interface]
 
 ucx_backend_include_directories = [nixl_inc_dirs,
                                    utils_inc_dirs]

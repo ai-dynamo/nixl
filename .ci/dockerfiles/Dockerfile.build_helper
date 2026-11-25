@@ -28,12 +28,12 @@ LABEL version="1.0.0"
 RUN . /etc/os-release && \
     printf '%s\n' \
         'Types: deb' \
-        'URIs: https://urm.nvidia.com/artifactory/ubuntu-public' \
+        'URIs: https://artifactory.nvidia.com/artifactory/ubuntu-public' \
         "Suites: $VERSION_CODENAME $VERSION_CODENAME-updates $VERSION_CODENAME-backports $VERSION_CODENAME-security" \
         'Components: main restricted universe multiverse' \
         'Trusted: yes' > /etc/apt/sources.list.d/ubuntu.sources && \
     grep -rlE 'archive\.ubuntu\.com|security\.ubuntu\.com|ports\.ubuntu\.com' /etc/apt/sources.list /etc/apt/sources.list.d/ 2>/dev/null | xargs -r rm -f && \
-    NOTLS='-o Acquire::https::urm.nvidia.com::Verify-Peer=false -o Acquire::https::urm.nvidia.com::Verify-Host=false' && \
+    NOTLS='-o Acquire::https::artifactory.nvidia.com::Verify-Peer=false -o Acquire::https::artifactory.nvidia.com::Verify-Host=false' && \
     apt-get $NOTLS update && apt-get $NOTLS install -y --no-install-recommends ca-certificates
 
 RUN apt update && \
@@ -42,8 +42,13 @@ RUN apt update && \
     rm -rf /var/lib/apt/lists/*
 
 # Install scctl for slurm client management (x86_64 only, not available for ARM64)
+# Direct download: scctl's get-app.sh hardcodes urm.nvidia.com, which rejects anonymous reads.
+ARG SCCTL_VERSION=v0.14.1
 RUN if [ "$(uname -m)" = "x86_64" ]; then \
-        curl -s https://urm.nvidia.com/artifactory/sw-swx-lab-infra-generic/scctl/get-app.sh | bash -s -- --output-dir /usr/local/bin || echo "INFO: scctl installation failed, continuing..."; \
+        curl -fsSL --retry 5 -o /usr/local/bin/scctl \
+            "https://artifactory.nvidia.com/artifactory/sw-swx-lab-infra-generic-local/scctl/${SCCTL_VERSION}/scctl-linux-amd64" && \
+        chmod +x /usr/local/bin/scctl && \
+        scctl -v; \
     else \
         echo "INFO: Skipping scctl installation on $(uname -m) architecture (not available)"; \
     fi

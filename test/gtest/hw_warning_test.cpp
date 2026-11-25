@@ -17,8 +17,14 @@
 
 #include <gtest/gtest.h>
 #include <cstdlib>
+#include <dlfcn.h>
 #include <string>
+#include <utility>
 #include <vector>
+
+extern "C" {
+#include <ucs/config/global_opts.h>
+}
 
 #include "absl/strings/str_join.h"
 #include "common.h"
@@ -57,12 +63,25 @@ protected:
 
     void
     expectCudaTlsValidationFailure(const std::string &tls) {
+        expectCudaTlsValidationFailure("", tls, "UCX_TLS");
+    }
+
+    void
+    expectCudaTlsValidationSuccess(const std::string &tls) {
+        expectCudaTlsValidationSuccess("", tls);
+    }
+
+    // Empty TLS values leave the variable unset.
+    void
+    expectCudaTlsValidationFailure(const std::string &nixl_ucx_tls,
+                                   const std::string &ucx_tls,
+                                   const std::string &reported_var) {
         gtest::ScopedEnv env_helper;
-        env_helper.addVar("UCX_TLS", tls);
+        setTlsVars(env_helper, nixl_ucx_tls, ucx_tls);
 
         const gtest::LogIgnoreGuard lig_tls(
-            "Invalid UCX_TLS=.*Add cuda_copy for basic GPU support, or cuda to also include "
-            "NVLink support");
+            "Invalid " + reported_var +
+            "=.*Add cuda_copy for basic GPU support, or cuda to also include NVLink support");
         const gtest::LogIgnoreGuard lig_backend("backend creation failed for 'UCX'");
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
@@ -73,13 +92,28 @@ protected:
     }
 
     void
-    expectCudaTlsValidationSuccess(const std::string &tls) {
+    expectCudaTlsValidationSuccess(const std::string &nixl_ucx_tls, const std::string &ucx_tls) {
         gtest::ScopedEnv env_helper;
-        env_helper.addVar("UCX_TLS", tls);
+        setTlsVars(env_helper, nixl_ucx_tls, ucx_tls);
 
         nixlAgent agent("TlsTestAgent", nixlAgentConfig(true));
         nixlBackendH *backend = nullptr;
         EXPECT_EQ(agent.createBackend("UCX", {}, backend), NIXL_SUCCESS);
+    }
+
+private:
+    static void
+    setTlsVars(gtest::ScopedEnv &env_helper,
+               const std::string &nixl_ucx_tls,
+               const std::string &ucx_tls) {
+        for (const auto &[name, value] :
+             {std::pair{"NIXL_UCX_TLS", nixl_ucx_tls}, std::pair{"UCX_TLS", ucx_tls}}) {
+            if (value.empty()) {
+                env_helper.unsetVar(name);
+            } else {
+                env_helper.addVar(name, value);
+            }
+        }
     }
 };
 
@@ -183,6 +217,16 @@ TEST_F(UcxTlsValidationTest, EscapedCudaCopyTlsSucceedsWhenCudaIsAvailable) {
     expectCudaTlsValidationSuccess("tcp,\\cuda_copy");
 }
 
+TEST_F(UcxTlsValidationTest, PrefixedTlsOnlyIsValidated) {
+    expectCudaTlsValidationFailure("tcp", "", "NIXL_UCX_TLS");
+    expectCudaTlsValidationSuccess("cuda_copy,tcp", "");
+}
+
+TEST_F(UcxTlsValidationTest, PrefixedTlsOverridesGlobalTls) {
+    expectCudaTlsValidationFailure("tcp", "cuda_copy,tcp", "NIXL_UCX_TLS");
+    expectCudaTlsValidationSuccess("cuda_copy,tcp", "tcp");
+}
+
 /**
  * Test that a warning is logged when EFA devices are present, the UCX
  * backend is created, and the LIBFABRIC backend is not created.
@@ -255,4 +299,50 @@ TEST_F(HardwareWarningTest, EfaHardwareMismatchNoWarning) {
         const nixl_reg_dlist_t descs(DRAM_SEG);
         agent.registerMem(descs);
     }
+}
+
+TEST(UcxEfaModuleTest, DefaultUcxModulesMatchesEfaHardwarePresence) {
+    if (std::getenv("UCX_MODULES") != nullptr) {
+        GTEST_SKIP() << "UCX_MODULES is set in environment";
+    }
+
+    const std::vector<std::string> devs;
+    const nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+
+    char modules_buf[256] = {};
+    ASSERT_EQ(ucs_global_opts_get_value("MODULES", modules_buf, sizeof(modules_buf)), UCS_OK);
+
+    if (nixl::hwInfo::instance().numEfaDevices == 0) {
+        EXPECT_STREQ(modules_buf, "^efa");
+        void *handle = dlopen("libuct_ib_efa.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        EXPECT_EQ(handle, nullptr);
+        if (handle != nullptr) {
+            dlclose(handle);
+        }
+    } else {
+        EXPECT_STRNE(modules_buf, "^efa");
+        void *handle = dlopen("libuct_ib_efa.so.0", RTLD_LAZY | RTLD_NOLOAD);
+        EXPECT_NE(handle, nullptr);
+        if (handle != nullptr) {
+            dlclose(handle);
+        }
+    }
+}
+
+TEST(UcxEfaModuleTest, RespectsExplicitUcxModulesEnv) {
+    char orig_buf[256] = {};
+    ASSERT_EQ(ucs_global_opts_get_value("MODULES", orig_buf, sizeof(orig_buf)), UCS_OK);
+
+    gtest::ScopedEnv env_helper;
+    env_helper.addVar("UCX_MODULES", "^cuda_ipc");
+    ASSERT_EQ(ucs_global_opts_set_value("MODULES", "^cuda_ipc"), UCS_OK);
+
+    const std::vector<std::string> devs;
+    const nixlUcxContext ctx(devs, false, 1, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, 0);
+
+    char modules_buf[256] = {};
+    EXPECT_EQ(ucs_global_opts_get_value("MODULES", modules_buf, sizeof(modules_buf)), UCS_OK);
+    EXPECT_STREQ(modules_buf, "^cuda_ipc");
+
+    EXPECT_EQ(ucs_global_opts_set_value("MODULES", orig_buf), UCS_OK);
 }

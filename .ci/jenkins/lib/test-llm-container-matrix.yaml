@@ -1,12 +1,11 @@
 # NIXL LLM Container Test Configuration
 #
 # Smoke- / perf- / accuracy-tests a single published LLM inference container
-# (vllm-nixl, sglang-nixl, or sglang-cu13-nixl) on the mizu SLURM partition.
+# (vLLM or SGLang) on the mizu SLURM partition.
 # The job allocates ONE 2-GPU node and runs each enabled phase sequentially.
 #
 # Image selection: a single IMAGE_URL parameter. The framework (vllm vs sglang)
 # is auto-detected from the URL — "vllm" → test_vllm.sh, "sglang" → test_sglang.sh.
-# Supports vllm-cu12, vllm-cu13, sglang-cu12, sglang-cu13 image variants.
 # vllm has no built-in accuracy harness, so the accuracy phase no-ops for vllm.
 #
 # Test scripts live at .ci/scripts/llm-tests/{test_vllm.sh,test_sglang.sh}.
@@ -17,7 +16,7 @@
 job: nixl-ci-test-llm-container
 
 failFast: false
-timeout_minutes: 240
+timeout_minutes: 420
 
 # Harbor is only used for the build_helper_llm container that drives SLURM —
 # the LLM image under test is pulled directly by SLURM from artifactory.
@@ -45,7 +44,7 @@ env:
   SLURM_MEM: 128G
   SLURM_MINCPUS: 24
   SLURM_JOB_TIMEOUT: '01:30:00'
-  SLURM_IMMEDIATE_TIMEOUT: "3600"
+  SLURM_IMMEDIATE_TIMEOUT: "14400"
   SCCTL_CREDENTIALS_ID: 'svc-nixl-scctl'
   JOB_ID_FILE_ROOT: "/mnt/pvc/${JOB_BASE_NAME}"
   IMAGE_REGISTRY_HOST: "nbu-harbor.gtm.nvidia.com"
@@ -100,7 +99,7 @@ pipeline_start:
     env.DOCKER_IMAGE = dockerImage
 
     // Auto-detect framework from the image URL. The published images are named
-    // vllm-nixl / sglang-nixl / sglang-cu13-nixl, so a substring match suffices.
+    // vllm-*-nixl / sglang-*-nixl, so a substring match suffices.
     def lower = url.toLowerCase()
     def framework
     if (lower.contains('vllm')) {

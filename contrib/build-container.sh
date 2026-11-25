@@ -40,7 +40,7 @@ ARCH=$(uname -m)
 [ "$ARCH" = "arm64" ] && ARCH="aarch64"
 WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
-WHL_PYTHON_VERSIONS="3.12"
+WHL_PYTHON_VERSIONS=""
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.23.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
@@ -50,12 +50,8 @@ OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
 BUILD_TYPE="release"
-# CUDA MAJOR.MINOR for the manylinux wheel build — drives the torch cuXXX index
-# and the cu12/cu13 meta-wheel split. Applies whenever --cuda-version isn't given.
-CUDA_VERSION_DEFAULT="13.2"
-CUDA_VERSION=${CUDA_VERSION:-}
 BUILD_INFINIA="false"
-INFINIA_LIBS_IMAGE="harbor.mellanox.com/nixl/infinia-libs:v2.5.0-rcx.1"
+INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
 UCX_SPCX_PLUGIN_REF="v0.3.x"
@@ -147,14 +143,6 @@ get_options() {
         --torch-versions)
             if [ "$2" ]; then
                 WHL_TORCH_VERSIONS=$2
-                shift
-            else
-                missing_requirement $1
-            fi
-            ;;
-        --cuda-version)
-            if [ "$2" ]; then
-                CUDA_VERSION=$2
                 shift
             else
                 missing_requirement $1
@@ -280,10 +268,13 @@ get_options() {
 
     if [[ $OS == "ubuntu22" ]]; then
         BASE_IMAGE=nvidia/cuda
-        BASE_IMAGE_TAG=13.0.1-devel-ubuntu22.04
+        BASE_IMAGE_TAG=13.4.2-devel-ubuntu22.04
         WHL_BASE=${WHL_BASE:-manylinux_2_34}
+        DEFAULT_PYTHON_VERSION="3.10"
+        WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.10}"
     fi
 
+    WHL_PYTHON_VERSIONS="${WHL_PYTHON_VERSIONS:-3.12}"
     WHL_PLATFORM=${WHL_BASE}_${ARCH}
 
     if [ -z "$TAG" ]; then
@@ -356,7 +347,6 @@ write_build_options_file() {
 BASE_IMAGE="${BASE_IMAGE}"
 BASE_IMAGE_TAG="${BASE_IMAGE_TAG}"
 ARCH="${ARCH}"
-CUDA_VERSION="${CUDA_VERSION}"
 UCX_REPO="${UCX_REPO}"
 UCX_REF="${UCX_REF}"
 UCX_SHA="${ucx_sha}"
@@ -387,18 +377,17 @@ show_help() {
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
-    echo "  [--build-nixl-ep build NIXL with NIXL EP support (requires UCX >= 1.21)]"
+    echo "  [--build-nixl-ep build NIXL EP, including the experimental topology-aware API shell (requires UCX >= 1.21). The full topology-aware implementation requires CUDA 13; this API shell does not.]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
     echo "  [--arch [x86_64|aarch64] to select target architecture]"
     echo "  [--dockerfile path to a dockerfile to use]"
     echo "  [--torch-versions torch versions to build for, comma separated (default: uses Dockerfile ARG default)]"
-    echo "  [--cuda-version CUDA MAJOR.MINOR for the manylinux wheel build, e.g. 12.9 (default: ${CUDA_VERSION_DEFAULT})]
-  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
+    echo "  [--manylinux-image PyPA manylinux image prefix (default: ${MANYLINUX_IMAGE})]
   [--manylinux-image-tag pinned PyPA manylinux image tag (default: ${MANYLINUX_IMAGE_TAG})]"
     echo "  [--wheel-base-image pre-built wheel base image URL; skips wheel_base stage and builds only the wheel stage]"
-    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; harbor.mellanox.com must be reachable)]"
+    echo "  [--build-infinia build and bundle the Infinia DDN plugin (requires --dockerfile contrib/Dockerfile.manylinux; il.artifactory.nvidia.com must be reachable)]"
     echo "  [--infinia-image full image reference for infinia-libs (default: ${INFINIA_LIBS_IMAGE})]"
     echo "  [--apt-mirror base URL of an apt mirror to use instead of the public Ubuntu archive]"
     echo "  [--build-options-file path to write the resolved build options as KEY=VALUE lines]"
@@ -426,9 +415,8 @@ BUILD_ARGS+="${BASE_IMAGE:+ --build-arg BASE_IMAGE=$BASE_IMAGE}"
 BUILD_ARGS+="${BASE_IMAGE_TAG:+ --build-arg BASE_IMAGE_TAG=$BASE_IMAGE_TAG}"
 BUILD_ARGS+=" --build-arg MANYLINUX_IMAGE=$MANYLINUX_IMAGE --build-arg MANYLINUX_IMAGE_TAG=$MANYLINUX_IMAGE_TAG"
 BUILD_ARGS+=" --build-arg WHL_PYTHON_VERSIONS=$WHL_PYTHON_VERSIONS"
+BUILD_ARGS+="${DEFAULT_PYTHON_VERSION:+ --build-arg DEFAULT_PYTHON_VERSION=$DEFAULT_PYTHON_VERSION}"
 BUILD_ARGS+="${WHL_TORCH_VERSIONS:+ --build-arg WHL_TORCH_VERSIONS=$WHL_TORCH_VERSIONS}"
-CUDA_VERSION="${CUDA_VERSION:-$CUDA_VERSION_DEFAULT}"
-BUILD_ARGS+=" --build-arg CUDA_VERSION=$CUDA_VERSION"
 BUILD_ARGS+=" --build-arg WHL_PLATFORM=$WHL_PLATFORM"
 BUILD_ARGS+=" --build-arg ARCH=$ARCH"
 BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
@@ -525,9 +513,9 @@ if [ -n "$WHEEL_BASE_IMAGE" ]; then
     DOCKER_BUILD_TARGET="--target wheel"
 fi
 
-# Infinia DDN libs: pre-pulled from harbor on the host and placed flat into
+# Infinia DDN libs: pre-pulled from Artifactory on the host and placed flat into
 # infinia-libs/ in the build context. The Dockerfile's BUILD_INFINIA RUN block
-# copies them to /opt/ddn/red/ — no harbor reference in the Dockerfile. The whole
+# copies them to /opt/ddn/red/ — no registry reference in the Dockerfile. The whole
 # block is guarded so external docker build runs are unaffected when
 # BUILD_INFINIA=false (default): no filesystem writes and no EXIT trap installed.
 if [ "$BUILD_INFINIA" = "true" ]; then

@@ -58,7 +58,7 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Build wheel with nixl_ep package included (requires a CUDA sm_90 or newer target environment)"
+            echo "  --build-nixl-ep: Include the NIXL EP example (sm_90 or newer) and the experimental topology-aware API shell"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --help: Show this help message"
             echo ""
@@ -82,7 +82,7 @@ while [[ $# -gt 0 ]]; do
 done
 
 if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
-    echo "ERROR: --build-nixl-ep requires --torch-versions (e.g. --torch-versions 2.11,2.12)" >&2
+    echo "ERROR: --build-nixl-ep requires --torch-versions" >&2
     exit 1
 fi
 
@@ -92,15 +92,22 @@ set -x
 TMP_DIR=$(mktemp -d)
 
 CUDA_MAJOR=$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | cut -d'.' -f1)
-# Must be 12 or 13
-if [ "$CUDA_MAJOR" -ne 12 ] && [ "$CUDA_MAJOR" -ne 13 ]; then
-    echo "Invalid CUDA_MAJOR: '$CUDA_MAJOR'"
+if [ "$CUDA_MAJOR" != "13" ]; then
+    echo "ERROR: NIXL requires CUDA 13, found CUDA '${CUDA_MAJOR}'" >&2
     exit 1
 fi
 AUDITWHEEL_EXCLUDES="--exclude libcuda* --exclude libcufile* --exclude libcuobjclient* --exclude libssl* --exclude libcrypto* --exclude libefa* --exclude libhwloc* --exclude libfabric* --exclude libtorch* --exclude libc10* --exclude libdoca* --exclude libred_client* --exclude libred_async* --exclude liblz4*"
 
-PKG_NAME="nixl-cu${CUDA_MAJOR}"
-CU_TAG="cu$(nvcc --version | grep -Eo 'release [0-9]+\.[0-9]+' | cut -d' ' -f2 | tr -d .)"
+PKG_NAME="nixl-cu13"
+# torch wheel index, pinned in Dockerfile.manylinux.
+CU_TAG="${TORCH_CUDA_INDEX:-cu132}"
+case "$CU_TAG" in
+    cu13[0-9]*) ;;
+    *)
+        echo "ERROR: torch index '$CU_TAG' is not a CUDA 13 index" >&2
+        exit 1
+        ;;
+esac
 ./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
 
 TORCH_STABLE_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
@@ -242,6 +249,9 @@ build_wheel() {
 
     echo "=== Provisioning ${VENV_PATH} (python ${PYTHON_VERSION}${VER:+, torch ${VER} [${CHANNEL}]}) ==="
     uv pip install --python "$VENV_PATH/bin/python" "${BUILD_DEPS[@]}"
+    # Toolchain evidence for the CI build manifest; never fatal.
+    mkdir -p build-info && uv pip list --python "$VENV_PATH/bin/python" --format json \
+        > "build-info/pip-py${PYTHON_VERSION}-torch${VER:-base}.json" || true
 
     # Activate so meson's `find_installation('python3')` resolves to this
     # venv's interpreter (which has the right torch).
@@ -323,7 +333,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
 
     for ((i=1; i<${#TORCH_ARRAY[@]}; i++)); do
         TORCH="${TORCH_ARRAY[$i]}"
-        echo "=== Building nixl_ep .so for torch ${TORCH} ==="
+        echo "=== Building EP extensions for torch ${TORCH} ==="
 
         EP_TMP=$(mktemp -d)
         build_wheel "$EP_TMP" "$TORCH"
@@ -339,7 +349,7 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
             --base-wheel "$BASE_WHL" \
             --source-wheel "$EP_WHL" \
             --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
-            --target-dir "nixl_ep_cu${CUDA_MAJOR}"
+            --target-dir "nixl_ep_cu13"
 
         rm -rf "$EP_TMP"
     done

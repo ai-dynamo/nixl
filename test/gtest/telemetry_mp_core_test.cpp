@@ -17,8 +17,7 @@
 
 // The multi-process exporter driven through nixlTelemetry rather than by direct
 // exportEvent calls, so the staging queue, the drain task, per-metric gating and
-// the drop accounting are all in the path. Mirrors the single-process coverage
-// in telemetry_prometheus_test.cpp.
+// the drop accounting are all in the path.
 
 #include "mp_store.h"
 #include "mp_telemetry_fixture.h"
