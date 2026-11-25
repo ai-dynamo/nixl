@@ -21,6 +21,7 @@
 #include <vector>
 #include <deque>
 #include <limits>
+#include <map>
 #include <string>
 #include <functional>
 #include <mutex>
@@ -551,6 +552,43 @@ public:
         return progress_thread_enabled_;
     }
 
+    /** No VRAM is registered on this rail */
+    static constexpr int VRAM_DEVICE_NONE = -1;
+
+    /**
+     * @brief Count a live VRAM registration on CUDA device device_id on this rail.
+     *
+     * Remote peers target this rail's endpoint for RMA into the buffers registered on it. With
+     * the shm peer provider, CUDA IPC copies for that RMA run in this process, inside CQ progress,
+     * on the CUDA device that is current on the calling thread. The rail tracks which devices
+     * its VRAM lives on so that progress can make the right one current (see getVramDevice()).
+     */
+    void
+    addVramDevice(int device_id);
+
+    /** @brief Undo addVramDevice() when that registration is removed. */
+    void
+    removeVramDevice(int device_id);
+
+    /**
+     * @brief CUDA device to make current for this rail's CQ progress, or VRAM_DEVICE_NONE.
+     *
+     * The device with the most live VRAM registrations on this rail, the lower device id on a
+     * tie. When VRAM from several devices shares a rail, the device an incoming RMA needs is not
+     * known at CQ-read time; this choice is right for that device's buffers and no worse than
+     * any other for the rest (a copy on another device is only slower, not incorrect).
+     */
+    int
+    getVramDevice() const {
+        return vram_device_id_.load(std::memory_order_relaxed);
+    }
+
+    /**
+     * @brief Make getVramDevice() current on the calling thread; no-op if the rail has no VRAM.
+     */
+    void
+    applyVramDeviceForProgress() const;
+
     /**
      * @brief Initializes the post transfer queue (lokc-free ring buffer) for deferring requests
      * when the progress thread is enabled.
@@ -626,6 +664,17 @@ private:
 
     // Whether a progress thread is handling CQ draining
     bool progress_thread_enabled_ = false;
+
+    // Live VRAM registrations on this rail per CUDA device (see addVramDevice()). Written on the
+    // registration path under vram_devices_mutex_; the progress path only reads vram_device_id_,
+    // which is recomputed from the counts on every change.
+    std::mutex vram_devices_mutex_;
+    std::map<int, size_t> vram_device_refs_;
+    bool vram_shared_warned_ = false;
+    std::atomic<int> vram_device_id_{VRAM_DEVICE_NONE};
+
+    void
+    updateVramDeviceLocked();
 
     // Callback functions. Receive completions carry the sender's index in OUR table,
     // resolved from the completion's source address (see resolveSourceAddress()).

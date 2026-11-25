@@ -29,6 +29,9 @@
 #include <omp.h>
 #include <set>
 
+/* CUDA/HIP are pulled in via utils.h *after* toml++. Including hip/hip_runtime.h
+ * here first would load ROCm host_defines.h, which defines an empty __noinline__
+ * macro on GCC and breaks toml++ (TOML_HAS_ATTR(__noinline__)). */
 #include <fcntl.h>
 #include <filesystem>
 #include <gflags/gflags.h>
@@ -143,19 +146,19 @@ NB_ARG_STRING(runtime_type,
 NB_ARG_STRING(worker_type, XFERBENCH_WORKER_NIXL, "Type of worker [nixl, nvshmem]");
 NB_ARG_STRING(backend,
               XFERBENCH_BACKEND_UCX,
-              "Name of NIXL backend [UCX, GDS, GDS_MT, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
-              "REDIS, GUSLI, AZURE_BLOB] (only used with nixl worker)");
+              "Name of NIXL backend [UCX, GDS, GDS_MT, AIS, POSIX, GPUNETIO, MOONCAKE, HF3FS, OBJ, "
+              "REDIS, GUSLI, AZURE_BLOB, DOCA_MEMOS, DAOS] (only used with nixl worker)");
 NB_ARG_STRING(initiator_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
-              "Type of memory segment for initiator [DRAM, VRAM]. Note: Storage backends always "
-              "use DRAM locally.");
+              "Type of memory segment for initiator [DRAM, VRAM]. Note: the backend must support "
+              "the chosen type. Defaults to DRAM.");
 NB_ARG_STRING(target_seg_type,
               XFERBENCH_SEG_TYPE_DRAM,
               "Type of memory segment for target [DRAM, VRAM]. Note: Storage backends determine "
               "remote type automatically.");
 NB_ARG_STRING(scheme, XFERBENCH_SCHEME_PAIRWISE, "Scheme: pairwise, manytoone, onetomany, tp");
 NB_ARG_STRING(mode, XFERBENCH_MODE_SG, "MODE: SG (Single GPU per proc), MG (Multi GPU per proc)");
-NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE");
+NB_ARG_STRING(op_type, XFERBENCH_OP_WRITE, "Op type: READ, WRITE, QUERY");
 NB_ARG_BOOL(check_consistency, false, "Enable Consistency Check");
 NB_ARG_UINT64(total_buffer_size,
               8LL * 1024 * (1 << 20),
@@ -194,7 +197,7 @@ NB_ARG_INT32(use_localized,
              "one locality domain (requires enable_vmm)");
 NB_ARG_BOOL(use_hugepages, false, "Allocate data buffers using hugepages (2MB pages)");
 
-// Storage backend(GDS, GDS_MT, POSIX, HF3FS, OBJ) options
+// Storage backend (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, DAOS) options
 NB_ARG_STRING(filepath, "", "Directory where storage backends create their benchmark files");
 NB_ARG_STRING(filenames, "", "Comma-separated filenames for storage operations");
 NB_ARG_INT32(num_files, 1, "Number of files used by benchmark");
@@ -205,7 +208,9 @@ NB_ARG_INT32(gds_batch_pool_size,
              32,
              "Batch pool size for GDS operations (only used with GDS backend)");
 NB_ARG_INT32(gds_batch_limit, 128, "Batch limit for GDS operations (only used with GDS backend)");
-NB_ARG_INT32(gds_mt_num_threads, 1, "Number of threads used by GDS MT plugin");
+NB_ARG_INT32(gds_mt_num_threads,
+             1,
+             "Number of Taskflow worker threads for GDS_MT and AIS backends");
 
 // TODO: We should take rank wise device list as input to extend support
 // <rank>:<device_list>, ...
@@ -273,6 +278,8 @@ NB_ARG_STRING(gpunetio_oob_port,
               "",
               "OOB TCP port for GPUNetIO (only used with nixl worker; default: 6544)");
 NB_ARG_INT32(gpunetio_data_qp_count, 1, "GPUNetIO WRITE QPs per peer [1,4]; default: 1");
+NB_ARG_STRING(gpunetio_write_stripe, "slots", "GPUNetIO WRITE distribution: slots or bytes");
+NB_ARG_UINT64(gpunetio_write_stripe_min_bytes, 4194304, "Minimum WRITE stripe size in bytes");
 
 // OBJ options - only used when backend is OBJ
 NB_ARG_STRING(obj_access_key, "", "Access key for S3 backend");
@@ -307,6 +314,22 @@ NB_ARG_STRING(azure_blob_connection_string,
               "",
               "Connection string for Azure Blob backend (alternative to connect to Azurite for "
               "local testing)");
+
+// DAOS options - data transfers use libdfs directly. The dfuse path is used only by
+// NIXLBench to seed READ tests, validate WRITE tests, and remove benchmark objects.
+NB_ARG_STRING(daos_pool, "", "DAOS pool label or UUID");
+NB_ARG_STRING(daos_container, "", "DAOS POSIX container label or UUID");
+NB_ARG_STRING(daos_system, "", "Optional DAOS system name");
+NB_ARG_STRING(daos_mount_path, "", "dfuse mount of the DAOS container for benchmark setup");
+NB_ARG_STRING(daos_object_class, "", "DAOS object class for newly created files");
+NB_ARG_STRING(daos_object_class_hint, "", "DAOS DFS object-class hint");
+NB_ARG_STRING(daos_progress_cpu_affinity, "", "Comma-separated DAOS progress-thread CPUs");
+NB_ARG_UINT64(daos_chunk_size, 0, "DAOS DFS chunk size for newly created files");
+NB_ARG_UINT64(daos_oclass_id, 0, "Numeric DAOS object-class ID");
+NB_ARG_UINT64(daos_num_event_queues, 1, "Number of DAOS event queues");
+NB_ARG_UINT64(daos_max_inflight_per_queue, 1024, "Maximum in-flight DAOS I/O per event queue");
+NB_ARG_UINT64(daos_submission_batch_size, 32, "DAOS submission batch size");
+NB_ARG_UINT64(daos_completion_batch_size, 128, "DAOS completion batch size");
 
 // HF3FS options - only used when backend is HF3FS
 NB_ARG_INT32(hf3fs_iopool_size, 64, "Size of io memory pool");
@@ -354,6 +377,10 @@ NB_ARG_UINT32(device_proxy_threads,
               0,
               "Number of CPU proxy threads draining the device channels, 0 for one per channel. "
               "Only used with --device_mode=proxy.");
+// DOCA_MEMOS options - only used when backend is DOCA_MEMOS
+NB_ARG_STRING(doca_memos_device_name, "/dev/nvme0n1", "DOCA_MEMOS device name");
+NB_ARG_INT32(doca_memos_num_tasks, 8192, "DOCA_MEMOS number of tasks");
+NB_ARG_STRING(doca_memos_nguid, "", "DOCA_MEMOS namespace GUID (32 hex chars, optional)");
 
 #undef NB_ARG_INT32
 #undef NB_ARG_UINT32
@@ -403,6 +430,8 @@ std::string xferBenchConfig::gpunetio_oob_list = "";
 std::string xferBenchConfig::gpunetio_gid_index = "0";
 std::string xferBenchConfig::gpunetio_oob_port = "";
 int xferBenchConfig::gpunetio_data_qp_count = 1;
+std::string xferBenchConfig::gpunetio_write_stripe = "slots";
+uint64_t xferBenchConfig::gpunetio_write_stripe_min_bytes = 4194304;
 std::vector<std::string> devices = {};
 int xferBenchConfig::num_files = 0;
 std::string xferBenchConfig::posix_api_type = "";
@@ -431,6 +460,19 @@ std::string xferBenchConfig::obj_accelerated_type = "";
 std::string xferBenchConfig::azure_blob_account_url = "";
 std::string xferBenchConfig::azure_blob_container_name = "";
 std::string xferBenchConfig::azure_blob_connection_string = "";
+std::string xferBenchConfig::daos_pool = "";
+std::string xferBenchConfig::daos_container = "";
+std::string xferBenchConfig::daos_system = "";
+std::string xferBenchConfig::daos_mount_path = "";
+std::string xferBenchConfig::daos_object_class = "";
+std::string xferBenchConfig::daos_object_class_hint = "";
+std::string xferBenchConfig::daos_progress_cpu_affinity = "";
+uint64_t xferBenchConfig::daos_chunk_size = 0;
+uint64_t xferBenchConfig::daos_oclass_id = 0;
+uint64_t xferBenchConfig::daos_num_event_queues = 1;
+uint64_t xferBenchConfig::daos_max_inflight_per_queue = 1024;
+uint64_t xferBenchConfig::daos_submission_batch_size = 32;
+uint64_t xferBenchConfig::daos_completion_batch_size = 128;
 int xferBenchConfig::hf3fs_iopool_size = 0;
 std::string xferBenchConfig::gusli_client_name = "";
 int xferBenchConfig::gusli_max_simultaneous_requests = 0;
@@ -496,8 +538,10 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
-    if (!proxy && std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr) {
-        return reject("UCX_RC_GDA_NUM_CHANNELS must not be set; "
+    if (!proxy &&
+        (std::getenv("NIXL_UCX_RC_GDA_NUM_CHANNELS") != nullptr ||
+         std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr)) {
+        return reject("NIXL_UCX_RC_GDA_NUM_CHANNELS and UCX_RC_GDA_NUM_CHANNELS must not be set; "
                       "use --device_channel_num to configure Device API channels");
     }
     return true;
@@ -584,7 +628,36 @@ discoverPluginMems(const std::string &backend) {
     }
     return mems;
 }
+
+[[nodiscard]] bool
+isValidStorageInitiatorSeg(const std::string &backend,
+                           const std::string &seg_type_str,
+                           const nixl_mem_list_t &backend_mems) {
+    nixl_mem_t seg_type; // Should only be DRAM or VRAM
+    if (seg_type_str.compare(XFERBENCH_SEG_TYPE_DRAM) == 0) {
+        seg_type = DRAM_SEG;
+    } else if (seg_type_str.compare(XFERBENCH_SEG_TYPE_VRAM) == 0) {
+        seg_type = VRAM_SEG;
+    } else {
+        std::cerr << "Unknown --initiator_seg_type=" << seg_type_str << std::endl;
+        return false;
+    }
+    if (std::find(backend_mems.begin(), backend_mems.end(), seg_type) == backend_mems.end()) {
+        std::cerr << backend << " does not support --initiator_seg_type=" << seg_type_str;
+        if (backend == XFERBENCH_BACKEND_AIS) {
+            std::cerr << "; use --initiator_seg_type=VRAM";
+        }
+        std::cerr << std::endl;
+        return false;
+    }
+    return true;
+}
+
 } // namespace
+
+std::string xferBenchConfig::doca_memos_device_name = "/dev/nvme0n1";
+int xferBenchConfig::doca_memos_num_tasks = 8192;
+std::string xferBenchConfig::doca_memos_nguid = "";
 
 int
 xferBenchConfig::parseConfig(int argc, char *argv[]) {
@@ -695,7 +768,7 @@ xferBenchConfig::loadParams(void) {
             gds_batch_limit = NB_ARG(gds_batch_limit);
         }
 
-        if (backend == XFERBENCH_BACKEND_GDS_MT) {
+        if (backend == XFERBENCH_BACKEND_GDS_MT || backend == XFERBENCH_BACKEND_AIS) {
             gds_mt_num_threads = NB_ARG(gds_mt_num_threads);
         }
 
@@ -722,6 +795,8 @@ xferBenchConfig::loadParams(void) {
             gpunetio_gid_index = NB_ARG(gpunetio_gid_index);
             gpunetio_oob_port = NB_ARG(gpunetio_oob_port);
             gpunetio_data_qp_count = NB_ARG(gpunetio_data_qp_count);
+            gpunetio_write_stripe = NB_ARG(gpunetio_write_stripe);
+            gpunetio_write_stripe_min_bytes = NB_ARG(gpunetio_write_stripe_min_bytes);
         }
 
         // Load HD3FS-specific configurations if backend is HD3FS
@@ -737,6 +812,21 @@ xferBenchConfig::loadParams(void) {
             gusli_device_byte_offsets = NB_ARG(gusli_device_byte_offsets);
             gusli_device_security = NB_ARG(gusli_device_security);
             gusli_try_use_uring = NB_ARG(gusli_try_use_uring);
+        }
+
+        // Load DOCA_MEMOS-specific configurations if backend is DOCA_MEMOS
+        if (backend == XFERBENCH_BACKEND_DOCA_MEMOS) {
+            doca_memos_device_name = NB_ARG(doca_memos_device_name);
+            doca_memos_num_tasks = NB_ARG(doca_memos_num_tasks);
+            doca_memos_nguid = NB_ARG(doca_memos_nguid);
+
+            // The generic consistency check reads written data back through the
+            // S3/Azure object helpers, which DOCA_MEMOS does not implement. The
+            // plugin verifies retrieved data internally on READ instead.
+            if (NB_ARG(check_consistency)) {
+                std::cerr << "DOCA_MEMOS backend does not support --check_consistency" << std::endl;
+                return -1;
+            }
         }
 
         // Load OBJ-specific configurations if backend is OBJ
@@ -777,9 +867,34 @@ xferBenchConfig::loadParams(void) {
             azure_blob_container_name = NB_ARG(azure_blob_container_name);
             azure_blob_connection_string = NB_ARG(azure_blob_connection_string);
         }
+        if (backend == XFERBENCH_BACKEND_DAOS) {
+            daos_pool = NB_ARG(daos_pool);
+            daos_container = NB_ARG(daos_container);
+            daos_system = NB_ARG(daos_system);
+            daos_mount_path = NB_ARG(daos_mount_path);
+            daos_object_class = NB_ARG(daos_object_class);
+            daos_object_class_hint = NB_ARG(daos_object_class_hint);
+            daos_progress_cpu_affinity = NB_ARG(daos_progress_cpu_affinity);
+            daos_chunk_size = NB_ARG(daos_chunk_size);
+            daos_oclass_id = NB_ARG(daos_oclass_id);
+            daos_num_event_queues = NB_ARG(daos_num_event_queues);
+            daos_max_inflight_per_queue = NB_ARG(daos_max_inflight_per_queue);
+            daos_submission_batch_size = NB_ARG(daos_submission_batch_size);
+            daos_completion_batch_size = NB_ARG(daos_completion_batch_size);
+
+            if (daos_pool.empty() || daos_container.empty()) {
+                std::cerr << "DAOS requires --daos_pool and --daos_container" << std::endl;
+                return -1;
+            }
+        }
     }
 
     initiator_seg_type = NB_ARG(initiator_seg_type);
+    if (isStorageBackend() &&
+        !isValidStorageInitiatorSeg(backend, initiator_seg_type, backend_mems)) {
+        // isValidStorageInitiatorSeg will report the error message.
+        return -1;
+    }
     target_seg_type = NB_ARG(target_seg_type);
     if (use_localized >= 0 && initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM &&
         target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
@@ -789,12 +904,22 @@ xferBenchConfig::loadParams(void) {
     scheme = NB_ARG(scheme);
     mode = NB_ARG(mode);
     op_type = NB_ARG(op_type);
-    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE) {
-        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE]"
+    if (op_type != XFERBENCH_OP_READ && op_type != XFERBENCH_OP_WRITE &&
+        op_type != XFERBENCH_OP_QUERY) {
+        std::cerr << "Invalid op type: " << op_type << ". Must be one of [READ, WRITE, QUERY]"
                   << std::endl;
         return -1;
     }
+    if (op_type == XFERBENCH_OP_QUERY && worker_type != XFERBENCH_WORKER_NIXL) {
+        std::cerr << "QUERY requires --worker_type nixl" << std::endl;
+        return -1;
+    }
     check_consistency = NB_ARG(check_consistency);
+    if (backend == XFERBENCH_BACKEND_DAOS && daos_mount_path.empty() &&
+        (op_type == XFERBENCH_OP_READ || check_consistency)) {
+        std::cerr << "DAOS READ and consistency checks require --daos_mount_path" << std::endl;
+        return -1;
+    }
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
@@ -827,6 +952,12 @@ xferBenchConfig::loadParams(void) {
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
+        return -1;
+    }
+    // execQuery() issues the whole batch_size * pipeline_depth descriptor list
+    // as one synchronous queryMem() call, while the stats count batch_size.
+    if (op_type == XFERBENCH_OP_QUERY && pipeline_depth != 1) {
+        std::cerr << "QUERY requires pipeline_depth=1" << std::endl;
         return -1;
     }
     use_device_api = NB_ARG(use_device_api);
@@ -1060,7 +1191,9 @@ xferBenchConfig::printConfig() {
     printOption("Worker type (--worker_type=[nixl,nvshmem])", worker_type);
     if (worker_type == XFERBENCH_WORKER_NIXL) {
         printOption(
-            "Backend (--backend=[UCX,GDS,GDS_MT,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB])",
+            "Backend "
+            "(--backend=[UCX,GDS,GDS_MT,AIS,POSIX,MOONCAKE,HF3FS,OBJ,REDIS,GUSLI,AZURE_BLOB,"
+            "DOCA_MEMOS,DAOS])",
             backend);
         printOption("Enable pt (--enable_pt=[0,1])", std::to_string(enable_pt));
         printOption("Progress threads (--progress_threads=N)", std::to_string(progress_threads));
@@ -1086,8 +1219,8 @@ xferBenchConfig::printConfig() {
             printOption("GDS batch limit (--gds_batch_limit=N)", std::to_string(gds_batch_limit));
         }
 
-        if (backend == XFERBENCH_BACKEND_GDS_MT) {
-            printOption("GDS MT Number of threads (--gds_mt_num_threads=N)",
+        if (backend == XFERBENCH_BACKEND_GDS_MT || backend == XFERBENCH_BACKEND_AIS) {
+            printOption("GDS_MT / AIS thread pool (--gds_mt_num_threads=N)",
                         std::to_string(gds_mt_num_threads));
         }
 
@@ -1136,6 +1269,29 @@ xferBenchConfig::printConfig() {
                         azure_blob_connection_string);
         }
 
+        if (backend == XFERBENCH_BACKEND_DAOS) {
+            printOption("DAOS pool (--daos_pool=label-or-uuid)", daos_pool);
+            printOption("DAOS container (--daos_container=label-or-uuid)", daos_container);
+            printOption("DAOS system (--daos_system=name)", daos_system);
+            printOption("DAOS dfuse mount (--daos_mount_path=path)", daos_mount_path);
+            printOption("DAOS object class (--daos_object_class=name)", daos_object_class);
+            printOption("DAOS object-class hint (--daos_object_class_hint=hint)",
+                        daos_object_class_hint);
+            printOption("DAOS progress CPU affinity (--daos_progress_cpu_affinity=list)",
+                        daos_progress_cpu_affinity);
+            printOption("DAOS chunk size (--daos_chunk_size=N)", std::to_string(daos_chunk_size));
+            printOption("DAOS numeric object class (--daos_oclass_id=N)",
+                        std::to_string(daos_oclass_id));
+            printOption("DAOS event queues (--daos_num_event_queues=N)",
+                        std::to_string(daos_num_event_queues));
+            printOption("DAOS maximum in-flight per queue (--daos_max_inflight_per_queue=N)",
+                        std::to_string(daos_max_inflight_per_queue));
+            printOption("DAOS submission batch size (--daos_submission_batch_size=N)",
+                        std::to_string(daos_submission_batch_size));
+            printOption("DAOS completion batch size (--daos_completion_batch_size=N)",
+                        std::to_string(daos_completion_batch_size));
+        }
+
         if (xferBenchConfig::isStorageBackend()) {
             printOption("filepath (--filepath=path)", filepath);
             printOption("filenames (--filenames=filename1,filename2,...)", filenames);
@@ -1160,6 +1316,10 @@ xferBenchConfig::printConfig() {
             printOption("RoCE GID table index (--gpunetio_gid_index=N)", gpunetio_gid_index);
             printOption("WRITE QPs per peer (--gpunetio_data_qp_count=N)",
                         std::to_string(gpunetio_data_qp_count));
+            printOption("WRITE distribution (--gpunetio_write_stripe=slots|bytes)",
+                        gpunetio_write_stripe);
+            printOption("Minimum WRITE stripe bytes (--gpunetio_write_stripe_min_bytes=N)",
+                        std::to_string(gpunetio_write_stripe_min_bytes));
             printOption("OOB TCP port (--gpunetio_oob_port=N)",
                         gpunetio_oob_port.empty() ? "6544" : gpunetio_oob_port);
         }
@@ -1168,7 +1328,7 @@ xferBenchConfig::printConfig() {
     printOption("Target seg type (--target_seg_type=[DRAM,VRAM])", target_seg_type);
     printOption("Scheme (--scheme=[pairwise,manytoone,onetomany,tp])", scheme);
     printOption("Mode (--mode=[SG,MG])", mode);
-    printOption("Op type (--op_type=[READ,WRITE])", op_type);
+    printOption("Op type (--op_type=[READ,WRITE,QUERY])", op_type);
     printOption("Check consistency (--check_consistency=[0,1])", std::to_string(check_consistency));
     printOption("Total buffer size (--total_buffer_size=N)", std::to_string(total_buffer_size));
     printOption("Num initiator dev (--num_initiator_dev=N)", std::to_string(num_initiator_dev));
@@ -1257,7 +1417,6 @@ xferBenchConfig::isBlkStorageBackend() {
         backend_mems.begin(), backend_mems.end(), [](nixl_mem_t m) { return m == BLK_SEG; });
 }
 
-
 /**********
  * xferBench Utils
  **********/
@@ -1291,8 +1450,8 @@ copyVramToHost(void *host_addr, const void *device_addr, size_t len) {
     CHECK_CUDA_ERROR(cudaMemcpy(host_addr, (void *)device_addr, len, cudaMemcpyDeviceToHost),
                      "cudaMemcpy failed");
 #elif HAVE_ROCM
-    CHECK_CUDA_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
-                     "hipMemcpy failed");
+    CHECK_HIP_ERROR(hipMemcpy(host_addr, (void *)device_addr, len, hipMemcpyDeviceToHost),
+                    "hipMemcpy failed");
 #else
     std::cerr << "VRAM not supported without CUDA, ROCm or Neuron" << std::endl;
     exit(EXIT_FAILURE);
@@ -1777,6 +1936,8 @@ xferBenchUtils::putObj(size_t buffer_size, const std::string &name) {
         return putObjS3(buffer_size, name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return putObjAzure(buffer_size, name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_DAOS) {
+        return putObjDaos(buffer_size, name);
     } else {
         std::cerr << "Error: putObj called with unsupported object storage backend: "
                   << xferBenchConfig::backend << std::endl;
@@ -1794,6 +1955,8 @@ xferBenchUtils::getObj(const std::string &name) {
         return getObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return getObjAzure(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_DAOS) {
+        return getObjDaos(name);
     } else {
         std::cerr << "Error: getObj called with unsupported object storage backend: "
                   << xferBenchConfig::backend << std::endl;
@@ -1815,6 +1978,8 @@ xferBenchUtils::rmObj(const std::string &name) {
         return rmObjS3(name);
     } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_AZURE_BLOB) {
         return rmObjAzure(name);
+    } else if (xferBenchConfig::backend == XFERBENCH_BACKEND_DAOS) {
+        return rmObjDaos(name);
     } else {
         std::cerr << "Error: rmObj called with unsupported object storage backend: "
                   << xferBenchConfig::backend << std::endl;
@@ -1919,6 +2084,120 @@ xferBenchUtils::rmObjS3(const std::string &name) {
     if (result != 0) {
         std::cerr << "Warning: Failed to remove S3 object " << name << " from bucket "
                   << bucket_name << " (exit code: " << result << ")" << std::endl;
+        return false;
+    }
+    return true;
+}
+
+static bool
+getDaosObjectPath(const std::string &name, std::filesystem::path &path) {
+    if (xferBenchConfig::daos_mount_path.empty()) {
+        std::cerr << "DAOS object setup requires --daos_mount_path" << std::endl;
+        return false;
+    }
+
+    std::filesystem::path object_name(name);
+    if (name.empty() || object_name.is_absolute() || object_name.has_parent_path()) {
+        std::cerr << "Invalid DAOS benchmark object name: " << name << std::endl;
+        return false;
+    }
+
+    path = std::filesystem::path(xferBenchConfig::daos_mount_path) / object_name;
+    return true;
+}
+
+bool
+xferBenchUtils::putObjDaos(size_t buffer_size, const std::string &name) {
+    std::filesystem::path path;
+    if (!getDaosObjectPath(name, path)) {
+        return false;
+    }
+
+    int fd = createFile(buffer_size, path.string());
+    if (fd < 0) {
+        return false;
+    }
+    close(fd);
+    return true;
+}
+
+bool
+xferBenchUtils::getObjDaos(const std::string &name) {
+    std::filesystem::path path;
+    if (!getDaosObjectPath(name, path)) {
+        return false;
+    }
+
+    int source_fd = open(path.c_str(), O_RDONLY);
+    if (source_fd < 0) {
+        std::cerr << "Failed to open DAOS object " << path << ": " << strerror(errno) << std::endl;
+        return false;
+    }
+    int destination_fd = open(name.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0644);
+    if (destination_fd < 0) {
+        std::cerr << "Failed to create local validation file " << name << ": " << strerror(errno)
+                  << std::endl;
+        close(source_fd);
+        return false;
+    }
+
+    std::vector<char> buffer(1 << 20);
+    bool success = true;
+    while (success) {
+        ssize_t bytes_read = read(source_fd, buffer.data(), buffer.size());
+        if (bytes_read == 0) {
+            break;
+        }
+        if (bytes_read < 0) {
+            if (errno == EINTR) {
+                continue;
+            }
+            std::cerr << "Failed to read DAOS object " << path << ": " << strerror(errno)
+                      << std::endl;
+            success = false;
+            break;
+        }
+
+        ssize_t offset = 0;
+        while (offset < bytes_read) {
+            ssize_t bytes_written =
+                write(destination_fd, buffer.data() + offset, bytes_read - offset);
+            if (bytes_written < 0 && errno == EINTR) {
+                continue;
+            }
+            if (bytes_written <= 0) {
+                std::cerr << "Failed to write local validation file " << name << ": "
+                          << strerror(errno) << std::endl;
+                success = false;
+                break;
+            }
+            offset += bytes_written;
+        }
+    }
+
+    close(destination_fd);
+    close(source_fd);
+    if (!success) {
+        unlink(name.c_str());
+    }
+    return success;
+}
+
+bool
+xferBenchUtils::rmObjDaos(const std::string &name) {
+    if (xferBenchConfig::daos_mount_path.empty()) {
+        std::cerr << "Warning: --daos_mount_path is not set; leaving DAOS object " << name
+                  << " in place" << std::endl;
+        return true;
+    }
+
+    std::filesystem::path path;
+    if (!getDaosObjectPath(name, path)) {
+        return false;
+    }
+    if (unlink(path.c_str()) != 0 && errno != ENOENT) {
+        std::cerr << "Failed to remove DAOS object " << path << ": " << strerror(errno)
+                  << std::endl;
         return false;
     }
     return true;

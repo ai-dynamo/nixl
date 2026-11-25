@@ -14,6 +14,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
 
+* [NIXL EP API shell](https://github.com/ai-dynamo/nixl/blob/main/runtime/ep/README.md) - Interface review (`nixl.runtime.ep`)
+
 * [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
 
 * [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
@@ -44,8 +46,6 @@ Install with:
 ```bash
 pip install nixl
 ```
-
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
 
@@ -173,8 +173,19 @@ Common build options:
 - `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
 
 #### Building for AMD ROCm
+NIXL itself builds vendor-neutrally; CPU-side hardware detection
+(`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or
+not a ROCm toolchain is present. ROCm is requested by setting `-Drocm_path`;
+Meson then links HIP when `amdhip64` is found under that prefix. An empty
+`rocm_path` means ROCm is not used. HIP is detected independently of CUDA,
+so the NVIDIA and AMD plugin stacks can be built together when both toolchains
+are present.
 
-NIXL itself builds vendor-neutrally; CPU-side hardware detection (`hwInfo::numAmdGpus`) discovers AMD GPUs via PCI vendor `0x1002` whether or not a ROCm toolchain is present. GPU-side ROCm/HIP build support is available for nixlbench and UCX plugin unit tests. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+`benchmark/nixlbench` is a separate Meson project and is the exception: a
+single translation unit cannot include CUDA and HIP headers together, so one
+build targets one stack. Use `-Dnixlbench_gpu=cuda|rocm` to force a stack
+(`auto`, the default, prefers CUDA); `-Duse_rocm=true` is a deprecated alias for
+`-Dnixlbench_gpu=rocm`. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
 
 **Building with ROCm support:**
 ```bash
@@ -185,12 +196,16 @@ meson setup build -Drocm_path=/opt/rocm
 meson setup build -Drocm_path=/custom/path/to/rocm
 ```
 
-**Plugins on ROCm hosts (CUDA toolchain absent):**
+**Platforms using ROCm / HIP (ROCm-only or CUDA + ROCm co-installed):**
 - `UCX` — primary transport for AMD GPU memory (requires UCX built with `--with-rocm`).
-- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `MOONCAKE`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
-- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — skip automatically because their CUDA / cuFile / DOCA dependencies are not found.
+- `POSIX`, `OBJ`, `AZURE_BLOB`, `HF3FS`, `GUSLI`, `UCCL` — vendor-neutral; build unchanged.
+- `MOONCAKE` — needs a Transfer Engine built with `-DUSE_HIP=ON` for AMD GPU memory.
+- `AIS` — AMD Infinity Storage (hipFile) plugin under `src/plugins/rocm_ais/`. HIP is detected independently of CUDA, so **AIS** can be built alongside CUDA plugins when ROCm and hipFile are present. Both are found under `rocm_path`, which must be set to enable ROCm. See `disable_rocm_ais_backend` in `meson_options.txt`.
+- `GDS` / `GDS_MT`, `GPUNETIO`, `LIBFABRIC` (with `-DHAVE_CUDA`) — on a ROCm-only host they skip automatically when CUDA / cuFile / DOCA are not found.
 
 **Known gaps (will be addressed in follow-up PRs):**
+- `nixlbench`: NVSHMEM and the CUDA-driver VMM/fabric helpers remain
+  NVIDIA-only; VRAM allocation prefers CUDA when both stacks are present.
 - `LIBFABRIC` plugin disabled on ROCm pending header refactor.
 - No NVSHMEM-equivalent backend yet (rocSHMEM analog is a candidate for a future plugin).
 
@@ -222,8 +237,6 @@ The preferred way to install the Python bindings is through pip from PyPI:
 ```bash
 pip install nixl
 ```
-
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 #### Installation from source
 
@@ -271,23 +284,11 @@ Then install PyTorch following the instructions on the PyTorch website: https://
 After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
 
 1. Build NIXL binaries and install them
-2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+2. Build and install the CUDA platform-specific package
 3. Build and install the `nixl` meta-package
 
-**For CUDA 12:**
-
 ```
 pip install .
-meson setup build
-ninja -C build install
-pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
-```
-
-**For CUDA 13:**
-
-```
-pip install .
-./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
 ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl

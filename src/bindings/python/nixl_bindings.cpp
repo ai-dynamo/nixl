@@ -599,35 +599,42 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<nixlAgent>(m, "nixlAgent")
         .def(py::init<std::string, nixlAgentConfig>())
-        .def("getAvailPlugins",
-             [](nixlAgent &agent) -> std::vector<nixl_backend_t> {
-                 std::vector<nixl_backend_t> backends;
-                 throw_nixl_exception(agent.getAvailPlugins(backends));
-                 return backends;
-             })
-        .def("getPluginParams",
-             [](nixlAgent &agent,
-                const nixl_backend_t type) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
-                 nixl_b_params_t params;
-                 nixl_mem_list_t mems;
-                 std::vector<std::string> mems_vec;
-                 throw_nixl_exception(agent.getPluginParams(type, mems, params));
-                 for (const auto &elm : mems)
-                     mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
-                 return std::make_pair(params, mems_vec);
-             })
-        .def("getBackendParams",
-             [](nixlAgent &agent,
-                uintptr_t backend) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
-                 nixl_b_params_t params;
-                 nixl_mem_list_t mems;
-                 std::vector<std::string> mems_vec;
-                 throw_nixl_exception(
-                     agent.getBackendParams((nixlBackendH *)backend, mems, params));
-                 for (const auto &elm : mems)
-                     mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
-                 return std::make_pair(params, mems_vec);
-             })
+        .def(
+            "getAvailPlugins",
+            [](nixlAgent &agent) -> std::vector<nixl_backend_t> {
+                std::vector<nixl_backend_t> backends;
+                throw_nixl_exception(agent.getAvailPlugins(backends));
+                return backends;
+            },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "getPluginParams",
+            [](nixlAgent &agent,
+               const nixl_backend_t type) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
+                nixl_b_params_t params;
+                nixl_mem_list_t mems;
+                std::vector<std::string> mems_vec;
+                throw_nixl_exception(agent.getPluginParams(type, mems, params));
+                for (const auto &elm : mems) {
+                    mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                }
+                return std::make_pair(params, mems_vec);
+            },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "getBackendParams",
+            [](nixlAgent &agent,
+               uintptr_t backend) -> std::pair<nixl_b_params_t, std::vector<std::string>> {
+                nixl_b_params_t params;
+                nixl_mem_list_t mems;
+                std::vector<std::string> mems_vec;
+                throw_nixl_exception(agent.getBackendParams((nixlBackendH *)backend, mems, params));
+                for (const auto &elm : mems) {
+                    mems_vec.push_back(nixlEnumStrings::memTypeStr(elm));
+                }
+                return std::make_pair(params, mems_vec);
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "createBackend",
             [](nixlAgent &agent,
@@ -865,7 +872,8 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(ret);
                 return std::make_tuple(duration.count(), err_margin.count(), int(method));
             },
-            py::arg("req_handle"))
+            py::arg("req_handle"),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "postXferReq",
             [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
@@ -899,7 +907,8 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(ret);
                 return telemetry;
             },
-            py::arg("reqh"))
+            py::arg("reqh"),
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferTraceInfo",
             [](nixlAgent &agent, uintptr_t reqh) -> std::optional<nixl_xfer_trace_info_t> {
@@ -911,25 +920,32 @@ PYBIND11_MODULE(_bindings, m) {
                 throw_nixl_exception(ret);
                 return info;
             },
-            py::arg("reqh"))
-        .def("queryXferBackend",
-             [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
-                 nixlBackendH *backend = nullptr;
-                 throw_nixl_exception(agent.queryXferBackend((nixlXferReqH *)reqh, backend));
-                 return (uintptr_t)backend;
-             })
-        .def("releaseXferReq",
-             [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
-                 nixl_status_t ret = agent.releaseXferReq((nixlXferReqH *)reqh);
-                 throw_nixl_exception(ret);
-                 return ret;
-             })
-        .def("releasedDlistH",
-             [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
-                 nixl_status_t ret = agent.releasedDlistH((nixlDlistH *)handle);
-                 throw_nixl_exception(ret);
-                 return ret;
-             })
+            py::arg("reqh"),
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "queryXferBackend",
+            [](nixlAgent &agent, uintptr_t reqh) -> uintptr_t {
+                nixlBackendH *backend = nullptr;
+                throw_nixl_exception(agent.queryXferBackend((nixlXferReqH *)reqh, backend));
+                return (uintptr_t)backend;
+            },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "releaseXferReq",
+            [](nixlAgent &agent, uintptr_t reqh) -> nixl_status_t {
+                nixl_status_t ret = agent.releaseXferReq((nixlXferReqH *)reqh);
+                throw_nixl_exception(ret);
+                return ret;
+            },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "releasedDlistH",
+            [](nixlAgent &agent, uintptr_t handle) -> nixl_status_t {
+                nixl_status_t ret = agent.releasedDlistH((nixlDlistH *)handle);
+                throw_nixl_exception(ret);
+                return ret;
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "getNotifs",
             [](nixlAgent &agent,
@@ -982,7 +998,10 @@ PYBIND11_MODULE(_bindings, m) {
              [](nixlAgent &agent) -> py::bytes {
                  // python can only interpret text strings
                  std::string ret_str("");
-                 throw_nixl_exception(agent.getLocalMD(ret_str));
+                 {
+                     py::gil_scoped_release release;
+                     throw_nixl_exception(agent.getLocalMD(ret_str));
+                 }
                  return py::bytes(ret_str);
              })
         .def(
@@ -999,7 +1018,10 @@ PYBIND11_MODULE(_bindings, m) {
                     extra_params.backends.push_back((nixlBackendH *)backend);
                 extra_params.includeConnInfo = inc_conn_info;
 
-                throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
+                {
+                    py::gil_scoped_release release;
+                    throw_nixl_exception(agent.getLocalPartialMD(descs, ret_str, &extra_params));
+                }
                 return py::bytes(ret_str);
             },
             py::arg("descs"),
@@ -1015,16 +1037,18 @@ PYBIND11_MODULE(_bindings, m) {
                  }
                  return py::bytes(remote_name);
              })
-        .def("invalidateRemoteMD",
-             [](nixlAgent &agent, const std::string &remote_agent) -> nixl_status_t {
-                 const nixl_status_t ret = agent.invalidateRemoteMD(remote_agent);
-                 // Not finding the agent is a normal outcome, e.g. after the peer invalidated it
-                 if (ret == NIXL_ERR_NOT_FOUND) {
-                     return ret;
-                 }
-                 throw_nixl_exception(ret);
-                 return ret;
-             })
+        .def(
+            "invalidateRemoteMD",
+            [](nixlAgent &agent, const std::string &remote_agent) -> nixl_status_t {
+                const nixl_status_t ret = agent.invalidateRemoteMD(remote_agent);
+                // Not finding the agent is a normal outcome, e.g. after the peer invalidated it
+                if (ret == NIXL_ERR_NOT_FOUND) {
+                    return ret;
+                }
+                throw_nixl_exception(ret);
+                return ret;
+            },
+            py::call_guard<py::gil_scoped_release>())
         .def(
             "sendLocalMD",
             [](nixlAgent &agent, std::string ip_addr, int port) {
@@ -1100,7 +1124,7 @@ PYBIND11_MODULE(_bindings, m) {
             py::arg("ip_addr") = std::string(""),
             py::arg("port") = 0,
             py::call_guard<py::gil_scoped_release>())
-        .def("checkRemoteMD", &nixlAgent::checkRemoteMD)
+        .def("checkRemoteMD", &nixlAgent::checkRemoteMD, py::call_guard<py::gil_scoped_release>())
         .def(
             "prepMemView",
             [](nixlAgent &agent,

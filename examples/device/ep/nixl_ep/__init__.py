@@ -27,8 +27,10 @@ import torch
 
 
 def _deepbind_enabled() -> bool:
-    value = os.getenv("NIXL_UCX_DEEPBIND", "0").strip().lower()
-    return value not in {"0", "false", "no", "off", "disable", "disabled"}
+    # NIXL_UCX_DEEPBIND is the deprecated name; NIXL core warns about it.
+    value = os.getenv("NIXL_PLUGIN_UCX_DEEPBIND", os.getenv("NIXL_UCX_DEEPBIND", "0"))
+    value = value.strip().lower()
+    return value not in {"0", "false", "n", "no", "off", "disable", "disabled"}
 
 
 @contextmanager
@@ -60,6 +62,6 @@ sys.modules[f"{__package__}.nixl_ep_cpp"] = _nixl_ep_cpp
 from .buffer import Buffer  # noqa: E402
 from .utils import EventOverlap  # noqa: E402
 
-topk_idx_t = getattr(_nixl_ep_cpp, "topk_idx_t", torch.int64)
+topk_idx_t = torch.int32 if _nixl_ep_cpp.topk_idx_bits == 32 else torch.int64
 
 __all__ = ["Buffer", "EventOverlap"]

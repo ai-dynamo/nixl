@@ -333,9 +333,10 @@ application checks its status, even on the thread-pool engine, whose dedicated
 threads see each chunk finish, so the stamp would time the poll rather than the
 transport.
 
-A backend that carries the context to its peer says so by overriding
-`supportsTraceContext()`, which defaults to `false`; core reads it once, when
-the backend is created. Tracing never fails a transfer over it. A sampled
+A backend that carries the context to its peer says so by passing the
+`TRACE_CONTEXT` capability to the `nixlBackendEngine` constructor; it is not
+set by default, and core reads it once, when the backend is created. Tracing
+never fails a transfer over it. A sampled
 request on a backend that supports remote transfers but not trace contexts runs
 as usual, its trace just does not reach the remote agent, and core logs a
 warning once per backend in each agent; backends without remote transfers are

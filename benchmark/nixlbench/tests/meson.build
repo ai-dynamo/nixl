@@ -1,6 +1,13 @@
 # SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 
+memos_key_tests = executable(
+  'memos_key_tests',
+  'memos_key_test.cpp',
+  include_directories: inc_dir,
+)
+test('memos_key_tests', memos_key_tests, suite: 'nixlbench')
+
 gtest_dep = dependency('gtest',
                        main: true,
                        required: false)

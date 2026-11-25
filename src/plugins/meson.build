@@ -33,6 +33,36 @@ if enabled_plugins.get('REDIS')
     subdir('redis')
 endif
 
+if 'DAOS' in static_plugins and not enabled_plugins.get('DAOS')
+    error('DAOS listed in static_plugins must also be enabled')
+endif
+
+if enabled_plugins.get('DAOS')
+    daos_dfs_dep = dependency('dfs', required: false)
+    daos_client_dep = dependency('daos', required: false)
+    if not daos_dfs_dep.found()
+        daos_dfs_lib = cpp.find_library('dfs', required: false)
+        if daos_dfs_lib.found() and cpp.has_header('daos_fs.h')
+            daos_dfs_dep = daos_dfs_lib
+        endif
+    endif
+    if not daos_client_dep.found()
+        daos_client_dep = cpp.find_library('daos', required: false)
+    endif
+    daos_headers_found = false
+    if daos_dfs_dep.found() and daos_client_dep.found()
+        daos_headers_found = cpp.has_header(
+            'daos_fs.h', dependencies: [daos_dfs_dep]) and cpp.has_header(
+            'daos_obj_class.h', dependencies: [daos_client_dep])
+    endif
+    daos_deps_missing = not daos_dfs_dep.found() or not daos_client_dep.found() or not daos_headers_found
+    if daos_deps_missing and (is_explicit_enable or 'DAOS' in static_plugins)
+        error('DAOS plugin requested but libdfs, libdaos, or their development headers were not found')
+    elif not daos_deps_missing
+        subdir('daos')
+    endif
+endif
+
 if enabled_plugins.get('AZURE_BLOB')
     subdir('azure_blob')
 endif
@@ -60,6 +90,22 @@ if enabled_plugins.get('GDS') or enabled_plugins.get('GDS_MT')
         endif
     elif not disable_gds_backend and cuda_dep.found() and taskflow_proj.found()
         subdir('cuda_gds')
+    endif
+endif
+
+# The AIS (AMD Infinity Storage) plugin mirrors the cuda_gds layout: one plugin
+# directory with an abstract hipFile engine, exposed as a single "AIS" backend
+# whose "mode" parameter selects the submission strategy.
+disable_rocm_ais_backend = get_option('disable_rocm_ais_backend')
+if enabled_plugins.get('AIS')
+    if (disable_rocm_ais_backend or not rocm_dep.found()) and is_explicit_enable
+        if disable_rocm_ais_backend
+            error('AIS plugin requested but AIS backend is disabled (-Ddisable_rocm_ais_backend=true)')
+        else
+            error('AIS plugin requested but HIP dependency not found')
+        endif
+    elif not disable_rocm_ais_backend and rocm_dep.found()
+        subdir('rocm_ais')
     endif
 endif
 
@@ -122,6 +168,13 @@ if enabled_plugins.get('GPUNETIO')
     elif cuda_dep.found() and doca_gpunetio_dep.found()
         subdir('gpunetio')
     endif
+endif
+
+if enabled_plugins.get('DOCA_MEMOS')
+    # Always entered so doca_memos_backend_sources is defined for the unit
+    # tests; the plugin meson.build short-circuits internally when the DOCA
+    # dependencies are missing.
+    subdir('doca_memos')
 endif
 
 subdir('telemetry')
