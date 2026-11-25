@@ -14,6 +14,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
 
+* [NIXL EP API shell](https://github.com/ai-dynamo/nixl/blob/main/runtime/ep/README.md) - Interface review (`nixl.runtime.ep`)
+
 * [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
 
 * [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
@@ -44,8 +46,6 @@ Install with:
 ```bash
 pip install nixl
 ```
-
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
 
 ## Prerequisites for source build (Linux)
 
@@ -238,8 +238,6 @@ The preferred way to install the Python bindings is through pip from PyPI:
 pip install nixl
 ```
 
-This installs both CUDA 12 and CUDA 13 backends. At runtime, the correct backend is selected automatically based on the CUDA version reported by PyTorch.
-
 #### Installation from source
 
 Prerequisites:
@@ -286,23 +284,11 @@ Then install PyTorch following the instructions on the PyTorch website: https://
 After installing the prerequisites, you can build and install the NIXL binaries and the Python bindings from source. You have to:
 
 1. Build NIXL binaries and install them
-2. Build and install the CUDA platform-specific package (`nixl-cu12` or `nixl-cu13`)
+2. Build and install the CUDA platform-specific package
 3. Build and install the `nixl` meta-package
 
-**For CUDA 12:**
-
 ```
 pip install .
-meson setup build
-ninja -C build install
-pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl
-```
-
-**For CUDA 13:**
-
-```
-pip install .
-./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml
 meson setup build
 ninja -C build install
 pip install build/src/bindings/python/nixl-meta/nixl-*-py3-none-any.whl

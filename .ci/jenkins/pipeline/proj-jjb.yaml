@@ -525,6 +525,72 @@
                     parent-credentials: true
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
+# Template for the Vera Rubin GPU EP test job
+- job-template:
+    name: "{jjb_proj}-gpu-vr-ep"      # Will be expanded to 'nixl-ci-gpu-vr-ep'
+    project-type: pipeline
+    disabled: false
+    properties:
+        # Similar properties as dispatcher job
+        - github:
+            url: "{jjb_gh_url}"
+        - build-discarder:
+            days-to-keep: 14
+            num-to-keep: 1000
+        - inject:
+            keep-system-variables: true
+            properties-content: |
+              jjb_proj={jjb_proj}-gpu-vr-ep
+    description: Do NOT edit this job through the Web GUI !
+    concurrent: true
+    sandbox: true
+    # Test job parameters
+    parameters:
+        - string:
+            name: "sha1"
+            default: "{jjb_branch}"    # Default to 'main' branch
+            description: "Commit to be checked, usually set by PR"
+        - string:
+            name: "githubData"
+            default: ""
+            description: "Variables from post"
+        - string:
+            name: "conf_file"
+            default: ".ci/jenkins/lib/test-vr-ep-matrix.yaml"  # Vera Rubin EP test matrix configuration
+            description: "Job config file"
+        - string:
+            name: "UCX_VER"
+            default: ""
+            description: "UCX ref (branch/tag/commit) to build against. Empty uses the Dockerfile ARG UCX_VERSION default (kept per branch in one place); the nixl-ci-nightly job sets it to master."
+        - bool:
+            name: "build_dockers"
+            default: false
+            description: "Force rebuild docker containers"
+        - string:
+            name: "DEBUG"
+            default: 0
+            description: "Enable debug prints and traces, valid values are 0-9"
+    # SCM configuration for the build job
+    pipeline-scm:
+        scm:
+            - git:
+                url: "{jjb_git}"
+                credentials-id: "{jjb_git_credentials}"
+                branches: ['$sha1']
+                shallow-clone: false
+                do-not-fetch-tags: false
+                # Configure refspec to handle branches, PRs, and tags
+                refspec: "{jjb_gh_refspec}"
+                browser: githubweb
+                browser-url: "{jjb_git}"
+                # Handle git submodules
+                submodule:
+                    disable: false
+                    recursive: true
+                    tracking: true
+                    parent-credentials: true
+        script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
+
 # Template for NIXL build container job
 # Builds and pushes NIXL and NIXLBench container images for x86_64 and aarch64
 # Triggered by nixl-verification-launcher and manual builds via parameters
@@ -700,7 +766,7 @@
         script-path: "{jjb_jenkinsfile}"  # Path to Jenkinsfile that defines the build steps
 
 # Job template for the LLM (vLLM / SGLang) container build pipeline.
-# Builds 4 image variants (vllm-cu12-nixl, vllm-cu13-nixl, sglang-cu12-nixl, sglang-cu13-nixl) from a
+# Builds the vLLM and SGLang image variants from a
 # published NIXL wheel set, for x86_64 and aarch64, and publishes multi-arch
 # manifests. Mirrors the manual procedure documented at
 # README.md
@@ -719,11 +785,11 @@
             conf_file=.ci/jenkins/lib/build-llm-container-matrix.yaml
     description: >
       <b>NIXL LLM container build</b><br/>
-      • Builds 4 inference container variants per release: <b>vllm-cu12-nixl</b>, <b>vllm-cu13-nixl</b>, <b>sglang-cu12-nixl</b>, <b>sglang-cu13-nixl</b><br/>
+      • Builds 2 inference container variants per release: <b>vllm-cu13-nixl</b>, <b>sglang-cu13-nixl</b><br/>
       • Builds for x86_64 and aarch64 (aarch64 via podman with QEMU)<br/>
       • Publishes multi-arch manifests after both arches succeed<br/>
       • Wheels pulled from <code>sw-nbu-swx-nixl-pypi-local/release/${{NIXL_VERSION}}/${{WHEEL_BUILD_ID}}/</code><br/>
-      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu12-nixl,vllm-cu13-nixl,sglang-cu12-nixl,sglang-cu13-nixl}}</code><br/>
+      • Images pushed to: https://artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/ under <code>verification/llm/{{vllm-cu13-nixl,sglang-cu13-nixl}}</code><br/>
       • For <b>rc0</b> leave the <code>BASE_IMAGE_*</code> params empty to use upstream defaults<br/>
       • For <b>rcN, N&gt;0</b> set each <code>BASE_IMAGE_*</code> to the matching rc0 image to isolate the verification to the NIXL change<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -734,16 +800,12 @@
           name: "BUILD_TARGET"
           choices:
             - "all"
-            - "vllm-cu12"
             - "vllm-cu13"
-            - "sglang-cu12"
             - "sglang-cu13"
           description: >
             Which image variants to build:<br/>
-            • <b>all</b>: build all 4 variants (default)<br/>
-            • <b>vllm-cu12</b>: only vllm-cu12-nixl<br/>
+            • <b>all</b>: build both variants (default)<br/>
             • <b>vllm-cu13</b>: only vllm-cu13-nixl<br/>
-            • <b>sglang-cu12</b>: only sglang-cu12-nixl<br/>
             • <b>sglang-cu13</b>: only sglang-cu13-nixl
       - string:
           name: "NIXL_VERSION"
@@ -771,14 +833,6 @@
           default: "2_28"
           description: "manylinux platform tag used in wheel filename (e.g. 2_28)."
       - string:
-          name: "BASE_IMAGE_VLLM_CU12"
-          default: ""
-          description: >
-            Optional override for the vllm-cu12 base image build-arg.<br/>
-            Leave empty to use upstream <code>docker.io/vllm/vllm-openai:latest-cu129</code> (rc0 default).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 vllm-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu12-nixl:1.1.0-rc0</code>
-      - string:
           name: "BASE_IMAGE_VLLM_CU13"
           default: ""
           description: >
@@ -786,14 +840,6 @@
             Leave empty for <b>rc0</b> (uses the CUDA 13 default <code>docker.io/vllm/vllm-openai:latest</code>).<br/>
             For <b>rcN, N&gt;0</b> set to the corresponding rc0 image, e.g.<br/>
             <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/vllm-cu13-nixl:1.1.0-rc0</code>
-      - string:
-          name: "BASE_IMAGE_SGLANG_CU12"
-          default: ""
-          description: >
-            Optional override for the sglang-cu12 base image build-arg.<br/>
-            Leave empty for <b>rc0</b> (uses the CUDA 12 default <code>docker.io/lmsysorg/sglang:latest-cu129-runtime</code>).<br/>
-            For <b>rcN, N&gt;0</b> pin to the rc0 sglang-cu12-nixl image, e.g.<br/>
-            <code>artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/verification/llm/sglang-cu12-nixl:1.1.0-rc0</code>
       - string:
           name: "BASE_IMAGE_SGLANG_CU13"
           default: ""
@@ -980,8 +1026,8 @@
             conf_file=.ci/jenkins/lib/build-wheel-publish-matrix.yaml
     description: >
       <b>NIXL wheel verification build</b><br/>
-      • Builds NIXL wheels (x86_64 &amp; aarch64) for CUDA 13
-      and CUDA 12 in one run, with the UCX spcx and Infinia plugins always bundled, and
+      • Builds NIXL wheels (x86_64 &amp; aarch64),
+      with the UCX spcx and Infinia plugins always bundled, and
       publishes them to the verification (default), staging, or release Artifactory
       space per <code>PUBLISH_DIR</code><br/>
       • Scheduled runs are triggered nightly from <code>main</code> by <code>nixl-verification-launcher</code><br/>
@@ -992,6 +1038,8 @@
       browse them at
       <a href='https://artifactory.nvidia.com/ui/repos/tree/General/sw-nbu-swx-nixl-pypi-local/release'>sw-nbu-swx-nixl-pypi-local/release</a>.
       Each green build also links its own folder from the build description<br/>
+      • A green release run is then compared against the previous PyPI release; the wheel
+      inspection report lands next to the wheels and is mailed to <code>MAIL_TO</code><br/>
       • A run that does not end green deletes its release folder: a partial wheel set has to
       be rebuilt anyway, and leaving it would make the poller skip the commit<br/>
       • <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -1018,7 +1066,7 @@
       - string:
           name: "MAIL_TO"
           default: "nixl-ci-alerts@exchange.nvidia.com"
-          description: "Recipient(s) for the failure report. Mail is sent only when the build fails."
+          description: "Recipient(s) for the failure report, sent only when the build is not green, and for the wheel inspection report of a release run."
       - string:
           name: "ci_refspec"
           default: "{jjb_branch}"
@@ -1063,8 +1111,7 @@
     description: >
       <b>NIXL verification build launcher</b><br/>
       • <code>LAUNCH_TARGET=wheels</code> (nightly, around midnight): triggers
-      <code>nixl-build-wheel</code> once for <code>NIXL_VERSION=main</code>,
-      covering every CUDA major<br/>
+      <code>nixl-build-wheel</code> once for <code>NIXL_VERSION=main</code><br/>
       • <code>LAUNCH_TARGET=containers</code> (daily, around 10 PM): triggers
       <code>{jjb_proj}-build-container</code> 4 times &mdash; <b>nixlbench</b> and <b>nixl</b>,
       each on the default base image and on the PyTorch release image, all with
@@ -1075,7 +1122,7 @@
     triggers:
       - parameterized-timer:
           cron: |
-            # Wheels around midnight, one run covering every CUDA major.
+            # Wheels around midnight.
             H 0 * * * %LAUNCH_TARGET=wheels
             # Containers around 10 PM, all 4 variants.
             H 22 * * * %LAUNCH_TARGET=containers
@@ -1087,7 +1134,7 @@
             - "containers"
           description: >
             Which builds to trigger:<br/>
-            • <b>wheels</b>: <code>nixl-build-wheel</code>, one run covering every CUDA major<br/>
+            • <b>wheels</b>: <code>nixl-build-wheel</code><br/>
             • <b>containers</b>: <code>{jjb_proj}-build-container</code>, the 4 scheduled variants
       - string:
           name: "MAIL_TO"
@@ -1141,8 +1188,8 @@
       • Runs every 4 hours and scans all <code>release/*</code> branches (version &gt;= 1.4.0),
       looking for commits with no
       published wheel set under <code>sw-nbu-swx-nixl-pypi-local/release/</code> in Artifactory<br/>
-      • Triggers <code>nixl-build-wheel</code> once per missing commit (one run
-      covers every CUDA major) &mdash; a failed build is retried on the next cycle; delete the
+      • Triggers <code>nixl-build-wheel</code> once per missing commit
+      &mdash; a failed build is retried on the next cycle; delete the
       commit's folder in Artifactory to force a full rebuild<br/>
       • A commit counts as published when a folder under <code>release/&lt;ver&gt;/</code>
       carries it as a <code>NIXL_SHA</code> property, which the wheel job stamps only after a
@@ -1258,7 +1305,8 @@
     description: >
       <b>NIXL nightly UCX-master validation</b><br/>
       Runs <code>nixl-ci-gpu</code>, <code>nixl-ci-dl-gpu</code>,
-      <code>nixl-ci-dl-gpu-ep</code> and <code>nixl-ci-gpu-vr</code> against
+      <code>nixl-ci-dl-gpu-ep</code>, <code>nixl-ci-gpu-vr</code> and
+      <code>nixl-ci-gpu-vr-ep</code> against
       UCX <code>master</code> nightly and
       emails one consolidated pass/fail report.<br/>
       <i>Do NOT edit this job through the Jenkins GUI &mdash; managed by Jenkins Job Builder.</i>
@@ -1318,6 +1366,7 @@
         - "{jjb_proj}-dl-gpu"   # Create dl-gpu job for dlcluster.nvidia.com
         - "{jjb_proj}-dl-gpu-ep"  # Create dl-gpu-ep job for NIXL EP on dlcluster.nvidia.com
         - "{jjb_proj}-gpu-vr"  # Create gpu-vr job for the Vera Rubin partition
+        - "{jjb_proj}-gpu-vr-ep"  # Create gpu-vr-ep job for NIXL EP on the Vera Rubin partition
         - "{jjb_proj}-build-wheel"  # Create build wheel job
         - "nixl-build-wheel"  # Create wheel verification job
         - "nixl-verification-launcher"  # Create verification build launcher job (wheel + container crons)

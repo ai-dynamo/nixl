@@ -20,7 +20,7 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | [Claude Code Review](#claude-code-review-claude-reviewyml) | GitHub Actions | `pull_request` (opened/synchronize/reopened) | Yes |
 | [External Contributor](#external-contributor-external_contributoryaml) | GitHub Actions | `pull_request_target` (opened, fork only) | Yes (fork PRs only) |
 | [Blossom-CI](#blossom-ci-blossom-ciyml) | GitHub Actions | `pull_request_target` (opened/synchronize/reopened), `/build` PR comment, or `workflow_dispatch` | Yes — subject to `Authorization` |
-| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | Yes — whenever Blossom-CI's `Job-trigger` runs; these 8 are the *only* Jenkins jobs in the PR CI path |
+| `nixl-ci-dispatcher` → `non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`, `gpu-vr`, `gpu-vr-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` | Jenkins (dispatcher-triggered) | Fan-out from Blossom-CI `Job-trigger` | Yes — whenever Blossom-CI's `Job-trigger` runs; these 9 are the *only* Jenkins jobs in the PR CI path |
 | `nixl-ci-build-container` | Jenkins (standalone) | Triggered by `verification-launcher` (nightly ~22:00) or manual | No — never runs as part of PR CI |
 | `nixl-build-wheel` | Jenkins (standalone) | Triggered by `verification-launcher` (nightly) or `build-wheel-release-poller`, or manual | No — never runs as part of PR CI |
 | `nixl-verification-launcher` | Jenkins (standalone) | Cron: midnight (wheels) + 10 PM (containers) | No — never runs as part of PR CI |
@@ -28,10 +28,10 @@ runs on-demand (`workflow_dispatch`, a PR comment, or a cron schedule).
 | `nixl-ci-build-llm-container` | Jenkins (standalone) | Manual only | No — never runs as part of PR CI |
 | `nixl-ci-test-llm-container` | Jenkins (standalone) | Manual, or chained from `build-llm-container` via `RUN_TEST` | No — never runs as part of PR CI |
 | `nixl-ci-cleanup-artifacts` | Jenkins (standalone) | Daily cron (6 AM) + manual | No — never runs as part of PR CI |
-| `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 0`) + manual | No — orchestrates the nightly UCX-`master` run of the 3 GPU jobs |
+| `nixl-ci-nightly` | Jenkins (standalone) | Nightly cron (`H 0`) + manual | No — orchestrates the nightly UCX-`master` run of the 5 GPU jobs |
 
-> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 17 Jenkins jobs: the
-> dispatcher, the 8 jobs it fans out to (the PR CI flow), and 8 standalone jobs
+> **Note on Jenkins jobs:** `proj-jjb.yaml` defines 18 Jenkins jobs: the
+> dispatcher, the 9 jobs it fans out to (the PR CI flow), and 8 standalone jobs
 > (`build-container`, `build-wheel`, `verification-launcher`,
 > `build-wheel-release-poller`, `build-llm-container`, `test-llm-container`,
 > `cleanup-artifacts`, `nightly`). The standalone ones run only on their own
@@ -104,7 +104,7 @@ sequenceDiagram
     participant Scan as Vulnerability-scan (Black Duck)
     participant Trigger as Job-trigger
     participant Jenkins as nixl-ci-dispatcher
-    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, gpu-vr, build-wheel,<br/>test-sanitizers, build-container-pr)
+    participant Children as Child jobs<br/>(non-gpu, gpu, dl-gpu,<br/>dl-gpu-ep, gpu-vr, gpu-vr-ep, build-wheel,<br/>test-sanitizers, build-container-pr)
 
     User->>GH: comment "/build"
     GH->>Blossom: issue_comment event
@@ -136,8 +136,8 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 5. **Job-trigger** calls `blossom-ci` with `OPERATION: START-CI-JOB`, which
    triggers the Jenkins `nixl-ci-dispatcher` job.
 6. `nixl-ci-dispatcher` fans out in parallel to the child jobs selected by the
-   path filter from its eight (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`,
-   `gpu-vr`, `build-wheel`, `test-sanitizers`, `build-container-pr` — see
+   path filter from its nine (`non-gpu`, `gpu`, `dl-gpu`, `dl-gpu-ep`,
+   `gpu-vr`, `gpu-vr-ep`, `build-wheel`, `test-sanitizers`, `build-container-pr` — see
    [Jenkins jobs](#jenkins-jobs) below). Every job runs unless
    `.ci/path-filters.yaml` narrows the set for the PR's changed paths; jobs
    not selected get a green "skipped" status (see [Path filtering](#path-filtering)).
@@ -146,7 +146,7 @@ Step by step, matching the jobs in `blossom-ci.yml`:
 
 ## Jenkins jobs
 
-All 14 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
+All 18 Jenkins jobs are defined in `.ci/jenkins/pipeline/proj-jjb.yaml`
 (Jenkins Job Builder config). The dispatcher runs its own pipeline,
 `.ci/jenkins/pipeline/Jenkinsfile.dispatcher`, checked out from the PR merge
 ref (`refs/pull/<n>/merge`) on webhook runs, or from any branch/commit passed
@@ -156,7 +156,7 @@ events — they only start via the Jenkins webhook fired by Blossom-CI, or via
 their own nightly/manual trigger. They split into two groups:
 
 - **Dispatcher-triggered (part of the PR CI path):** `nixl-ci-dispatcher` and
-  the 7 jobs it fans out to. This is the *only* way any Jenkins job runs
+  the 9 jobs it fans out to. This is the *only* way any Jenkins job runs
   against a PR, triggered by a PR push or a `/build` comment.
 - **Standalone (never run against a PR):** `nixl-ci-build-container`,
   `nixl-build-wheel`, `nixl-verification-launcher`,
@@ -174,16 +174,17 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-dispatcher` (dispatcher-triggered)
 
 - **Trigger:** GitHub webhook payload forwarded by Blossom-CI's `Job-trigger` step (`OPERATION: START-CI-JOB`). Not a raw GitHub Actions event.
-- **What it does:** Fans out in parallel to eight downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all eight:
+- **What it does:** Fans out in parallel to nine downstream Jenkins jobs, waiting on all of them. On PR runs only the jobs selected by the [path filter](#path-filtering) for the PR's changed paths are started; the rest get a green "skipped" status under their own context. Manual runs (no PR number) always run all nine:
   - `nixl-ci-non-gpu` — `.ci/jenkins/lib/build-matrix.yaml`
   - `nixl-ci-gpu` — `.ci/jenkins/lib/test-matrix.yaml`
   - `nixl-ci-dl-gpu` — `.ci/jenkins/lib/test-dl-matrix.yaml` (dlcluster.nvidia.com; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node)
   - `nixl-ci-dl-gpu-ep` — `.ci/jenkins/lib/test-dl-ep-matrix.yaml` (NIXL EP tests on dlcluster.nvidia.com)
   - `nixl-ci-gpu-vr` — `.ci/jenkins/lib/test-vr-matrix.yaml` (same tests as `nixl-ci-dl-gpu`, on the Vera Rubin `vrnvl72` partition / `rubin` account; requests 2 GPUs (`--gres=gpu:2`) rather than a whole node, so it can run on a partly used node of the busy partition; nodes with a differing configuration are excluded via `SLURM_EXCLUDE`)
+  - `nixl-ci-gpu-vr-ep` — `.ci/jenkins/lib/test-vr-ep-matrix.yaml` (the Vera Rubin twin of `nixl-ci-dl-gpu-ep`: NIXL EP native and vLLM tests on the `vrnvl72` partition / `rubin` account, with Triton pointed at the image's CUDA ptxas (`TRITON_PTXAS_BLACKWELL_PATH`) since its bundled one cannot target Rubin (sm_107); requests 4 GPUs (`--gres=gpu:4`) for the four EP ranks and excludes nodes with a differing configuration via `SLURM_EXCLUDE`. Shares the EP base/build_helper images with `nixl-ci-dl-gpu-ep`)
   - `nixl-ci-build-wheel` — `.ci/jenkins/lib/build-wheel-matrix.yaml`
   - `nixl-ci-test-sanitizers` — `.ci/jenkins/lib/test-sanitizer-matrix.yaml` (ASan/UBSan + TSan)
   - `nixl-ci-build-container-pr` — `.ci/jenkins/lib/build-container-pr-matrix.yaml`
-- **UCX version:** The four GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all four with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
+- **UCX version:** The five GPU test jobs (`nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`, `nixl-ci-gpu-vr-ep`) build and test against a single UCX version per run — the `UCX_VER` parameter, which defaults to empty and falls back to the `Dockerfile` `ARG UCX_VERSION` default (`v1.23.x`). UCX `master` is validated nightly, not per PR: the standalone `nixl-ci-nightly` job (see below) fans out to all five with `UCX_VER=master` and emails one consolidated report, so UCX regressions surface outside the PR path instead of blocking PRs.
 - **Automatic on every PR:** Yes — runs whenever Blossom-CI triggers it (PR push or `/build` comment). The dispatcher also aborts any stale in-flight dispatcher run for the same PR, whichever of the two started it (and the leaf builds it started), before starting.
 
 ### `nixl-ci-build-container-pr` (dispatcher-triggered)
@@ -207,31 +208,32 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 - **Automatic on every PR:** No — launcher-triggered + manual only.
 
 ### `nixl-build-wheel` (standalone)
-- **Trigger:** Triggered by [`nixl-verification-launcher`](#nixl-verification-launcher-standalone) (nightly, one run covering both CUDA majors) or by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha). Nightly runs therefore use main's CI config with any source ref, and a manual run uses whatever `ci_refspec` it passes (default `main`). Poller-spawned release runs pass `ci_refspec` = the release commit, so for them the matrix, `cidemo-init.sh`, the `wheel_base` Dockerfile and `contrib/` are all one commit and the wheel contains only what the release branch declares (CI fixes reach a live release branch by whole-commit cherry-pick).
-- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the verification launcher uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; manual runs can pass `staging`, which uses the same `g<nixl-sha8>.ucx<ucx-sha8>/` schema under `staging/` for short-lived test/DR publishes (cleaned up after 2 days — see [`nixl-ci-cleanup-artifacts`](#nixl-ci-cleanup-artifacts-standalone)); the poller and manual release runs pass `release/<ver>`, which publishes to `release/<ver>/<build-number>/`. `cuda` is a matrix axis, so both CUDA lines come out of one run: `13` passes no base-image flags to `build-container.sh` and relies on the Dockerfile defaults (Build Wheel records them in `cell.env` for the manifest), `12` passes the pinned CUDA 12 base image/tag from the matrix env. That is what keeps a build-number folder meaningful — the folder holds one complete cu12+cu13 set and belongs to exactly one build. The Infinia DDN plugin is always bundled (`--build-infinia`, unconditional — not a job parameter) and the source ref's `contrib/build-container.sh` must carry the flag and pin its version; the UCX spcx plugin is compiled by `nixl-ci-compile-ucx-plugin` against the same `wheel_base` images and passed in with `--ucx-spcx-plugin-install`. `wheel_base` is built and pushed per arch and CUDA major by ci-demo before any step runs, so each of the twenty matrix cells pulls it instead of recompiling the dependency stack.
-- **Wheel properties:** Publish attaches `NIXL_SHA`, `NIXL_VERSION`, `JOB_NAME`, `BUILD_NUMBER` and `UCX_SHA` to every uploaded wheel unconditionally — `NIXL_SHA` in particular, since the release path no longer carries the sha and the poller looks commits up by it. `UCX_SHA` (also the `verification/` folder's `ucx<ucx-sha8>` key) is read from the wheel image itself (`git -C /usr/local/src/ucx rev-parse HEAD`), so it names the UCX actually compiled; `build_options.env` carries its own `UCX_SHA`, but that is only `UCX_REF` as `git ls-remote` resolved it when the cell started, which a cached `wheel_base` layer or a Dockerfile that pins UCX itself can contradict. The resolved build options (base image, UCX ref, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and adds `UCX_REF`, `CUDA_VERSION`, and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` (that group is skipped if the built ref's `build-container.sh` predates `--build-options-file`). `UCX_SPCX_PLUGIN_COMMIT` comes from `spcx-provenance.env`, which `nixl-ci-compile-ucx-plugin` writes next to the staged module dirs (ref requested + commit built); Build Wheel also passes that ref to `build-container.sh` and the commit as the `UCX_SPCX_PLUGIN_VERSION` build-arg, so the wheel README's SPCX line is populated again.
+- **Trigger:** Triggered by [`nixl-verification-launcher`](#nixl-verification-launcher-standalone) (nightly) or by [`nixl-build-wheel-release-poller`](#nixl-build-wheel-release-poller-standalone) for release publishing, or manual run. The pipeline and matrix config run from `ci_refspec` (default `main`; pass `refs/pull/<n>/head` to test CI changes end to end before merge); the NIXL source is cloned inside the build from the `NIXL_VERSION` parameter (branch/tag/PR ref/sha). Nightly runs therefore use main's CI config with any source ref, and a manual run uses whatever `ci_refspec` it passes (default `main`). Poller-spawned release runs pass `ci_refspec` = the release commit, so for them the matrix, `cidemo-init.sh`, the `wheel_base` Dockerfile and `contrib/` are all one commit and the wheel contains only what the release branch declares (CI fixes reach a live release branch by whole-commit cherry-pick).
+- **What it does:** Reuses the per-PR wheel build path (`contrib/build-container.sh` + `Dockerfile.manylinux`) and publishes wheels to `sw-nbu-swx-nixl-pypi-local`. With `PUBLISH_DIR` empty (the default, and what the verification launcher uses) wheels land under `verification/g<nixl-sha8>.ucx<ucx-sha8>/` — the long-standing schema the `build-llm-container` verification pipeline consumes; manual runs can pass `staging`, which uses the same `g<nixl-sha8>.ucx<ucx-sha8>/` schema under `staging/` for short-lived test/DR publishes (cleaned up after 2 days — see [`nixl-ci-cleanup-artifacts`](#nixl-ci-cleanup-artifacts-standalone)); the poller and manual release runs pass `release/<ver>`, which publishes to `release/<ver>/<build-number>/`. The base image comes from the Dockerfile defaults, which Build Wheel records in `cell.env` for the manifest. A build-number folder holds one complete wheel set and belongs to exactly one build. The Infinia DDN plugin is always bundled (`--build-infinia`, unconditional — not a job parameter) and the source ref's `contrib/build-container.sh` must carry the flag and pin its version; the UCX spcx plugin is compiled by `nixl-ci-compile-ucx-plugin` against the same `wheel_base` images and passed in with `--ucx-spcx-plugin-install`. `wheel_base` is built and pushed per arch by ci-demo before any step runs, so each of the ten matrix cells pulls it instead of recompiling the dependency stack.
+- **Wheel properties:** Publish attaches `NIXL_SHA`, `NIXL_VERSION`, `JOB_NAME`, `BUILD_NUMBER`, `UCX_SHA` and `CUDA_VERSION` to every uploaded wheel unconditionally — `NIXL_SHA` in particular, since the release path no longer carries the sha and the poller looks commits up by it. `UCX_SHA` (also the `verification/` folder's `ucx<ucx-sha8>` key) is read from the wheel image itself (`git -C /usr/local/src/ucx rev-parse HEAD`), so it names the UCX actually compiled, and `CUDA_VERSION` likewise comes from the image's `nvcc --version` (measured by Extract Build Info); `build_options.env` carries its own `UCX_SHA`, but that is only `UCX_REF` as `git ls-remote` resolved it when the cell started, which a cached `wheel_base` layer or a Dockerfile that pins UCX itself can contradict. The resolved build options (base image, UCX ref, plugin flags, etc.) are written to `build_options.env` via `--build-options-file`; Publish reads it and adds `UCX_REF` and (when built) `UCX_SPCX_PLUGIN_REF`/`INFINIA_LIBS_IMAGE` (that group is skipped if the built ref's `build-container.sh` predates `--build-options-file`). `UCX_SPCX_PLUGIN_COMMIT` comes from `spcx-provenance.env`, which `nixl-ci-compile-ucx-plugin` writes next to the staged module dirs (ref requested + commit built); Build Wheel also passes that ref to `build-container.sh` and the commit as the `UCX_SPCX_PLUGIN_VERSION` build-arg, so the wheel README's SPCX line is populated again.
 - **Scripts:** the cell steps are `.ci/scripts/wheel-nightly/build-wheel.sh` (image build), `extract-build-info.sh` (wheels out of the image into `dist/`, build-info sidecar) and `publish-wheel.sh` (upload, properties, manifest fragment); the matrix file only wires them and passes everything as environment variables (matrix axes, the `env:` block, credentials).
-- **Build manifest:** on SUCCESS `pipeline_stop` runs `.ci/scripts/wheel-nightly/publish-manifest.sh`, which copies the fragments below off the PVC and runs `.ci/scripts/merge_build_manifest.py` in a plain Python image (`CI_PYTHON_IMAGE`, pulled from docker.io; the runner image has no Python) to merge them into `build-manifest.json` (NIXL/UCX/SPCX/Infinia provenance, per-CUDA base image and torch lists, Jenkins job/build/`ci_refspec`, and per wheel: sha256 and size from Artifactory, torch versions built and skipped, resolved toolchain, UCX revision), uploads it next to the wheels **before** the `NIXL_SHA` folder mark and archives it on the build. It cross-checks the 20 fragments against each other and against the Artifactory listing (cell count, one binary wheel per cell plus one meta wheel, build-wide values agreeing, declared vs measured UCX); any problem marks the build **UNSTABLE** with the reason in the console and the failure mail, archives the offending JSON, uploads nothing, and leaves wheels and folder mark untouched. Non-SUCCESS builds skip it. The PVC staging dir is removed on every run, with siblings older than 12 h pruned, and the verification cleanup rule in `.ci/cleanup-spec.json` expires the manifest together with the wheels.
-- **Manifest fragments:** every green cell deposits `cell.env` (cell axes, torch list requested, `wheel_base` image, SPCX ref/commit, published folder and wheel names), `wheel_build_ids.env`, `build_options.env` and the wheel's `build-info.json` sidecar. The sidecar is written by the Extract Build Info step (`extract-build-info.sh`) after the build, running `.ci/scripts/extract_build_info.py` inside the wheel image: `ucx_info -v`, the NIXL commit, the auditwheel environment and the torch versions found in the wheel are measured there; the per-venv toolchain (meson, meson-python, pybind11, patchelf, setuptools, torch resolved) comes from the `uv pip list` dumps `contrib/build-wheel.sh` leaves in `build-info/`, the only thing that has to happen during the build. Refs that predate the dump get a manifest with `toolchain` nulls and nothing else missing under `/mnt/pvc/<job>-manifest/<build>/<cell>/`. `publish-manifest.sh` merges them into the build manifest and removes the directory.
+- **Build manifest:** on SUCCESS `pipeline_stop` runs `.ci/scripts/wheel-nightly/publish-manifest.sh`, which copies the fragments below off the PVC and runs `.ci/scripts/merge_build_manifest.py` in a plain Python image (`CI_PYTHON_IMAGE`, pulled from docker.io; the runner image has no Python) to merge them into `build-manifest.json` (NIXL/UCX/SPCX/Infinia provenance, base image, CUDA version and torch list, Jenkins job/build/`ci_refspec`, and per wheel: sha256 and size from Artifactory, torch versions built and skipped, resolved toolchain, UCX revision), uploads it next to the wheels **before** the `NIXL_SHA` folder mark and archives it on the build. It cross-checks the 10 fragments against each other and against the Artifactory listing (cell count, one binary wheel per cell plus one meta wheel, build-wide values agreeing, declared vs measured UCX); any problem marks the build **UNSTABLE** with the reason in the console and the failure mail, archives the offending JSON, uploads nothing, and leaves wheels and folder mark untouched. Non-SUCCESS builds skip it. The PVC staging dir is removed on every run, with siblings older than 12 h pruned, and the verification cleanup rule in `.ci/cleanup-spec.json` expires the manifest together with the wheels.
+- **Manifest fragments:** every green cell deposits `cell.env` (cell axes, torch list requested, `wheel_base` image, CUDA version read from the image, SPCX ref/commit, published folder and wheel names), `wheel_build_ids.env`, `build_options.env` and the wheel's `build-info.json` sidecar. The sidecar is written by the Extract Build Info step (`extract-build-info.sh`) after the build, running `.ci/scripts/extract_build_info.py` inside the wheel image: `ucx_info -v`, the NIXL commit, the auditwheel environment and the torch versions found in the wheel are measured there; the per-venv toolchain (meson, meson-python, pybind11, patchelf, setuptools, torch resolved) comes from the `uv pip list` dumps `contrib/build-wheel.sh` leaves in `build-info/`, the only thing that has to happen during the build. Refs that predate the dump get a manifest with `toolchain` nulls and nothing else missing under `/mnt/pvc/<job>-manifest/<build>/<cell>/`. `publish-manifest.sh` merges them into the build manifest and removes the directory.
+- **Wheel inspection:** `.ci/scripts/wheel_inspect` compares a published wheel set against a reference release (plugin bundling, SPCX and UCX commits, file-level diff, plugin sets, sizes) and reads `build-manifest.json` for the provenance part; see [Wheel inspection tool](wheel-inspect.md). On a release run, once the folder is marked, `pipeline_stop` runs it through `.ci/scripts/wheel-nightly/inspect-wheels.sh` in `CI_PYTHON_IMAGE` against `INSPECT_REFERENCE` (matrix `env:`, default `auto`: the highest PyPI release below the built version), which uploads `wheel-inspection.{json,md,html}` next to the wheels; the report is archived on the build (kept even when the step fails after writing it) and the HTML is mailed to `MAIL_TO`. A FAIL check, a failed upload or no report at all marks the build **UNSTABLE** with the reason in the failure mail, and leaves wheels and folder mark untouched. Verification and staging runs are not inspected; to compare against another version, run the tool by hand. Reports published by hand into a `verification/` folder (`wheel-inspection.*`) expire with the wheels through the same cleanup rule.
 - **Release folder lifecycle:** On a release run `pipeline_stop` owns the folder. Green build: it stamps `NIXL_SHA` as a *folder-level* property and points `currentBuild.description` at the folder in the Artifactory UI. Anything else: it DELETEs the folder outright (404 tolerated, and cleanup never changes the build result) and the failure mail says so. A partial wheel set is not salvageable — it has to be rebuilt — so publishing it would only confuse consumers and make the poller skip the commit. This is safe only because the folder is keyed by build number and therefore owned by one build; `verification/` folders are shared between builds of the same sha pair and are never deleted.
 - **Automatic on every PR:** No — standalone launcher/poller-triggered + manual only.
 
 ### `nixl-verification-launcher` (standalone)
 - **Trigger:** Two cron entries (`parameterized-timer`) or manual run: `H 0 * * * %LAUNCH_TARGET=wheels` and `H 22 * * * %LAUNCH_TARGET=containers`. The pipeline and matrix config (`.ci/jenkins/lib/verification-launcher-matrix.yaml`) run from `ci_refspec` (default `main`).
-- **What it does:** Single scheduler for the unattended verification builds — both build jobs it fires carry no cron of their own. `LAUNCH_TARGET=wheels` fires [`nixl-build-wheel`](#nixl-build-wheel-standalone) once with `NIXL_VERSION=main`, covering every CUDA major as matrix legs. `ci_refspec` is forwarded so a pre-merge test run drives the whole chain from one PR ref; `PUBLISH_DIR` is not passed, so a test run publishes to `verification/` like a scheduled one — pass `PUBLISH_DIR=staging` on a direct `nixl-build-wheel` run instead when that matters. `LAUNCH_TARGET=containers` fires [`nixl-ci-build-container`](#nixl-ci-build-container-standalone) four times — `BUILD_TARGET=nixlbench` and `BUILD_TARGET=nixl`, each on the job's default base image and on the PyTorch release image (`nvcr.io/nvidia/pytorch:26.08-py3`), all with `UPDATE_LATEST=true` (a test run moves the shared `latest` tags too); `ci_refspec` is not forwarded (`build-container` has no such param — it checks out `NIXL_VERSION`). All triggers are fire-and-forget (`wait:false, propagate:false`) with a per-trigger guard, so one bad trigger marks the launcher `UNSTABLE` without dropping the rest; each triggered build reports its own result.
+- **What it does:** Single scheduler for the unattended verification builds — both build jobs it fires carry no cron of their own. `LAUNCH_TARGET=wheels` fires [`nixl-build-wheel`](#nixl-build-wheel-standalone) once with `NIXL_VERSION=main`. `ci_refspec` is forwarded so a pre-merge test run drives the whole chain from one PR ref; `PUBLISH_DIR` is not passed, so a test run publishes to `verification/` like a scheduled one — pass `PUBLISH_DIR=staging` on a direct `nixl-build-wheel` run instead when that matters. `LAUNCH_TARGET=containers` fires [`nixl-ci-build-container`](#nixl-ci-build-container-standalone) four times — `BUILD_TARGET=nixlbench` and `BUILD_TARGET=nixl`, each on the job's default base image and on the PyTorch release image (`nvcr.io/nvidia/pytorch:26.08-py3`), all with `UPDATE_LATEST=true` (a test run moves the shared `latest` tags too); `ci_refspec` is not forwarded (`build-container` has no such param — it checks out `NIXL_VERSION`). All triggers are fire-and-forget (`wait:false, propagate:false`) with a per-trigger guard, so one bad trigger marks the launcher `UNSTABLE` without dropping the rest; each triggered build reports its own result.
 - **Automatic on every PR:** No — cron + manual only.
 
 ### `nixl-build-wheel-release-poller` (standalone)
 
 - **Trigger:** 4-hourly cron (`H H/4 * * *`) or manual run. The pipeline and matrix config (`.ci/jenkins/lib/build-wheel-release-poller-matrix.yaml`) run from `ci_refspec` (default `main`). The builds it triggers get `ci_refspec` = the release commit they build, not the poller's own, so a release run is pinned end to end; a pre-merge test run of the poller exercises the poller only, and wheel-job changes are tested by running `nixl-build-wheel` manually.
-- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.6.0 whose `contrib/build-container.sh` accepts `--build-options-file` and `--ucx-spcx-plugin-install` (`nixl-build-wheel` always passes both, and `build-container.sh` silently drops everything after an option it does not know) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-build-wheel`](#nixl-build-wheel-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. There is no CUDA dimension here — one wheel build covers every CUDA major — so the job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
+- **What it does:** Builds release wheels for every `release/*` branch with version >= 1.6.0 whose `contrib/build-container.sh` accepts `--build-options-file` and `--ucx-spcx-plugin-install` (`nixl-build-wheel` always passes both, and `build-container.sh` silently drops everything after an option it does not know) - new release branches are picked up automatically, with no CI config anywhere. `.ci/scripts/scan-missing-release-wheels.sh` takes the newest 10 first-parent commits past the merge-base with `main` per release and triggers [`nixl-build-wheel`](#nixl-build-wheel-standalone) once per missing commit, passing the commit sha and `PUBLISH_DIR=release/<ver>`. The job has no matrix axes. UCX and the bundled plugins are not passed either: each release builds against the `UCX_REF` and plugin versions pinned in its own `contrib/build-container.sh`.
 - **Published check:** One AQL query per release branch, not one HTTP GET per commit: it collects the `NIXL_SHA` folder property of every completed build folder under `release/<ver>/` and tests the candidate commits against that set locally. Only HTTP 200 is conclusive (an empty result set is a valid 200); anything else skips that release until the next cycle, so an Artifactory hiccup cannot fan out a build for every commit at once. Because the wheel job stamps that property only after a fully green build — and deletes its folder otherwise — a partial upload no longer reads as published, which the old "does `release/<ver>/<sha8>/` list a `nixl_cuNN` wheel" check could not tell apart. A failed build is retried on later cycles while its commit stays within the newest-10 window; to force a rebuild, delete the commit's folder in Artifactory (or just its `NIXL_SHA` property).
 - **In-flight reservations:** Because the marker only appears when a build *ends*, a build still running at the next poll would be triggered a second time — Jenkins does not deduplicate parameterized builds, and the old check was masked from this only because partial uploads used to look complete. Before triggering, the poller writes `release/<ver>/.inflight/<sha8>` and skips any commit whose reservation is newer than `RESERVE_TTL_MIN`. Ageing is done in the scan against the storage API's `lastModified` (AQL rejected the relative date operators this instance offers), so stale reservations need no cleanup and nothing has to release one: `RESERVE_TTL_MIN` is one poll interval, so a build that failed or vanished simply lets its reservation lapse and the commit is retried a cycle later. Keep `RESERVE_TTL_MIN` in step with the cron if either changes.
 - **Automatic on every PR:** No — standalone cron + manual only, never part of the PR CI path.
 
 ### `nixl-ci-build-llm-container` (standalone)
 - **Trigger:** Manual only (no cron, no webhook).
-- **What it does:** Builds the 4 LLM inference container variants (`vllm-nixl`, `vllm-cu12-nixl`, `sglang-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
+- **What it does:** Builds the 2 LLM inference container variants (`vllm-cu13-nixl`, `sglang-cu13-nixl`) for x86_64/aarch64 from a published NIXL wheel set, publishes multi-arch manifests, and optionally (`RUN_TEST`) fires `nixl-ci-test-llm-container` per built variant.
 - **Automatic on every PR:** No — standalone/manual only, used for release verification.
 
 ### `nixl-ci-cleanup-artifacts` (standalone)
@@ -248,7 +250,7 @@ anonymous clones with an HTTP 401, which git reports as `could not read Username
 ### `nixl-ci-nightly` (standalone)
 
 - **Trigger:** Nightly cron (`H 0 * * *`), or manual run (`UCX_REF`, `MAIL_TO` parameters).
-- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr` with `UCX_VER=${UCX_REF}` (default `master`), waits for all four, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
+- **What it does:** Fans out to `nixl-ci-gpu`, `nixl-ci-dl-gpu`, `nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr`, `nixl-ci-gpu-vr-ep` with `UCX_VER=${UCX_REF}` (default `master`), waits for all five, and emails one consolidated report to `MAIL_TO` (default `nixl-ci-alerts@exchange.nvidia.com`) **only when a leg fails** — a green night is silent. This is the single place nightly UCX-`master` results are collected and sent from; per-PR runs of the GPU jobs cover only the release UCX version.
 - **Matrix:** `.ci/jenkins/lib/nightly-matrix.yaml` — a lightweight ci-demo orchestrator (one groovy step: fan out, wait, mail), no GPU of its own.
 - **Automatic on every PR:** No — standalone/scheduled + manual only.
 
@@ -337,6 +339,7 @@ job is core, so `docs` maps to nothing:
 | `dl-gpu` | `nixl-ci-dl-gpu` | `[]` |
 | `dl-gpu-ep` | `nixl-ci-dl-gpu-ep` | `[]` |
 | `gpu-vr` | `nixl-ci-gpu-vr` | `[]` |
+| `gpu-vr-ep` | `nixl-ci-gpu-vr-ep` | `[]` |
 | `wheel` | `nixl-ci-build-wheel` | `[]` |
 | `sanitizers` | `nixl-ci-test-sanitizers` | `[]` |
 | `build-container` | `nixl-ci-build-container-pr` | `[]` |
@@ -344,7 +347,7 @@ job is core, so `docs` maps to nothing:
 This rule is firm: every job runs unless the YAML says the PR only touches
 specific components. There is no way to express "run this job only when its
 component is touched, even on a core change". When `nixl_ep` is registered,
-the jobs that build or test EP code today (`nixl-ci-dl-gpu-ep`,
+the jobs that build or test EP code today (`nixl-ci-dl-gpu-ep`, `nixl-ci-gpu-vr-ep`,
 `nixl-ci-build-wheel`, `nixl-ci-build-container-pr`) get `['nixl_ep']`.
 
 ### What a PR sees
@@ -362,13 +365,13 @@ run.
 
 | PR touches | Component set | Runs | Statuses |
 |---|---|---|---|
-| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 8 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/8 jobs (docs)` |
-| root `README.md` only | `all` (`/README.md`) | all 8 | as before |
-| `docs/...` + `src/core/...` | `docs`, `all` | all 8 | as before |
-| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 8 | as before |
-| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 8 | as before |
-| any PR with label `ci:full` | `all` | all 8 | as before |
-| manual run, no PR | `all` | all 8 | as before |
+| `docs/...` or `CONTRIBUTING.md` only | `docs` | nothing | 9 green "Skipped by path filter: PR touches docs", `blossom-ci` green `NIXL CI ended: ran 0/9 jobs (docs)` |
+| root `README.md` only | `all` (`/README.md`) | all 9 | as before |
+| `docs/...` + `src/core/...` | `docs`, `all` | all 9 | as before |
+| `.ci/path-filters.yaml` only | `all` (`.ci/**`) | all 9 | as before |
+| adds `tools/new.sh` without registering it | `pre-commit` fails on the PR; if merged anyway, `all` (unmatched) | all 9 | as before |
+| any PR with label `ci:full` | `all` | all 9 | as before |
+| manual run, no PR | `all` | all 9 | as before |
 
 Whenever the decision cannot be made, the dispatcher runs everything and says
 why in the console:
@@ -397,7 +400,7 @@ Path filter: run = [branch, ...]; skip = [branch, ...]
 
 or, when a reason applies, `Path filter: <reason>; running all jobs` followed by
 the `run = ...; skip = []` line. The reason also reaches the PR: the final
-`blossom-ci` status reads `NIXL CI ended: ran <k>/8 jobs (<components>[; <reason>])`
+`blossom-ci` status reads `NIXL CI ended: ran <k>/9 jobs (<components>[; <reason>])`
 (truncated to 140 characters) and the build description carries
 `| components: <components>[; <reason>]`, so a silent fallback is visible
 without opening the console.
@@ -412,6 +415,7 @@ Jobs submitted via the `slurmCI` module are named `${JOB_BASE_NAME}-${BUILD_NUMB
 | `nixl-ci-dl-gpu` | `nixl-ci-dl-gpu-<build>` |
 | `nixl-ci-dl-gpu-ep` | `nixl-ci-dl-gpu-ep-<build>` |
 | `nixl-ci-gpu-vr` | `nixl-ci-gpu-vr-<build>` |
+| `nixl-ci-gpu-vr-ep` | `nixl-ci-gpu-vr-ep-<build>` |
 | `nixl-ci-build-wheel` | `nixl-ci-build-wheel-<fw>-<build>` (`fw`: `vllm` or `sglang`) |
 | `nixl-ci-test-llm-container` | `nixl-ci-test-llm-container-<build>` |
 
@@ -650,4 +654,5 @@ fault-tolerance tests.
 ## Related docs
 
 - [Build Wheel Matrix CI Job Documentation](build-wheel-matrix-ci.md) — deep dive into `nixl-ci-build-wheel`.
+- [Wheel inspection tool](wheel-inspect.md) — comparing a wheel set against a reference release.
 - [Setting up NVIDIA GPU with RDMA support on Ubuntu](setup_nvidia_gpu_with_rdma_support_on_ubuntu.md)
