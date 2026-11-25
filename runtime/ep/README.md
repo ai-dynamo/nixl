@@ -17,9 +17,10 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
   wheel installations, supporting the target GPU and the selected NIXL/UCX builds.
 - NIXL and UCX builds with the GPU device API (`nixlAtomicAdd` and UCX
   device channels), including CUDA IPC support.
-- For buffers declaring `max_num_scaleout_ranks > 1`, GDA-enabled UCX and RDMA
-  development headers (including `infiniband/mlx5dv.h` from rdma-core or OFED)
-  on both build and JIT hosts.
+- For buffers declaring `max_num_scaleout_ranks > 1`, use a GDA-enabled UCX
+  build. On each JIT host, `nvcc` must find its GDA device headers (packaged
+  with the wheel) and the RDMA development headers, including
+  `infiniband/mlx5dv.h` from rdma-core or OFED.
 - NVLink within scale-up domains and RDMA between domains.
 - `nvidia-ml-py>=13.580.65` for NVLink domain discovery during peer connection.
 
@@ -59,8 +60,8 @@ GPU RDMA channels per peer default to 64. For tuning, set
 Buffers with `max_num_scaleout_ranks == 1` omit the local RDMA source view and
 default to excluding UCX's `rc_gda` transport, avoiding GPU RDMA queue allocations.
 NVLink mappings and CPU connection setup, including CPU-managed RDMA, remain available.
-Explicit `NIXL_UCX_TLS` or `UCX_TLS` settings override this exclusion and must
-exclude `rc_gda` to retain the queue-memory saving.
+Explicit `NIXL_UCX_TLS` or `UCX_TLS` settings in `ucx.conf` or the environment
+take precedence. To retain the queue-memory saving, select transports that exclude `rc_gda`.
 
 ### Dispatch and combine
 

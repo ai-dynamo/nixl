@@ -20,6 +20,7 @@
 
 #include "../jit/api.hpp"
 #include "../kernels/elastic/api.hpp"
+#include "../utils/cuda_cleanup.hpp"
 #include "nixl_log.h"
 #include "utils.hpp"
 
@@ -140,8 +141,7 @@ void buffer::destroy() noexcept {
     nixl_context->finalize();
 
     // Deallocate host workspaces
-    if (const auto status = cudaFreeHost(host_workspace); status != cudaSuccess)
-        NIXL_WARN << "NIXL EP cleanup (free host workspace) failed: " << cudaGetErrorString(status);
+    warn_cuda_cleanup("free host workspace", cudaFreeHost(host_workspace));
     host_workspace = nullptr;
     profile_storage = torch::Tensor();
 

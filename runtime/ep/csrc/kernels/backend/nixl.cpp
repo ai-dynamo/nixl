@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdlib>
+#include <cstring>
 #include <sstream>
 #include <thread>
 #include <unordered_set>
@@ -14,6 +15,7 @@
 #include <cuda_runtime.h>  // before the nixl_ep_v2 headers: under g++ their `__device__` annotations are macros from here
 #include <nixl.h>
 #include <absl/log/absl_vlog_is_on.h>
+#include <ucs/config/parser.h>
 
 #include <nixl_ep_v2/common/exception.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
@@ -21,6 +23,7 @@
 #include "nixl.hpp"
 #include "nixl_device.cuh"
 #include "nixl_log.h"
+#include "../../utils/cuda_cleanup.hpp"
 #include "../../utils/lazy_driver.hpp"
 #include "../../utils/system.hpp"
 
@@ -58,6 +61,22 @@ struct NIXLAgentState {
 static const std::string kHelloPrefix = "nixl_ep_v2_hello:";
 static constexpr int kNumMaxUCXDeviceChannels = 64;  // UCX's worker address carries at most 64 device channels (`ucx_num_device_channels`)
 
+static void set_direct_transport_default(std::string& engine_config) {
+    // UCX resolves both ucx.conf and the environment before the plugin applies engine_config.
+    constexpr char default_tls[] = "^rc_gda";
+    ucs_config_field_t fields[] = {{"TLS", default_tls, "", 0, UCS_CONFIG_TYPE_STRING}, {}};
+    ucs_config_global_list_entry_t entry{};
+    entry.table = fields;
+    char* tls = nullptr;
+    const auto status = ucs_config_parser_fill_opts(&tls, &entry, "NIXL_UCX_", 0);
+    if (status != UCS_OK or tls == nullptr)
+        throw EPException("UCX", __FILE__, __LINE__, ucs_status_string(status == UCS_OK ? UCS_ERR_NO_MEMORY : status));
+    const bool use_default = std::strcmp(tls, default_tls) == 0;
+    ucs_config_parser_release_opts(&tls, fields);
+    if (use_default)
+        engine_config.append(",TLS=").append(default_tls);
+}
+
 // Kernel edges stay within a domain or join the same internal position across domains.
 static bool needs_endpoint(const NIXLEPContext& ctx, const int& wr) {
     const int n = ctx.max_num_scaleup_ranks;
@@ -90,14 +109,14 @@ void NIXLEPContext::Region::reset() noexcept {
         if (ptr != 0)
             cleanup("free region address", [&] { CUDA_DRIVER_CHECK(lazy_cuMemAddressFree(ptr, num_bytes)); });
     } else if (ptr != 0) {
-        cleanup("free region", [&] { CUDA_RUNTIME_CHECK(cudaFree(reinterpret_cast<void*>(ptr))); });
+        warn_cuda_cleanup("free region", cudaFree(reinterpret_cast<void*>(ptr)));
     }
     ptr = 0, num_bytes = 0, handle = 0, is_vmm = false, mapped = false;
 }
 
 void NIXLEPContext::CudaDeleter::operator()(void* ptr) const noexcept {
     if (ptr != nullptr)
-        cleanup("free device table", [&] { CUDA_RUNTIME_CHECK(cudaFree(ptr)); });
+        warn_cuda_cleanup("free device table", cudaFree(ptr));
 }
 
 template <typename dtype_t, typename deleter_t>
@@ -142,9 +161,6 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     if (num_channels < 1 or num_channels > kNumMaxUCXDeviceChannels)
         throw EPException("NIXL", __FILE__, __LINE__, "UCX connects at most " + std::to_string(kNumMaxUCXDeviceChannels) + " device channels per peer, got " + std::to_string(num_channels) + ": set NIXL_EP_NIXL_NUM_CHANNELS between 1 and " + std::to_string(kNumMaxUCXDeviceChannels));
     const bool direct_only = num_world_ranks == max_num_scaleup_ranks;
-    if (not direct_only and not has_gpu_rdma_device_code())
-        throw EPExceptionWithLineInfo("NIXL", "Multi-domain NIXL EP requires UCX GPU RDMA device support: "
-            "rebuild NIXL EP with GDA-enabled UCX and RDMA development headers (including infiniband/mlx5dv.h)");
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device_id));
     CUdevice device;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGet(&device, device_id));
@@ -208,7 +224,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
         "RC_GDA_NUM_PRE_ALLOC_EPS=" + std::to_string(std::max(1, num_world_ranks / max_num_scaleup_ranks - 1)) +
         ",UD_LINGER_TIMEOUT=1s";
     if (direct_only)
-        init_params["engine_config"] += ",TLS=^rc_gda";  // Keep CPU transports for wire-up; omit unused GPU RDMA queues.
+        set_direct_transport_default(init_params["engine_config"]);
     NIXL_CHECK(state->agent->createBackend("UCX", init_params, state->backend));
     state->extra_params.backends.push_back(state->backend);
 
@@ -251,7 +267,7 @@ NIXLEPContext::~NIXLEPContext() noexcept {
 void NIXLEPContext::finalize() noexcept {
     if (state == nullptr)
         return;
-    cleanup("synchronize device", [&] { CUDA_RUNTIME_CHECK(cudaDeviceSynchronize()); });
+    warn_cuda_cleanup("synchronize device", cudaDeviceSynchronize());
     if (state->agent != nullptr) {
         for (auto* view: {&state->staged_remote, &state->active_remote}) {
             const auto handle = std::exchange(*view, nullptr);
