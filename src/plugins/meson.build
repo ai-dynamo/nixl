@@ -18,7 +18,7 @@ if 'UCX' in static_plugins and not enabled_plugins.get('UCX')
 endif
 
 if enabled_plugins.get('UCX')
-    if not ucx_dep.found() and is_explicit_enable
+    if not ucx_dep.found() and (is_explicit_enable or 'UCX' in static_plugins)
         error('UCX plugin requested but UCX dependency not found')
     elif ucx_dep.found()
         subdir('ucx')
