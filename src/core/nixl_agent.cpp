@@ -2102,20 +2102,17 @@ nixlAgentData::loadConnInfo(const std::string &remote_name,
 
 nixl_status_t
 nixlAgentData::loadRemoteSections(const std::string &remote_name, nixlSerDes &sd) {
-    // Reloads merge into the existing section so that partial metadata updates
-    // accumulate. The handles weakly bound to the registration stay valid across
-    // refreshes; handles retire only when the registration is explicitly
-    // invalidated and this entry is erased.
-    const auto [it, inserted] =
-        remoteSections_.try_emplace(remote_name, std::make_shared<nixlRemoteSection>(remote_name));
-    const nixl_status_t ret = it->second->loadRemoteData(&sd, backendEngines_);
-    // TODO: can be more graceful, if just the new MD blob was improper
-    if (ret != NIXL_SUCCESS) {
-        invalidateRemoteMDLocked(remote_name);
-        return ret;
+    auto it = remoteSections_.find(remote_name);
+    const bool first_load = it == remoteSections_.end();
+    if (first_load) {
+        it = remoteSections_.emplace(remote_name, std::make_shared<nixlRemoteSection>(remote_name))
+                 .first;
     }
-
-    return NIXL_SUCCESS;
+    const auto ret = it->second->loadRemoteData(&sd, backendEngines_);
+    if (ret != NIXL_SUCCESS && first_load) {
+        invalidateRemoteMDLocked(remote_name);
+    }
+    return ret;
 }
 
 nixl_status_t

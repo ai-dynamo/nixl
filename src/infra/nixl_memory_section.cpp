@@ -507,45 +507,47 @@ nixlLocalSection::~nixlLocalSection() {
 nixlRemoteSection::nixlRemoteSection(std::string agent_name) noexcept
     : agentName(std::move(agent_name)) {}
 
-nixl_status_t nixlRemoteSection::addDescList (
-                                 const nixl_reg_dlist_t& mem_elms,
-                                 nixlBackendEngine* backend) {
+nixl_status_t
+nixlRemoteSection::addDescList(const nixl_reg_dlist_t &mem_elms,
+                               nixlBackendEngine *backend,
+                               const nixlSecDescList *existing) {
     if (!backend->supportsRemote()) {
         return NIXL_ERR_UNKNOWN;
     }
 
-    // Fewer checks than LocalSection, as it's private and called by loadRemoteData
-    // In RemoteSection, if we support updates, value for a key gets overwritten
-    // Without it, it's corrupt data, we keep the last option without raising an error
     const nixl_mem_t nixl_mem = mem_elms.getType();
 
-    nixlSecDescList &target = emplace(nixl_mem, backend);
-
-    // Add entries to the target list.
-    nixl_status_t ret;
-    for (int i = 0; i < mem_elms.descCount(); ++i) {
-        int idx = target.getIndex(mem_elms[i]);
-        if (idx < 0) {
-            if (target.overlapsAny(mem_elms[i])) {
-                NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
-                                << agentName << "'";
-                return NIXL_ERR_NOT_ALLOWED;
-            }
-            nixlSectionDesc out(mem_elms[i].addr, mem_elms[i].len, mem_elms[i].devId, nullptr);
-            out.metaBlob = mem_elms[i].metaInfo;
-            ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
-            // In case of errors, no need to remove the previous entries
-            // Agent will delete the full object.
-            if (ret < 0) {
-                return ret;
-            }
-            target.addDesc(std::move(out));
-        } else {
-            const nixl_blob_t &prev_meta_info = target[idx].metaBlob;
-            // TODO: Support metadata updates
-            if (prev_meta_info != mem_elms[i].metaInfo)
-                return NIXL_ERR_NOT_ALLOWED;
+    // An idempotent refresh needs no staging allocation.
+    const auto found = sectionMap.find({nixl_mem, backend});
+    auto *target = found == sectionMap.end() ? nullptr : &found->second;
+    for (const auto &desc : mem_elms) {
+        const nixlSecDescList *previous = existing;
+        int idx = existing ? existing->getIndex(desc) : -1;
+        if (idx < 0 && target) {
+            previous = target;
+            idx = target->getIndex(desc);
         }
+        if (idx >= 0) {
+            if ((*previous)[idx].metaBlob != desc.metaInfo) {
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            continue;
+        }
+        if ((existing && existing->overlapsAny(desc)) || (target && target->overlapsAny(desc))) {
+            NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
+                            << agentName << "'";
+            return NIXL_ERR_NOT_ALLOWED;
+        }
+        if (!target) {
+            target = &emplace(nixl_mem, backend);
+        }
+        nixlSectionDesc out(desc.addr, desc.len, desc.devId, nullptr);
+        out.metaBlob = desc.metaInfo;
+        const auto ret = backend->loadRemoteMD(desc, nixl_mem, agentName, out.metadataP);
+        if (ret < 0) {
+            return ret;
+        }
+        target->addDesc(std::move(out));
     }
     return NIXL_SUCCESS;
 }
@@ -560,9 +562,10 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
         return ret;
     }
 
+    // The temporary section owns only the keys unpacked by this call. Its
+    // destructor unloads them if a later descriptor or section is rejected.
+    nixlRemoteSection added(agentName);
     for (size_t i = 0; i < seg_count; ++i) {
-        // In case of errors, no need to remove the previous entries
-        // Agent will delete the full object.
         const nixl_backend_t nixl_backend = deserializer->getStr("bknd");
         if (nixl_backend.empty()) {
             return NIXL_ERR_INVALID_PARAM;
@@ -575,10 +578,21 @@ nixlRemoteSection::loadRemoteData(nixlSerDes *deserializer, backend_map_t &backe
 
         const auto it = backendToEngineMap.find(nixl_backend);
         if (it != backendToEngineMap.end()) {
-            ret = addDescList(s_desc, it->second.get());
+            auto *backend = it->second.get();
+            const auto found = sectionMap.find({s_desc.getType(), backend});
+            const auto *registered = found == sectionMap.end() ? nullptr : &found->second;
+            ret = added.addDescList(s_desc, backend, registered);
             if (ret != NIXL_SUCCESS) {
                 return ret;
             }
+        }
+    }
+    if (sectionMap.empty()) {
+        sectionMap.swap(added.sectionMap);
+        memToBackend.swap(added.memToBackend);
+    } else {
+        for (auto &[key, descs] : added.sectionMap) {
+            emplace(key.first, key.second).addDescs(std::move(descs));
         }
     }
     return NIXL_SUCCESS;

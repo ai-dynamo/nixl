@@ -534,6 +534,9 @@ class nixlAgent {
         /**
          * @brief  Load other agent's metadata and unpack it internally. Now the local
          *         agent can initiate transfers towards the remote agent.
+         *         If an existing peer's memory section is rejected, its prior registrations
+         *         remain loaded. Connection information is processed separately. Explicitly
+         *         invalidate the peer before loading an overlapping replacement.
          *
          * @param  remote_metadata  Serialized metadata blob to be loaded
          * @param  agent_name [out] Agent name extracted from the loaded metadata blob

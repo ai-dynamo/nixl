@@ -225,9 +225,11 @@ class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
 
-        nixl_status_t addDescList (
-                           const nixl_reg_dlist_t &mem_elms,
-                           nixlBackendEngine *backend);
+        nixl_status_t
+        addDescList(const nixl_reg_dlist_t &mem_elms,
+                    nixlBackendEngine *backend,
+                    const nixlSecDescList *existing);
+
     public:
         explicit nixlRemoteSection(std::string agent_name) noexcept;
 
