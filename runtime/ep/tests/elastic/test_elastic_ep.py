@@ -38,7 +38,7 @@ import torch
 import torch.distributed as dist
 from buffer_setup import rank_coordinates, rank_mapping, topology_experts
 
-import nixl.runtime.ep as nixl_ep_v2
+import nixl.runtime.ep as runtime_ep
 from nixl.runtime.ep.utils.math import calc_diff, per_token_cast_to_fp8
 from nixl.runtime.ep.utils.nixl_bootstrap import NixlBootstrap
 from nixl.runtime.ep.utils.profiling import summarize_profile
@@ -76,7 +76,7 @@ def make_buffer(
     num_ranks: int,
     store: dist.Store,
     **placement,
-) -> nixl_ep_v2.ElasticBuffer:
+) -> runtime_ep.ElasticBuffer:
     key_prefix = placement.pop("key_prefix", "NIXL_EP")
     positions = placement.pop("num_group_scaleup_ranks", num_ranks)
     max_so = placement.pop("max_num_scaleout_ranks", 0) or num_ranks // positions
@@ -89,7 +89,7 @@ def make_buffer(
     assert len(world) == num_ranks and len(set(world)) == num_ranks
     max_ranks = max_so * max_su
     assert args.num_experts > 0 and args.num_experts % max_ranks == 0
-    buffer = nixl_ep_v2.ElasticBuffer(
+    buffer = runtime_ep.ElasticBuffer(
         world_rank=world[rank_idx],
         max_num_scaleout_ranks=max_so,
         max_num_scaleup_ranks=max_su,
@@ -198,7 +198,7 @@ def sample_routing(
         padding = num_topk - idx.shape[1]
         idx = torch.nn.functional.pad(idx, (0, padding), value=-1)
         weights = torch.nn.functional.pad(weights, (0, padding))
-    return idx.to(nixl_ep_v2.topk_idx_t), weights.float().contiguous()
+    return idx.to(runtime_ep.topk_idx_t), weights.float().contiguous()
 
 
 # A dispatch payload: BF16 rows, or `(data, scales)` for FP8 and NVFP4
@@ -244,7 +244,7 @@ def payload_equal(a: Payload, b: Payload) -> bool:
     )
 
 
-def combine_recipe(buffer: nixl_ep_v2.ElasticBuffer):
+def combine_recipe(buffer: runtime_ep.ElasticBuffer):
     # Without `allow_multiple_reduction` the combine input is already reduced within the rank.
     return (
         True,
@@ -261,7 +261,7 @@ class Case:
     `payload(global idx)`, so every rank can rebuild what it should have received from whom.
     """
 
-    def __init__(self, buffer: nixl_ep_v2.ElasticBuffer, args: argparse.Namespace):
+    def __init__(self, buffer: runtime_ep.ElasticBuffer, args: argparse.Namespace):
         self.buffer = buffer
         self.args = args
         self.dtype = getattr(args, "dtype", "bf16")
@@ -710,7 +710,7 @@ def save_results(
 
 
 def print_profile(
-    buffer: nixl_ep_v2.ElasticBuffer, phase_idx: int, execution: str
+    buffer: runtime_ep.ElasticBuffer, phase_idx: int, execution: str
 ) -> None:
     for name, bounds in summarize_profile(buffer.read_profile()).items():
         print(
@@ -844,7 +844,7 @@ class GraphCase:
         )
         self.stats = self.stats_storage[:-1]
         self.stats.zero_()
-        self.handle: Optional[nixl_ep_v2.EPHandle] = None
+        self.handle: Optional[runtime_ep.EPHandle] = None
         self.graph: Optional[torch.cuda.CUDAGraph] = None
         self.outputs: Optional[torch.Tensor] = None
         self.recv_x: Optional[Payload] = None
@@ -1041,7 +1041,7 @@ class TransitionTimings(TypedDict, total=False):
 
 
 def switch_world(
-    buffer: nixl_ep_v2.ElasticBuffer,
+    buffer: runtime_ep.ElasticBuffer,
     phase: List[int],
     barrier_fn: Callable[[], None],
     store_timeout_secs: float,
