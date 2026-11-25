@@ -28,12 +28,13 @@
 
 constexpr size_t MAX_TELEMETRY_QUEUE_SIZE = 1000;
 
+// Capabilities a backend passes, combined with |, to the nixlBackendEngine constructor
 enum class nixl_backend_capability_t : uint64_t {
     NONE = 0,
-    REMOTE = 1ULL << 0,
-    LOCAL = 1ULL << 1,
-    NOTIF = 1ULL << 2,
-    TRACE_CONTEXT = 1ULL << 3,
+    REMOTE = 1ULL << 0, // Transfers across nodes, requires NOTIF
+    LOCAL = 1ULL << 1, // Transfers within a node
+    NOTIF = 1ULL << 2, // Transfer notifications, getNotifs() and genNotif()
+    TRACE_CONTEXT = 1ULL << 3, // Carries the trace context to the peer, in-tree plugins only
 };
 
 [[nodiscard]] constexpr nixl_backend_capability_t

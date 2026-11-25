@@ -152,7 +152,7 @@ public:
     }
 
 private:
-    nixlBackendEngine *engine_;
+    nixlBackendEngine *const engine_;
 };
 
 #endif

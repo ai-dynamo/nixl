@@ -31,8 +31,6 @@ Note that plugin implementation is in C++ to achieve SOL, and the header files f
 
 NIXL implements a modular plugin architecture where each backend is encapsulated within a library that exposes its features through the SB API, such as [UCX](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/ucx), [GPUDirect Storage (GDS)](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/cuda_gds), or any other custom implementation. The Plugin Manager component within NIXL handles discovery, loading, and instantiation of backend plugins, whether they are dynamically loaded or statically built into the NIXL library. Each plugin needs to implement the SB API, as well as a few methods for the plugin manager, which are discussed in the following sections.
 
-Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it by not declaring the `NOTIF` capability, and then the agent will not send requests with notifications to this backend. There are 4 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
-
 ![NIXL SB API](figures/nixl_sb_api.png)
 
 ## The South Bound API
@@ -48,16 +46,11 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 
 ### Capability Indicators:
 
-A backend passes its capabilities from `nixl_backend_capability_t`, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default:
-
-* `LOCAL`: the backend supports transfers within a node
-* `REMOTE`: the backend supports transfers across nodes
-* `NOTIF`: the backend supports notifications
-* `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
+A backend passes its capabilities from `nixl_backend_capability_t`, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default. Their meaning is described in `src/api/cpp/backend/backend_engine.h`.
 
 In addition, getSupportedMems() indicates the memory types supported by the backend.
 
-Based on the `LOCAL`, `REMOTE` and `NOTIF` capabilities, the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has `LOCAL`, detailed more in Example implementations. Note that a network backend must have the `REMOTE` and `NOTIF` capabilities, and preferably `LOCAL` as well, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have `LOCAL`, and `NOTIF` is optional.
+Based on the `LOCAL`, `REMOTE` and `NOTIF` capabilities, the required methods to be implemented change. Note that a network backend must have the `REMOTE` and `NOTIF` capabilities, and preferably `LOCAL` as well, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have `LOCAL`, and `NOTIF` is optional.
 
 ### Connection Management:
 
