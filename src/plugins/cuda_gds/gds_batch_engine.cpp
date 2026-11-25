@@ -196,6 +196,14 @@ nixlGdsIOBatch::checkStatus() {
             tail.u.batch.file_offset += done;
             tail.u.batch.devPtr_offset += done;
             tail.u.batch.size -= done;
+            constexpr size_t alignment = 4096;
+            if (tail.u.batch.file_offset % alignment != 0 ||
+                tail.u.batch.devPtr_offset % alignment != 0 || tail.u.batch.size % alignment != 0) {
+                NIXL_DEBUG << "GDS batch short completion: tail request will be unaligned to 4 KiB"
+                           << " (file_offset=" << tail.u.batch.file_offset
+                           << ", devPtr_offset=" << tail.u.batch.devPtr_offset
+                           << ", size=" << tail.u.batch.size << ")";
+            }
         }
     }
 
