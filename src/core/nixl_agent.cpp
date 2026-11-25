@@ -1435,7 +1435,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         opt_args.callback = req_hndl;
     }
     // Set before the post, because the backend can report the completion during the post
-    nixlCompletionMonitor *const prev_monitor = std::exchange(req_hndl->monitor_, monitor);
+    nixlCompletionMonitor *const prev_monitor = req_hndl->monitor_.exchange(monitor);
 
     req_hndl->tracePostContext_ = call_context;
     opt_args.traceContext = &req_hndl->tracePostContext();
@@ -1644,8 +1644,9 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         req_hndl->backendHandle = nullptr;
     }
     NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
-    if (req_hndl->monitor_ != nullptr) {
-        req_hndl->monitor_->detach(req_hndl);
+    nixlCompletionMonitor *const monitor = req_hndl->monitor_;
+    if (monitor != nullptr) {
+        monitor->detach(req_hndl);
     }
     delete req_hndl;
     return NIXL_SUCCESS;

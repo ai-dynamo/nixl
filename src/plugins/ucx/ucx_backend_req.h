@@ -101,6 +101,7 @@ public:
             notif_.empty() ? nullptr : std::make_shared<nixl::ucx::amSendStatus>(NIXL_IN_PROG);
     }
 
+    // The callback is not owned and must stay valid until the request is released
     virtual void
     setCallback(nixlBackendReqCallback *callback) {
         callback_ = callback;
@@ -191,7 +192,7 @@ protected:
         worker_ = worker;
     }
 
-    void
+    nixl_status_t
     sendNotif() {
         NIXL_ASSERT(!notif_.empty());
         const nixl_status_t status = getEp().sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
@@ -202,6 +203,7 @@ protected:
         if (status != NIXL_IN_PROG) {
             notifStatus_->store(status);
         }
+        return status;
     }
 
 private:
@@ -214,9 +216,9 @@ private:
         const auto handle = static_cast<nixlUcxBackendReqH *>(user_data);
         nixl_status_t result = nixl::ucx::ucsToNixlStatus(status);
         if ((status == UCS_OK) && !handle->notif_.empty()) {
-            handle->sendNotif();
-            result = handle->notifStatus_->load();
+            result = handle->sendNotif();
             if (result == NIXL_IN_PROG) {
+                // The send callback calls the request callback
                 return;
             }
         }

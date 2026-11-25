@@ -101,7 +101,7 @@ public:
 private:
     void
     completed(nixl_status_t status) override {
-        nixlCompletionMonitor *const monitor = monitor_;
+        nixlCompletionMonitor *const monitor = monitor_.load();
         if (monitor != nullptr) {
             monitor->completed({this, status});
         }
@@ -125,7 +125,7 @@ private:
 
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
-    nixlCompletionMonitor *monitor_ = nullptr;
+    std::atomic<nixlCompletionMonitor *> monitor_ = nullptr;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;

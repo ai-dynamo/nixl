@@ -35,6 +35,11 @@ struct TraceContext;
 // level direction or so.
 typedef std::vector<std::pair<std::string, std::string>> notif_list_t;
 
+/**
+ * @brief Callback of a request posted with nixl_opt_b_args_t::callback. The backend calls
+ *        completed() from any thread when the request completes, and never after the
+ *        request is released.
+ */
 class nixlBackendReqCallback {
 public:
     virtual ~nixlBackendReqCallback() = default;
