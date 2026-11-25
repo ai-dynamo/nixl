@@ -148,12 +148,7 @@ DefaultObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     if (nixl_mem == OBJ_SEG) {
         std::unique_ptr<nixlObjMetadata> obj_md = std::make_unique<nixlObjMetadata>(
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
-        const bool inserted = devIdToObjKey_.emplace(mem.devId, obj_md->objKey).second;
-        if (!inserted) {
-            NIXL_ERROR << "OBJ requires a unique devId per object (devId=" << mem.devId
-                       << " already registered)";
-            return NIXL_ERR_INVALID_PARAM;
-        }
+        devIdToObjKey_[mem.devId] = obj_md->objKey;
         out = obj_md.release();
     } else {
         out = nullptr;
