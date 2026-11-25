@@ -399,6 +399,29 @@ traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status
                      {"nixl.status", static_cast<std::int64_t>(status)});
 }
 
+[[nodiscard]] nixl_status_t
+setNotif(const nixlBackendEngine &engine,
+         const nixl_opt_args_t *extra_params,
+         nixl_opt_b_args_t &opt_args) {
+    if (extra_params != nullptr) {
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
+            opt_args.hasNotif = true;
+        } else if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
+    }
+
+    if (opt_args.hasNotif && !engine.supportsCapability(nixl_backend_capability_t::NOTIF)) {
+        NIXL_ERROR << "the selected backend '" << engine.getType()
+                   << "' does not support notifications";
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -477,8 +500,8 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     }
 
     NIXL_LOCK_GUARD(data->lock);
-    mems   = backend->engine->getSupportedMems();
-    params = backend->engine->getCustomParams();
+    mems = backend->getEngine()->getSupportedMems();
+    params = backend->getEngine()->getCustomParams();
     return NIXL_SUCCESS;
 }
 
@@ -586,7 +609,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::string conn_info;
 
     if (backend->supportsRemote()) {
-        if (!backend->supportsNotif()) {
+        if (!backend->supportsCapability(nixl_backend_capability_t::NOTIF)) {
             NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
             return NIXL_ERR_BACKEND;
         }
@@ -625,9 +648,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
-    // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
-    std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
-    const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
+    const auto [it, inserted] =
+        data->backendHandles_.try_emplace(type, std::make_unique<nixlBackendH>(backend.get()));
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
@@ -654,7 +676,7 @@ nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    return extra_params->backends[0]->engine->queryMem(descs, resp);
+    return extra_params->backends[0]->getEngine()->queryMem(descs, resp);
 }
 
 nixl_status_t
@@ -680,7 +702,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            backend_list->push_back(elm->getEngine());
     }
 
     // Best effort, if at least one succeeds NIXL_SUCCESS is returned
@@ -747,7 +769,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         backend_set = *avail_backends;
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+            backend_set.insert(elm->getEngine());
     }
 
     // Doing best effort, and returning err if any
@@ -805,7 +827,7 @@ nixlAgent::makeConnection(const std::string &remote_agent,
             backend_set.insert(r_bknd);
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine->getType());
+            backend_set.insert(elm->getEngine()->getType());
     }
 
     // For now trying to make all the connections, can become best effort,
@@ -871,7 +893,7 @@ nixlAgentData::prepXferDlist(const std::string &agent_name,
     } else {
         backend_set = new backend_set_t();
         for (auto &elm : extra_params->backends) {
-            backend_set->insert(elm->engine);
+            backend_set->insert(elm->getEngine());
         }
     }
 
@@ -998,9 +1020,9 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     if (extra_params && extra_params->backends.size() > 0) {
         for (auto & elm : extra_params->backends) {
-            if ((local_side.descs.count(elm->engine) > 0) &&
-                (remote_side.descs.count(elm->engine) > 0)) {
-                backend = elm->engine;
+            if ((local_side.descs.count(elm->getEngine()) > 0) &&
+                (remote_side.descs.count(elm->getEngine()) > 0)) {
+                backend = elm->getEngine();
                 break;
             }
         }
@@ -1025,19 +1047,11 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     if (extra_params) {
         opt_args.customParam = extra_params->customParam;
-        if (extra_params->notif) {
-            opt_args.notifMsg = *extra_params->notif;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
     }
 
-    if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << backend->getType()
-                        << "' does not support notifications";
-        return NIXL_ERR_BACKEND;
+    const nixl_status_t notif_status = setNotif(*backend, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        return notif_status;
     }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
@@ -1179,7 +1193,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         }
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+            backend_set.insert(elm->getEngine());
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -1219,23 +1233,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif) {
-            opt_args.notifMsg = *extra_params->notif;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
-
         if (extra_params->customParam.length() > 0)
             opt_args.customParam = extra_params->customParam;
     }
 
-    if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << handle->engine->getType()
-                        << "' does not support notifications";
-        data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        return NIXL_ERR_BACKEND;
+    const nixl_status_t notif_status = setNotif(*handle->engine, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        data->addErrorTelemetry(notif_status);
+        return notif_status;
     }
 
     handle->notifMsg = opt_args.notifMsg;
@@ -1397,31 +1402,21 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         opt_args.hasNotif = true;
     }
 
-    // Updating the notification based on opt_args
     if (extra_params) {
         opt_args.customParam = extra_params->customParam;
-        if (extra_params->notif) {
-            req_hndl->notifMsg = *extra_params->notif;
-            opt_args.notifMsg = *extra_params->notif;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg = extra_params->notifMsg;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else {
-            req_hndl->hasNotif = false;
-            opt_args.hasNotif = false;
-        }
     }
 
-    if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
-                        << "' does not support notifications";
-        data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_BACKEND));
-        return NIXL_ERR_BACKEND;
+    // A notification of extra_params replaces the one of the request
+    const nixl_status_t notif_status = setNotif(*req_hndl->engine, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        data->addErrorTelemetry(notif_status);
+        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(notif_status));
+        return notif_status;
+    }
+
+    if (extra_params) {
+        req_hndl->notifMsg = opt_args.notifMsg;
+        req_hndl->hasNotif = opt_args.hasNotif;
     }
 
     req_hndl->tracePostContext_ = call_context;
@@ -1652,8 +1647,9 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            if (elm->engine->supportsNotif())
-                backend_list->push_back(elm->engine);
+            if (elm->getEngine()->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+                backend_list->push_back(elm->getEngine());
+            }
 
         if (backend_list->empty()) {
             NIXL_ERROR_FUNC << "none of specified backends support notifications";
@@ -1709,8 +1705,8 @@ nixlAgent::genNotif(const std::string &remote_agent,
     } else {
         backend_list = &backend_list_value;
         for (auto &elm : extra_params->backends) {
-            if (elm->engine->supportsNotif()) {
-                backend_list->push_back(elm->engine);
+            if (elm->getEngine()->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+                backend_list->push_back(elm->getEngine());
             }
         }
     }
@@ -1847,7 +1843,7 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     } else {
         backend_list = &tmp_list;
         for (const auto &elm : extra_params->backends) {
-            backend_list->push_back(elm->engine);
+            backend_list->push_back(elm->getEngine());
         }
     }
 
@@ -2185,7 +2181,7 @@ nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
     if (opt_args && !opt_args->backends.empty()) {
         backend_set_t backends;
         for (const auto &backend : opt_args->backends) {
-            backends.insert(backend->engine);
+            backends.insert(backend->getEngine());
         }
 
         return backends;

@@ -131,8 +131,7 @@ class nixlBackendEngine {
             return supportsCapability(nixl_backend_capability_t::LOCAL);
         }
 
-        // Determines if a backend supports sending notifications. Related methods are not
-        // pure virtual, and return errors, as parent shouldn't call if supportsNotif is false.
+        [[deprecated("Declare the NOTIF capability in the constructor instead")]]
         virtual bool
         supportsNotif() const {
             return supportsCapability(nixl_backend_capability_t::NOTIF);
@@ -245,8 +244,7 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-
-        // *** Needs to be implemented if supportsNotif() is true *** //
+        // *** Needs to be implemented if the backend has the NOTIF capability *** //
 
         // Populate an empty received notif list. Elements are released within backend then.
         virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }

@@ -62,11 +62,6 @@ public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);
 
     [[nodiscard]] bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    [[nodiscard]] bool
     supportsRemote() const override {
         return false;
     }

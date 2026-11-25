@@ -214,7 +214,7 @@ protected:
 TEST_F(DaosEngineTest, ReportsObjectStorageCapabilities) {
     EXPECT_TRUE(engine_->supportsLocal());
     EXPECT_FALSE(engine_->supportsRemote());
-    EXPECT_FALSE(engine_->supportsNotif());
+    EXPECT_FALSE(engine_->supportsCapability(nixl_backend_capability_t::NOTIF));
     EXPECT_EQ(engine_->getSupportedMems(), (nixl_mem_list_t{DRAM_SEG, OBJ_SEG}));
 }
 
