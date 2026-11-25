@@ -65,7 +65,9 @@ def package_tree(tmp_path):
 
 
 def run_import(package_tree, code, major=13):
-    setup = f"import nixl_meta_utils\nnixl_meta_utils.detect_cuda_major = lambda: {major}\n"
+    setup = (
+        f"import nixl_meta_utils\nnixl_meta_utils.detect_cuda_major = lambda: {major}\n"
+    )
     result = subprocess.run(
         [sys.executable, "-S", "-c", setup + dedent(code)],
         cwd=package_tree,
