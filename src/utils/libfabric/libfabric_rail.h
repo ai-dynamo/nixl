@@ -658,6 +658,11 @@ private:
     using post_ring_t = MpscRing<nixlLibfabricPostRequest>;
     post_ring_t post_ring_;
 
+    // The progress thread is the sole owner of deferred posts. Each post owns
+    // a data-request slot, which bounds the total number of deferred entries.
+    std::map<fi_addr_t, std::deque<nixlLibfabricPostRequest>> deferred_posts_;
+    std::deque<fi_addr_t> deferred_destinations_;
+
     // the post/poll interleave ratio constants
     static constexpr size_t POST_MAX_BATCH_SIZE = 256;
     static constexpr size_t POST_POLL_INTERLEAVE_RATIO = 32;
