@@ -333,6 +333,11 @@ TEST_P(dellTokenTest, RegistrationContractsAndVendorDiscovery) {
     EXPECT_EQ(engine->registerMem(nixlBlobDesc(0, 0, 3, ""), DRAM_SEG, other), NIXL_ERR_BACKEND);
     EXPECT_EQ(engine->registerMem(nixlBlobDesc(0, 1, 3, ""), FILE_SEG, other),
               NIXL_ERR_NOT_SUPPORTED);
+    {
+        const gtest::LogIgnoreGuard lig("OBJ requires a unique devId");
+        EXPECT_EQ(engine->registerMem(nixlBlobDesc(0, 32, 2, "duplicate"), OBJ_SEG, other),
+                  NIXL_ERR_INVALID_PARAM);
+    }
     EXPECT_EQ(other, nullptr);
     prepare();
     ASSERT_EQ(post(), NIXL_IN_PROG);
