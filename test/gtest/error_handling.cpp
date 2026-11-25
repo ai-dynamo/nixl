@@ -187,12 +187,9 @@ protected:
     TestErrorHandling();
     void
     SetUp() override;
-    /**
-     * @brief Run one transfer pattern, optionally forcing an error-handling mode
-     */
     template<TestType test_type, enum nixl_xfer_op_t op>
     void
-    testXfer(const std::string &err_handling_mode_override = "");
+    testXfer();
     void
     testNotifAfterFail();
     void
@@ -403,20 +400,15 @@ TestErrorHandling::excludeEfaTransports() {
     }
 }
 
-/**
- * @brief Run one transfer pattern, optionally forcing an error-handling mode
- */
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
 void
-TestErrorHandling::testXfer(const std::string &err_handling_mode_override) {
+TestErrorHandling::testXfer() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    const std::string &err_handling_mode =
-        err_handling_mode_override.empty() ? errHandlingMode_ : err_handling_mode_override;
     m_Initiator.init(
-        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, err_handling_mode);
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     m_Target.init(
-        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, err_handling_mode);
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
 
     exchangeMetaData();
 
@@ -450,7 +442,7 @@ TestErrorHandling::testXfer(const std::string &err_handling_mode_override) {
                               progThread_,
                               numWorkers_,
                               numThreads_,
-                              err_handling_mode);
+                              errHandlingMode_);
                 exchangeMetaData();
             }
         } else {
@@ -581,11 +573,8 @@ TEST_P(TestErrorHandling, BasicXfer) {
 TEST_P(TestErrorHandling, LoadRemoteThenFail) {
     const LogIgnoreGuard lig(expected_log);
     excludeEfaTransports();
-    // TODO: Drop the peer override once openucx/ucx#12372 is merged. The target
-    // is destroyed while the endpoint is still in wireup, and UCX wireup does
-    // not handle failover yet.
-    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>(nixl::ucx_err_handling_mode_peer);
-    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>(nixl::ucx_err_handling_mode_peer);
+    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_WRITE>();
+    testXfer<TestType::LOAD_REMOTE_THEN_FAIL, NIXL_READ>();
 }
 
 TEST_P(TestErrorHandling, XferThenFail) {
@@ -603,9 +592,6 @@ TEST_P(TestErrorHandling, XferFailRestore) {
 }
 
 TEST_P(TestErrorHandling, XferPostThenFail) {
-    // TODO: Drop once openucx/ucx#12371 is merged. Without it, failover cancels
-    // notifications that are still in flight to the failed target.
-    const LogIgnoreGuard lig("UCX AM send failed with status -16");
     testXfer<TestType::FAIL_AFTER_POST, NIXL_WRITE>();
     testXfer<TestType::FAIL_AFTER_POST, NIXL_READ>();
 }
