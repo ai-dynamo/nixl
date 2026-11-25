@@ -45,7 +45,7 @@ struct NIXLAgentState {
     nixl_opt_args_t extra_params;
     nixl_reg_dlist_t reg_descs{VRAM_SEG};
 
-    // The local view is lifetime-fixed; remote views follow staged membership.
+    // The local RDMA view is lifetime-fixed when needed; remote views follow staged membership.
     nixlMemViewH staged_remote = nullptr;
     nixlMemViewH active_local = nullptr, active_remote = nullptr;
     bool has_staged = false;
@@ -140,6 +140,10 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     world_to_slot[world_rank] = 0;
     if (num_channels < 1 or num_channels > kNumMaxUCXDeviceChannels)
         throw EPException("NIXL", __FILE__, __LINE__, "UCX connects at most " + std::to_string(kNumMaxUCXDeviceChannels) + " device channels per peer, got " + std::to_string(num_channels) + ": set NIXL_EP_NIXL_NUM_CHANNELS between 1 and " + std::to_string(kNumMaxUCXDeviceChannels));
+    const bool direct_only = num_world_ranks == max_num_scaleup_ranks;
+    if (not direct_only and not has_gpu_rdma_device_code())
+        throw EPExceptionWithLineInfo("NIXL", "Multi-domain NIXL EP requires UCX GPU RDMA device support: "
+            "rebuild NIXL EP with GDA-enabled UCX and RDMA development headers (including infiniband/mlx5dv.h)");
     CUDA_RUNTIME_CHECK(cudaGetDevice(&device_id));
     CUdevice device;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGet(&device, device_id));
@@ -184,7 +188,7 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
         region.ptr = reinterpret_cast<CUdeviceptr>(ptr), region.num_bytes = static_cast<size_t>(num_region_bytes);
     }
 
-    // The agent and its UCX backend: a progress thread polled every 1 ms (it serves the peers' wire-up and hellos while this host is in Python; NIXL's default delay 0 spins a core), RW sync for our calls beside it, one worker, `num_channels` device channels
+    // The agent and its UCX backend: a progress thread polled every 1 ms (it serves the peers' wire-up and hellos while this host is in Python; NIXL's default delay 0 spins a core), RW sync for our calls beside it, one worker
     state = std::make_unique<NIXLAgentState>();
     state->agent_name = agent_name;
     nixlAgentConfig cfg;
@@ -202,6 +206,8 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     init_params["engine_config"] =
         "RC_GDA_NUM_PRE_ALLOC_EPS=" + std::to_string(std::max(1, num_world_ranks / max_num_scaleup_ranks - 1)) +
         ",UD_LINGER_TIMEOUT=1s";
+    if (direct_only)
+        init_params["engine_config"] += ",TLS=^rc_gda";  // Keep CPU transports for wire-up; omit unused GPU RDMA queues.
     NIXL_CHECK(state->agent->createBackend("UCX", init_params, state->backend));
     state->extra_params.backends.push_back(state->backend);
 
@@ -210,10 +216,12 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     NIXL_CHECK(state->agent->registerMem(state->reg_descs, &state->extra_params));
     state->registered = true;
 
-    nixl_local_dlist_t local_descs(VRAM_SEG);
-    local_descs.addDesc(nixlBasicDesc(static_cast<uintptr_t>(region.ptr), static_cast<size_t>(num_region_bytes),
-                                      static_cast<uint64_t>(device_id)));
-    NIXL_CHECK(state->agent->prepMemView(local_descs, state->active_local, &state->extra_params));
+    if (not direct_only) {
+        nixl_local_dlist_t local_descs(VRAM_SEG);
+        local_descs.addDesc(nixlBasicDesc(static_cast<uintptr_t>(region.ptr), static_cast<size_t>(num_region_bytes),
+                                          static_cast<uint64_t>(device_id)));
+        NIXL_CHECK(state->agent->prepMemView(local_descs, state->active_local, &state->extra_params));
+    }
 
     // Device tables (see `nixl.hpp`): the p2p table holds self, the rest null until a commit
     allocate_device(p2p_ptrs_device, num_world_ranks * sizeof(void*));
@@ -226,11 +234,11 @@ NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_ran
     allocate_device(ctx_device, sizeof(NIXLDeviceContext));
 
     ctx_host = NIXLDeviceContext{.local_mvh = state->active_local, .p2p_ptrs = p2p_ptrs_device.get(), .local_base = region_base(),
-                                 .world_rank = world_rank, .num_channels = num_channels, .num_world_ranks = num_world_ranks};
+                                 .world_rank = world_rank, .num_channels = direct_only ? 0 : num_channels, .num_world_ranks = num_world_ranks};
     CUDA_RUNTIME_CHECK(cudaMemcpy(ctx_device.get(), &ctx_host, sizeof(NIXLDeviceContext), cudaMemcpyHostToDevice));
 
     NIXL_DEBUG << "NIXL EP context created: agent " << agent_name << ", world rank " << world_rank << " of "
-               << num_world_ranks << " (" << max_num_scaleup_ranks << " per domain), " << num_channels
+               << num_world_ranks << " (" << max_num_scaleup_ranks << " per domain), " << ctx_host.num_channels
                << " channels, region " << region_base() << " (" << num_region_bytes << " bytes, "
                << (region.is_vmm ? "VMM with a fabric handle" : "cudaMalloc") << ")";
 }

@@ -20,7 +20,7 @@ class CombineRuntime final : public jit::LaunchRuntime<CombineRuntime> {
 public:
     struct Args {
         // Templated arguments
-        bool use_expanded_layout, allow_multiple_reduction;
+        bool use_expanded_layout, allow_multiple_reduction, direct_only;
         int num_channels_per_sm;
         int num_max_scaleup_ranks;
         int hidden;
@@ -49,16 +49,18 @@ public:
 using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
-    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<%s, %s, %d, %d, %d, %d, %d, %d>);
+    auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<%s, %s, %s, %d, %d, %d, %d, %d, %d, %d>);
 }
 )",
                            args.use_expanded_layout ? "true" : "false", args.allow_multiple_reduction ? "true" : "false",
+                           args.direct_only ? "true" : "false",
                            args.launch_args.grid_dim.first,
                            args.num_channels_per_sm,
                            args.num_max_scaleup_ranks,
                            args.hidden,
                            args.num_topk,
-                           args.num_timeout_cycles);
+                           args.num_timeout_cycles,
+                           args.launch_args.num_threads / 32);
     }
 
     static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
@@ -87,20 +89,19 @@ static void launch_combine(void* x,
                            const int& hidden,
                            const int& num_topk,
                            const int64_t& num_timeout_cycles,
-                           const int& num_max_scaleup_ranks,
+                           const bool& direct_only, const int& num_max_scaleup_ranks,
                            const int& num_launch_sms,
                            const int& num_channels_per_sm,
                            const int& num_smem_bytes,
                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                            const at::cuda::CUDAStream& stream) {
-    // Each channel owns one scale-up warp and one forward warp; use the dispatch handle's channel count
+    // Direct-only combine fills shared memory independently; hybrid keeps dispatch's two warps per channel.
     const auto token_layout = get_combine_token_layout(hidden);
-    const int num_warps = 2 * num_channels_per_sm;
+    const int num_warps = direct_only ? std::min<int>(num_smem_bytes / token_layout.get_num_bytes<true>(), 32) : 2 * num_channels_per_sm;
     EP_HOST_ASSERT(num_warps * token_layout.get_num_bytes<true>() <= num_smem_bytes and
-                   "The combine block needs token_layout bytes for each of its 2 * num_channels_per_sm warps, "
-                   "which exceeds the dynamic shared memory num_smem_bytes");
+                   "The combine block's per-warp token buffers exceed the available shared memory");
     EP_HOST_ASSERT(num_max_scaleup_ranks <= num_warps * 32 and
-                   "The combine block has 2 * num_channels_per_sm warps, fewer threads than the declared scale-up positions: "
+                   "The combine block has fewer threads than the declared scale-up positions: "
                    "use a smaller hidden dimension or declare fewer scale-up positions");
 
     // Generate, build and launch
@@ -108,6 +109,7 @@ static void launch_combine(void* x,
     const CombineRuntime::Args args = {
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
+        .direct_only = direct_only,
         .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .hidden = hidden,
@@ -135,7 +137,7 @@ class CombineReduceEpilogueRuntime final : public jit::LaunchRuntime<CombineRedu
 public:
     struct Args {
         // Templated arguments
-        bool use_expanded_layout, allow_multiple_reduction;
+        bool use_expanded_layout, allow_multiple_reduction, direct_only;
         int num_launch_sms, num_channels_per_sm;
         int num_max_scaleup_ranks;
         int hidden;
@@ -162,9 +164,10 @@ public:
 using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
-    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
+    auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<%s, %s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
 }
 )",                        args.use_expanded_layout ? "true" : "false", args.allow_multiple_reduction ? "true" : "false",
+                           args.direct_only ? "true" : "false",
                            args.launch_args.grid_dim.first, args.num_launch_sms,
                            args.launch_args.num_threads / 32,
                            args.num_channels_per_sm,
@@ -196,7 +199,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
                                            const int& num_sms, const int& num_launch_sms, const int& num_smem_bytes,
-                                           const int& num_max_scaleup_ranks,
+                                           const bool& direct_only, const int& num_max_scaleup_ranks,
                                            const int& num_channels_per_sm,
                                            const bool& use_expanded_layout, const bool& allow_multiple_reduction,
                                            const at::cuda::CUDAStream& stream) {
@@ -210,6 +213,7 @@ static void launch_combine_reduce_epilogue(void* combined_x,
     const CombineReduceEpilogueRuntime::Args args = {
         .use_expanded_layout = use_expanded_layout,
         .allow_multiple_reduction = allow_multiple_reduction,
+        .direct_only = direct_only,
         .num_launch_sms = num_launch_sms, .num_channels_per_sm = num_channels_per_sm,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .hidden = hidden,

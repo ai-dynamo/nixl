@@ -29,7 +29,6 @@ public:
     static std::filesystem::path library_root_path;
     static std::filesystem::path library_include_path;
     static std::filesystem::path cuda_home;
-    static std::filesystem::path nixl_root, ucx_root;
     static std::filesystem::path cuobjdump_path;
 
     // Buffer storage and all JIT compilers use the same process-lifetime profiling setting.
@@ -38,15 +37,11 @@ public:
         return enabled;
     }
 
-    static void prepare_init(const std::string& library_root_path,
-                             const std::string& cuda_home_path_by_python,
-                             const std::string& nixl_root_path_by_python, const std::string& ucx_root_path_by_python) {
-        // External dependency headers are not fingerprinted; see README.md for the cache/dependency contract
+    static void prepare_init(const std::string& library_root_path, const std::string& cuda_home_path_by_python) {
+        // NIXL/UCX headers are not fingerprinted; see README.md for the cache/dependency contract
         Compiler::library_root_path = std::filesystem::absolute(library_root_path);
         Compiler::library_include_path = Compiler::library_root_path / "include";
         Compiler::cuda_home = std::filesystem::absolute(cuda_home_path_by_python);
-        Compiler::nixl_root = std::filesystem::absolute(nixl_root_path_by_python);
-        Compiler::ucx_root = std::filesystem::absolute(ucx_root_path_by_python);
         Compiler::cuobjdump_path = Compiler::cuda_home / "bin" / "cuobjdump";
     }
 
@@ -57,7 +52,6 @@ public:
         EP_HOST_ASSERT(not library_root_path.empty());
         EP_HOST_ASSERT(not library_include_path.empty());
         EP_HOST_ASSERT(not cuda_home.empty());
-        EP_HOST_ASSERT(not nixl_root.empty() and not ucx_root.empty());
         EP_HOST_ASSERT(not cuobjdump_path.empty());
 
         // Cache settings
@@ -77,7 +71,7 @@ public:
         if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_WITH_LINEINFO", 0))
             flags += " -Xcompiler -rdynamic -lineinfo";
         // NIXL's GPU API and UCX's device API for the kernels (`EP_NIXL_DEVICE_API` lets `nixl_transport.cuh` include them)
-        flags += absl::StrFormat(" -I %s -I %s -DEP_NIXL_DEVICE_API=1", quote_path(nixl_root / "include"), quote_path(ucx_root / "include"));
+        flags += " -DEP_NIXL_DEVICE_API=1";
 
         flags += absl::StrFormat(" -DEP_NUM_TOPK_IDX_BITS=%d", EP_NUM_TOPK_IDX_BITS);
         if (profiling_enabled())
@@ -192,8 +186,6 @@ public:
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, library_root_path);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, library_include_path);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, cuda_home);
-EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, nixl_root);
-EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, ucx_root);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, cuobjdump_path);
 
 class NVCCCompiler final: public Compiler {

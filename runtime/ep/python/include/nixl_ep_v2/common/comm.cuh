@@ -75,12 +75,11 @@ __device__ __forceinline__ void red_add_rel_and_wait(const nixl::NIXLTransport& 
         }, start_clock);
 }
 
-// The channel a warp issues on: channel 0 for the notify warps and a one-channel context, the others striped over the fixed launch grid
+// Channel 0 for notify warps and mapped-only or one-channel contexts; otherwise stripe over the fixed launch grid.
 template <int kNumLaunchSMs, int kNumChannelsPerSM, bool kWithNotifyWarps = false>
 __device__ __forceinline__ int get_channel_idx(const int& sm_idx, const int& channel_in_sm_idx,
                                                const int& num_channels, const bool& is_notify_warp = false) {
-    // Only one channel
-    if (num_channels == 1)
+    if (num_channels <= 1)
         return 0;
 
     // The notify warp always use 1 SM and 1 channel

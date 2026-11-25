@@ -178,7 +178,7 @@ class DispatchCopyEpilogueRuntime final : public jit::LaunchRuntime<DispatchCopy
 public:
     struct Args {
         // Templated arguments
-        bool do_expand, do_zero_padding;
+        bool do_expand, do_zero_padding, direct_only;
         int num_launch_sms, num_channels_per_sm;
         int num_warps;
         int num_max_scaleup_ranks;
@@ -209,10 +209,11 @@ public:
 using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
-    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
+    auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<%s, %s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
 }
 )",
                            args.do_expand ? "true" : "false", args.do_zero_padding ? "true" : "false",
+                           args.direct_only ? "true" : "false",
                            args.launch_args.grid_dim.first, args.num_launch_sms, args.num_channels_per_sm, args.num_warps,
                            args.num_max_scaleup_ranks,
                            args.num_hidden_bytes, args.num_sf_packs,
@@ -243,7 +244,7 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           int* recv_src_metadata,
                                           int* channel_linked_list,
                                           int* num_unaligned_recv_tokens_per_expert,
-                                          const int& num_recv_tokens, const int& num_max_scaleup_ranks, const int& num_max_tokens_per_rank,
+                                          const int& num_recv_tokens, const bool& direct_only, const int& num_max_scaleup_ranks, const int& num_max_tokens_per_rank,
                                           const int& num_hidden_bytes,
                                           const int& num_sf_packs, const int& recv_sf_token_stride, const int& recv_sf_hidden_stride,
                                           const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
@@ -253,15 +254,13 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           const bool& do_expand, const bool& do_zero_padding,
                                           const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
-    // A margin below the opt-in maximum: a layout that filled it to the byte faulted on the last warp's mbarrier
-    constexpr int kNumSmemReserveBytes = 1024;
     const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
-    const auto num_warps = std::min((num_smem_bytes - kNumSmemReserveBytes) / token_layout.get_num_bytes<true>(), 32);
+    const auto num_warps = std::min(num_smem_bytes / token_layout.get_num_bytes<true>(), 32);
     const auto num_threads = num_warps * 32;
 
     // Generate, build and launch
     const DispatchCopyEpilogueRuntime::Args args = {
-        .do_expand = do_expand, .do_zero_padding = do_zero_padding,
+        .do_expand = do_expand, .do_zero_padding = do_zero_padding, .direct_only = direct_only,
         .num_launch_sms = num_launch_sms, .num_channels_per_sm = num_channels_per_sm, .num_warps = num_warps,
         .num_max_scaleup_ranks = num_max_scaleup_ranks,
         .num_hidden_bytes = num_hidden_bytes, .num_sf_packs = num_sf_packs,

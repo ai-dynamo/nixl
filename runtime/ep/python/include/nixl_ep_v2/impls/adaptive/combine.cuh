@@ -17,18 +17,18 @@ namespace nixl::runtime::ep::elastic::adaptive {
 
 // Combine on a fixed grid; `EPTopology` supplies the rank decomposition.
 // Elastic on the NIXL transport: masked positions have no linked list and get no tails, masked domains are not sent to (see `topology.cuh`)
-template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
+template <bool kUseExpandedLayout, bool kAllowMultipleReduction, bool kDirectOnly,
           int kNumLaunchSMs,
           int kNumChannelsPerSM,
           int kNumMaxScaleupRanks,
           int kHidden,
           int kNumTopk,
           int64_t kNumTimeoutCycles,
+          int kNumWarps,
           int kNumScaleupRanksPerLane = math::constexpr_ceil_div(kNumMaxScaleupRanks, 32),
           int kNumScaleupUpdateInterval = 3,
           int kNumScaleupWarps = kNumChannelsPerSM,
           int kNumForwardWarps = kNumChannelsPerSM,
-          int kNumWarps = kNumScaleupWarps + kNumForwardWarps,
           int kNumThreads = kNumWarps * 32,
           int kNumHiddenBytes = kHidden * sizeof(nv_bfloat16)>
 __global__ void __launch_bounds__(kNumThreads, 1)
@@ -42,9 +42,12 @@ adaptive_combine_impl(nv_bfloat16* x,
                       int num_reduced_tokens,
                       const int num_combined_tokens,
                       const int num_max_tokens_per_rank) {
+    nixl::require_gpu_rdma<not kDirectOnly>();
     EP_STATIC_ASSERT(kNumMaxScaleupRanks <= topology::kNumMaxScaleupRanksCap, "Too many scale-up ranks");
     EP_STATIC_ASSERT(kNumLaunchSMs % 2 == 0, "The adaptive grid is launched in clusters of two");
-    EP_STATIC_ASSERT(kNumScaleupWarps == kNumChannelsPerSM and kNumForwardWarps == kNumChannelsPerSM, "The channel indices assume one scale-up and one forward warp per channel");
+    EP_STATIC_ASSERT(kDirectOnly or (kNumScaleupWarps == kNumChannelsPerSM and kNumForwardWarps == kNumChannelsPerSM and
+                                    kNumWarps == kNumScaleupWarps + kNumForwardWarps),
+                     "Hybrid combine requires one scale-up and one forward warp per channel");
     EP_STATIC_ASSERT(kHidden % (32 * sizeof(int4) / sizeof(nv_bfloat16)) == 0, "Invalid hidden");
 
     // Utils
@@ -122,11 +125,11 @@ adaptive_combine_impl(nv_bfloat16* x,
 
     // Global parallel barriers for scale-out subteam and scale-up subteam
     // The hybrid entry synchronizes all blocks before the peer barrier; direct mode skips that initial synchronization.
-    const bool is_direct = topo.mode == topology::kModeDirect;
-    const bool use_incremental_combine = combine_policy::use_incremental(topo, num_combined_tokens);
+    const bool is_direct = kDirectOnly or topo.mode == topology::kModeDirect;
+    const bool use_incremental_combine = not kDirectOnly and combine_policy::use_incremental(topo, num_combined_tokens);
     if (is_direct) {
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kCombineTag0, kNumMaxScaleupRanks, false, false, true>(
-            ctx, workspace_layout, topo, sm_idx, thread_idx);
+            ctx, workspace_layout, topo, sm_idx, thread_idx, not kDirectOnly);
     } else {
         // Reset both completion protocols before the entry barrier lets remote producers send.
         if (warp_idx >= kNumScaleupWarps and topo.is_scaleout_active(lane_idx)) {
@@ -270,7 +273,7 @@ adaptive_combine_impl(nv_bfloat16* x,
 
         // Final barrier to ensure data arrival (the hybrid roles use NVLink tails and scale-out completion counters)
         comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kCombineTag1, kNumMaxScaleupRanks, true, true, false>(
-            ctx, workspace_layout, topo, sm_idx, thread_idx);
+            ctx, workspace_layout, topo, sm_idx, thread_idx, not kDirectOnly);
         EP_PROFILE_STAMP(ctx.local_base, CombineMainEnd);
         return;
     }
@@ -767,7 +770,7 @@ adaptive_combine_impl(nv_bfloat16* x,
         EP_PROFILE_STAMP(ctx.local_base, CombineForwardSubmitted);
 
         // Small destinations defer remote waits to their epilogue; other destinations wait for every producer.
-        // The next entry barrier orders reuse of completion words and the separate asynchronous send arena.
+        // The next entry barrier orders reuse of completion words and the shared SEND arena.
         if (not use_incremental_combine and topo.is_scaleout_active(lane_idx)) {
             const auto wait_ptr = ready_atomic_buff + channel_idx * topology::kNumMaxScaleoutRanksCap + lane_idx;
             comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {

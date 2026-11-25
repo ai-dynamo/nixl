@@ -17,7 +17,7 @@
 namespace nixl::runtime::ep::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
-template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
+template <bool kUseExpandedLayout, bool kAllowMultipleReduction, bool kDirectOnly,
           int kNumSMs, int kNumLaunchSMs, int kNumWarps, int kNumChannelsPerSM,
           int kNumMaxScaleupRanks,
           int kHidden,
@@ -48,8 +48,8 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     //   hybrid: the scale-out receive rows, indexed by the scale-out rank (domain) owning the expert
     //   direct: the scale-up rows (the direct receive buffer), indexed by the position of the rank owning the expert
     //           (see the direct-mode note in `dispatch.cuh`)
-    const bool is_direct = topo.mode == topology::kModeDirect;
-    const bool use_incremental_combine = combine_policy::use_incremental(topo, num_combined_tokens);
+    const bool is_direct = kDirectOnly or topo.mode == topology::kModeDirect;
+    const bool use_incremental_combine = not kDirectOnly and combine_policy::use_incremental(topo, num_combined_tokens);
     const int num_reduce_ranks = is_direct ? num_scaleup_ranks : num_scaleout_ranks;
     const bool use_rank_layout = elastic::use_rank_layout(kAllowMultipleReduction, num_reduce_ranks, kNumTopk);
     const int num_tokens_in_layout = get_num_tokens_in_layout(kAllowMultipleReduction, num_reduce_ranks, kNumTopk);

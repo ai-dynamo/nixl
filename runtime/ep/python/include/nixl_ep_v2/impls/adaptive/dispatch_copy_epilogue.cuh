@@ -14,7 +14,7 @@
 namespace nixl::runtime::ep::elastic::adaptive {
 
 // Copy epilogue launched on the whole device, with ranks from `EPTopology` and channels from the fixed main grid.
-template <bool kDoExpand, bool kDoZeroPadding,
+template <bool kDoExpand, bool kDoZeroPadding, bool kDirectOnly,
           // NOTES: this channel concept only applies for scale-out ranks
           int kNumSMs, int kNumLaunchSMs, int kNumChannelsPerSM, int kNumWarps,
           int kNumMaxScaleupRanks,
@@ -42,7 +42,7 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
     constexpr int num_channels = kNumChannelsPerSM * kNumLaunchSMs;
     // Direct mode has no forwarding stage, hence no linked list to build
-    const bool is_direct = topo.mode == topology::kModeDirect;
+    const bool is_direct = kDirectOnly or topo.mode == topology::kModeDirect;
 
     // Utils
     const auto sm_idx = static_cast<int>(blockIdx.x);

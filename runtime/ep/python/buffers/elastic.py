@@ -56,8 +56,8 @@ class EPHandle:
         num_unaligned_recv_tokens_per_expert: the actual (unaligned) number of tokens received per local
             expert, shape `[num_experts_per_rank]` with `torch.int`, in both compact and expanded layouts.
         recv_src_metadata: source token indices and buffer slot indices.
-        token_metadata_at_forward: per-channel forwarded token metadata (allocated in both modes, written in hybrid mode).
-        channel_linked_list: per-channel per-scaleup-peer linked list (allocated in both modes, written in hybrid mode).
+        token_metadata_at_forward: per-channel hybrid forwarding metadata; empty when `max_num_scaleout_ranks` is one.
+        channel_linked_list: per-channel hybrid linked list over scaleup peers; empty when `max_num_scaleout_ranks` is one.
         num_recv_tokens: the actual receive count with CPU synchronization; otherwise the declared maximum world's capacity.
         num_recv_tokens_device: 0-d `torch.int` device view of the real count, valid without a CPU sync and in graphs.
     """

@@ -51,6 +51,7 @@ adaptive_dispatch_impl(
     void* mapped_host_workspace,
     const topology::EPTopology* topology_ptr,
     const int num_max_tokens_per_rank) {
+    nixl::require_gpu_rdma<(kNumMaxScaleoutRanks > 1)>();
     EP_STATIC_ASSERT(kNumNotifyWarps % 4 == 0, "Invalid warpgroup size");
     EP_STATIC_ASSERT(kNumMaxScaleoutRanks <= topology::kNumMaxScaleoutRanksCap, "Too many scale-out ranks");
     EP_STATIC_ASSERT(kNumMaxScaleupRanks <= topology::kNumMaxScaleupRanksCap, "Too many scale-up ranks");
@@ -83,7 +84,7 @@ adaptive_dispatch_impl(
 
     // Direct mode: one active NVLink domain, including a nonzero domain index.
     // Data warps write to each peer's position without scale-out staging or forwarding.
-    const bool is_direct = topo.mode == topology::kModeDirect;
+    const bool is_direct = kNumMaxScaleoutRanks == 1 or topo.mode == topology::kModeDirect;
 
     // Utils
     // NOTES: a warp is a channel (several channels may share one transport channel, see `comm::get_channel_idx`)
@@ -117,7 +118,7 @@ adaptive_dispatch_impl(
 
     // Global parallel barriers for scale-out subteam and scale-up subteam
     comm::gpu_barrier_rt<kNumThreads, kNumTimeoutCycles, comm::kHybridDispatchTag0, kNumMaxScaleupRanks, false, false, true>(
-        ctx, workspace_layout, topo, sm_idx, thread_idx);
+        ctx, workspace_layout, topo, sm_idx, thread_idx, kNumMaxScaleoutRanks > 1);
     EP_PROFILE_STAMP(ctx.local_base, DispatchEntryBarrier);
 
     // The golden layout during the whole process for both scale-out and forward warps
@@ -126,8 +127,7 @@ adaptive_dispatch_impl(
             math::advance_ptr<int>(smem, kNumSmemBytesForNotify)).get_rank_buffer(warp_idx - kNumNotifyWarps).get_token_buffer(0);
 
     // All the buffers
-    // The scale-out send buffer (the RDMA sources) is a region of its own: the NIC reads it after this kernel has ended; the next
-    // dispatch rewrites it only past its start barrier, which every receiver reaches after consuming this launch's records (see `comm::gpu_barrier_rt`)
+    // RDMA sources use the shared SEND arena, separate from RECEIVE; `comm::gpu_barrier_rt` protects reuse.
     auto scaleup_buffer = layout::BufferLayout<false>(
         token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank, buffer);
     auto scaleout_send_buffer = layout::BufferLayout<false>(

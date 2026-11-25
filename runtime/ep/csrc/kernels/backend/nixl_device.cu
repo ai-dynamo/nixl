@@ -24,6 +24,10 @@ __global__ void cache_peer_pointers_kernel(const NIXLDeviceContext context, cons
 
 }  // namespace
 
+bool has_gpu_rdma_device_code() {
+    return UCT_RC_MLX5_GDA_SUPPORTED;
+}
+
 cudaError_t cache_peer_pointers(const NIXLDeviceContext& context, const int* connected, cudaStream_t stream) {
     cache_peer_pointers_kernel<<<1, 128, 0, stream>>>(context, connected);
     return cudaGetLastError();

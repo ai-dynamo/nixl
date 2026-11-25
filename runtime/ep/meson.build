@@ -215,7 +215,6 @@ py.install_sources(
     'python/utils/__init__.py',
     'python/utils/envs.py',
     'python/utils/event.py',
-    'python/utils/find_pkgs.py',
     'python/utils/math.py',
     'python/utils/nixl_bootstrap.py',
     'python/utils/nixl_fabric.py',

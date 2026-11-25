@@ -53,13 +53,12 @@ public:
             }
         }
 
-        // Print symbols
         if (symbol_names.size() != 1) {
-            NIXL_ERROR << "Corrupted JIT cache directory (expected 1 kernel symbol, found " << symbol_names.size()
-                       << "): " << dir_path.string() << "; clear this cache directory and restart your task.";
+            NIXL_ERROR << "Expected 1 kernel entry in compiled CUBIN " << cubin_path.string()
+                       << ", found " << symbol_names.size();
             for (const auto& symbol: symbol_names)
                 NIXL_ERROR << "Symbol name: " << symbol;
-            EP_HOST_ASSERT(false and "Corrupted JIT cache directory");
+            EP_HOST_ASSERT(false and "Failed to identify a unique kernel entry in compiled CUBIN");
         }
 
         return symbol_names[0];

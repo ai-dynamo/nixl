@@ -17,8 +17,9 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
   wheel installations, supporting the target GPU and the selected NIXL/UCX builds.
 - NIXL and UCX builds with the GPU device API (`nixlAtomicAdd` and UCX
   device channels), including CUDA IPC support.
-- RDMA development headers on JIT hosts, including `infiniband/mlx5dv.h`
-  from rdma-core or OFED, for UCX's GPU RDMA device implementation.
+- For buffers declaring `max_num_scaleout_ranks > 1`, GDA-enabled UCX and RDMA
+  development headers (including `infiniband/mlx5dv.h` from rdma-core or OFED)
+  on both build and JIT hosts.
 - NVLink within scale-up domains and RDMA between domains.
 - `nvidia-ml-py>=13.580.65` for NVLink domain discovery during peer connection.
 
@@ -41,8 +42,7 @@ The public import is `nixl.runtime.ep`, routed through the selected NIXL CUDA
 backend wheel. For a Meson installation, put its Python site-packages and
 `src/bindings/python/nixl-meta` on `PYTHONPATH`; installed wheels handle this.
 NIXL's wheel builder includes the matching Torch-versioned extension and
-NIXL/UCX device headers. Explicit header overrides remain available through
-`NIXL_EP_NIXL_ROOT_DIR` and `NIXL_EP_UCX_ROOT_DIR` and must match the loaded libraries.
+NIXL/UCX device headers. The JIT uses those packaged headers directly.
 
 Runtime settings use `NIXL_EP_*`; compiler macros retain `EP_*`. Set
 `NIXL_EP_NUM_TOPK_IDX_BITS` to 32 or 64 when building to choose the routing-index
@@ -54,8 +54,13 @@ replacement process to a stale wire-up endpoint, without changing the process
 environment. Explicit `NIXL_UCX_UD_LINGER_TIMEOUT` or `UCX_UD_LINGER_TIMEOUT`
 settings override this default; the NIXL-prefixed setting takes precedence.
 
-UCX transport channels per peer default to 64. For tuning, set
+GPU RDMA channels per peer default to 64. For tuning, set
 `NIXL_EP_NIXL_NUM_CHANNELS` to a value from 1 through 64 before construction.
+Buffers with `max_num_scaleout_ranks == 1` omit the local RDMA source view and
+default to excluding UCX's `rc_gda` transport, avoiding GPU RDMA queue allocations.
+NVLink mappings and CPU connection setup, including CPU-managed RDMA, remain available.
+Explicit `NIXL_UCX_TLS` or `UCX_TLS` settings override this exclusion and must
+exclude `rc_gda` to retain the queue-memory saving.
 
 ### Dispatch and combine
 

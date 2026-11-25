@@ -26,6 +26,7 @@ from typing import (
     Callable,
     Dict,
     List,
+    NamedTuple,
     Optional,
     Sequence,
     Tuple,
@@ -203,6 +204,48 @@ def sample_routing(
 
 # A dispatch payload: BF16 rows, or `(data, scales)` for FP8 and NVFP4
 Payload = Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
+Bias = Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]
+
+
+class EPMode(NamedTuple):
+    do_handle_copy: bool = True
+    expert_alignment: int = 1
+    num_bias: int = 0
+    with_previous_event: bool = False
+    async_with_compute_stream: bool = False
+    allocate_on_comm_stream: bool = False
+
+
+def enumerate_ep_modes():
+    for do_handle_copy in (True, False):
+        for expert_alignment in (128, 1):
+            for num_bias in (0, 1, 2):
+                for with_previous_event in (False, True):
+                    for async_with_compute_stream in (False, True):
+                        for allocate_on_comm_stream in (
+                            (True,) if with_previous_event else (False, True)
+                        ):
+                            yield EPMode(
+                                do_handle_copy,
+                                expert_alignment,
+                                num_bias,
+                                with_previous_event,
+                                async_with_compute_stream,
+                                allocate_on_comm_stream,
+                            )
+
+
+def launch(buffer: runtime_ep.ElasticBuffer, name: str, mode: EPMode, **kwargs):
+    if mode.with_previous_event:
+        kwargs["previous_event"] = buffer.capture()
+    values = getattr(buffer, name)(
+        async_with_compute_stream=mode.async_with_compute_stream,
+        allocate_on_comm_stream=mode.allocate_on_comm_stream,
+        **kwargs,
+    )
+    if mode.async_with_compute_stream:
+        values[-1].current_stream_wait()
+    return values
 
 
 def as_nvfp4(x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
@@ -373,7 +416,7 @@ class Case:
         return y
 
     def combine_reference(
-        self, phase: List[int], topk_idx: torch.Tensor
+        self, phase: List[int], topk_idx: torch.Tensor, bias: Bias = None
     ) -> torch.Tensor:
         """This rank's expected combine output in the phase for `topk_idx` (dropped selections hold -1 and contribute zero)"""
         active = (topk_idx >= 0) & self.active_expert_mask(phase)[topk_idx.clamp_min(0)]
@@ -392,7 +435,11 @@ class Case:
                 self.max_so,
                 self.max_su,
                 self.num_experts,
-                None,
+                (
+                    (bias[0][rows], bias[1][rows])
+                    if isinstance(bias, tuple)
+                    else bias[rows] if bias is not None else None
+                ),
                 *combine_recipe(self.buffer),
             )
         return ref
@@ -494,21 +541,46 @@ def check_dispatch(
     assert torch.equal(
         recv_topk_weights[:num_recv][order], exp_w
     ), f"[{tag}] weights mismatch"
+    counts = torch.bincount(
+        exp_idx[exp_idx >= 0].to(torch.int64),
+        minlength=case.buffer.num_experts_per_rank,
+    )
+    alignment = handle.expert_alignment
+    aligned_counts = (counts + alignment - 1) // alignment * alignment
+    assert torch.equal(
+        handle.num_unaligned_recv_tokens_per_expert, counts
+    ), f"[{tag}] per-expert receive counts mismatch"
+    assert (
+        handle.num_recv_tokens_per_expert_list == aligned_counts.tolist()
+    ), f"[{tag}] aligned CPU expert counts mismatch"
+    assert torch.equal(
+        handle.psum_num_recv_tokens_per_expert, aligned_counts.cumsum(0)
+    ), f"[{tag}] aligned expert prefix sums mismatch"
     return num_recv
 
 
-def run_eager(case: Case, phase_idx: int, phase: List[int], tag: str):
+def run_eager(
+    case: Case, phase_idx: int, phase: List[int], tag: str, mode: EPMode = EPMode()
+):
     buffer = case.buffer
     me = buffer.world_rank
     topk_idx, topk_weights = case.routing(phase_idx, me, phase)
     x = case.payload(case.payload_indices(me))
-    recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
+    dispatch_args = case.dispatch_kwargs(do_cpu_sync=True) | dict(
+        do_handle_copy=mode.do_handle_copy, expert_alignment=mode.expert_alignment
+    )
+    recv_x, recv_topk_idx, recv_topk_weights, handle, dispatch_event = launch(
+        buffer,
+        "dispatch",
+        mode,
         x=x,
         topk_idx=topk_idx,
         topk_weights=topk_weights,
-        **case.dispatch_kwargs(do_cpu_sync=True),
+        **dispatch_args,
     )
-    torch.cuda.synchronize()
+    assert (
+        handle.topk_idx.data_ptr() != topk_idx.data_ptr()
+    ) == mode.do_handle_copy, f"[{tag}] handle-copy setting was not honored"
     assert torch.equal(handle.topk_idx, topk_idx), "handle changed external expert IDs"
     num_recv = check_dispatch(
         case, phase_idx, phase, recv_x, recv_topk_idx, recv_topk_weights, handle, tag
@@ -519,10 +591,18 @@ def run_eager(case: Case, phase_idx: int, phase: List[int], tag: str):
     y = case.combine_input(
         handle.recv_src_metadata[:num_recv, 0], recv_topk_idx[:num_recv]
     )
-    combined_x, _ = buffer.combine(x=y, handle=handle)
-    torch.cuda.synchronize()
+    biases = tuple(
+        torch.randn(
+            (topk_idx.shape[0], case.hidden), dtype=torch.bfloat16, device="cuda"
+        )
+        for _ in range(mode.num_bias)
+    )
+    bias = (biases[0], biases[1]) if len(biases) == 2 else biases[0] if biases else None
+    combined_x, combine_event = launch(
+        buffer, "combine", mode, x=y, handle=handle, bias=bias
+    )
 
-    ref = case.combine_reference(phase, topk_idx)
+    ref = case.combine_reference(phase, topk_idx, bias)
     assert torch.equal(
         combined_x, ref
     ), f"[{tag}] combined_x mismatch, diff={calc_diff(combined_x, ref)}"
@@ -1208,6 +1288,13 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         0 <= p < len(plan) for p in perf_phases
     ), f"--perf-phases {sorted(perf_phases)} outside the plan of {len(plan)} phases"
     phase_records, transition_records = [], []
+
+    for ep_mode in enumerate_ep_modes():
+        tag = f"rank {me} {mode} API {case.dtype} {ep_mode}"
+        if me == min(present):
+            print(f" > [{tag}]", flush=True)
+        run_eager(case, 0, present, tag, ep_mode)
+    cohort_print(f"API combinations passed ({case.dtype})")
 
     # The phase each rank captures its graph at: the first phase of the plan it takes part in (reversed: the first wins)
     capture_phase_of = {r: list(phase) for phase in reversed(plan) for r in phase}

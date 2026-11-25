@@ -25,11 +25,6 @@ public:
     // `(region base, device, world rank, registered bytes)`
     using peer_info_t = std::tuple<uint64_t, int, int, uint64_t>;
 
-    // The two send buffers' offsets inside `buffer_ptr`, computed for the declared maximum world
-    struct BufferArena {
-        int64_t dispatch_send_offset, combine_send_offset;
-    };
-
     buffer(const int64_t& num_buffer_bytes,
            const bool& allow_multiple_reduction,
            const bool& use_fp8_dispatch,
@@ -106,14 +101,13 @@ public:
 
     static int get_max_num_fp8_sf_packs(const int& hidden);
 
-    // How the token buffer is carved: the dispatch and the combine overlay their RECEIVE regions on `[0, num_shared_bytes)`
-    // (sized for the larger of the two); the scale-out SEND buffers of the two kernels sit at the END of the GPU buffer, each
-    // in a region of its own, because the NIC keeps reading the sources of RDMA puts after the kernel that issued them has ended
-    static std::tuple<int64_t, int64_t, int64_t> get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                                                        const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
-                                                                        const int& num_scaleout_ranks, const int& num_scaleup_ranks);
+    // Dispatch and combine share RECEIVE at the start and SEND at the end, each sized for the larger requirement.
+    // A declared one-domain maximum needs only scale-up RECEIVE storage.
+    static std::tuple<int64_t, int64_t> get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
+                                                               const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
+                                                               const int& num_scaleout_ranks, const int& num_scaleup_ranks);
 
-    BufferArena get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const;
+    int64_t get_send_buffer_offset(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const;
 
     // Buffer size for a declared maximum world (the committed extent's sub-layouts are prefixes of the maximum ones)
     static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,

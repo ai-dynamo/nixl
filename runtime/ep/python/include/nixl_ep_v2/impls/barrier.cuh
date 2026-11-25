@@ -15,9 +15,10 @@ namespace nixl::runtime::ep::elastic {
 
 // Host-level barrier of the active ranks (`buffer::barrier`): drain RDMA, then run the scale-out and scale-up
 // peer barriers. Membership, peers and transport come from the topology descriptor (`EPTopology`).
-template <int kNumThreads, int kNumMaxScaleupRanks, int64_t kNumTimeoutCycles>
+template <bool kDirectOnly, int kNumThreads, int kNumMaxScaleupRanks, int64_t kNumTimeoutCycles>
 __global__ void __launch_bounds__(kNumThreads, 1)
 barrier_impl(const topology::EPTopology* topology_ptr) {
+    nixl::require_gpu_rdma<not kDirectOnly>();
     const auto topo = topology::load(topology_ptr);
     if (not topo.is_active())
         return;

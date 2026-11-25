@@ -90,7 +90,7 @@ buffer::buffer(const int64_t& num_buffer_bytes,
     this->num_gpu_timeout_cycles = static_cast<int64_t>(num_gpu_timeout_secs);
     this->num_gpu_timeout_cycles *= jit::device_runtime->get_clock_rate();
     // Compile during setup so the first barrier never triggers compilation.
-    build_barrier(max_num_scaleup_ranks, num_gpu_timeout_cycles);
+    build_barrier(max_num_scaleout_ranks == 1, max_num_scaleup_ranks, num_gpu_timeout_cycles);
 
     // Assign workspaces and buffers
     buffer_ptr = static_cast<uint8_t*>(workspace) + num_workspace_bytes;
@@ -183,6 +183,8 @@ void buffer::update_topology_masks(const int& mode, const uint32_t& scaleout_mas
 
 topology::EPTopology buffer::make_topology(const int& mode, const uint32_t& scaleout_mask, const topology::ScaleupMask& scaleup_mask) const {
     EP_HOST_ASSERT(mode == topology::kModeDirect or mode == topology::kModeHybrid);
+    EP_HOST_ASSERT((max_num_scaleout_ranks > 1 or mode == topology::kModeDirect) and
+                   "A buffer with max_num_scaleout_ranks=1 reserves no scale-out storage; use direct mode");
     EP_HOST_ASSERT(scaleout_mask != 0 and scaleup_mask.popc() > 0 and "No rank is active");
     const int num_scaleout_ranks = 32 - __builtin_clz(scaleout_mask);
     const int num_scaleup_ranks = scaleup_mask.extent();
@@ -336,7 +338,7 @@ void buffer::barrier(const bool& use_comm_stream, const bool& with_cpu_sync) con
         CUDA_RUNTIME_CHECK(cudaDeviceSynchronize());
 
     // Launch GPU barrier
-    launch_barrier(get_topology_ptr(), max_num_scaleup_ranks, num_gpu_timeout_cycles, stream);
+    launch_barrier(get_topology_ptr(), max_num_scaleout_ranks == 1, max_num_scaleup_ranks, num_gpu_timeout_cycles, stream);
 
     // Let CPU wait
     if (with_cpu_sync)
@@ -413,6 +415,8 @@ std::tuple<int64_t, int64_t> buffer::get_dispatch_buffer_size(const int& num_max
 
     const auto scaleup_recv_buffer = layout::BufferLayout<false>(
         token_layout, num_scaleup_ranks, num_scaleout_ranks * num_max_tokens_per_rank);
+    if (num_scaleout_ranks == 1)
+        return {scaleup_recv_buffer.get_num_bytes(), 0};
     const auto scaleout_send_buffer = layout::BufferLayout<false>(
         token_layout, 1, num_max_tokens_per_rank);
     const auto scaleout_recv_buffer = layout::BufferLayout<false>(
@@ -431,6 +435,8 @@ std::tuple<int64_t, int64_t> buffer::get_combine_buffer_size(const int& num_max_
     const int num_tokens_in_scaleout_layout = allow_multiple_reduction ? std::min(num_scaleout_ranks, num_topk) : num_topk;
     const auto scaleup_recv_buffer = layout::BufferLayout<false>(
         token_layout, num_tokens_in_scaleup_layout, num_scaleout_ranks * num_max_tokens_per_rank);
+    if (num_scaleout_ranks == 1)
+        return {scaleup_recv_buffer.get_num_bytes(), 0};
     const auto scaleout_recv_buffer = layout::BufferLayout<false>(
         token_layout, num_tokens_in_scaleout_layout, num_max_tokens_per_rank);
     const auto scaleout_send_buffer = layout::BufferLayout<false>(
@@ -445,23 +451,23 @@ int buffer::get_max_num_fp8_sf_packs(const int& hidden) {
     return math::ceil_div(hidden, 32);
 }
 
-std::tuple<int64_t, int64_t, int64_t> buffer::get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                                                     const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
-                                                                     const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+std::tuple<int64_t, int64_t> buffer::get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
+                                                            const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
+                                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
     const auto elem_size = use_fp8_dispatch ? sizeof(__nv_fp8_e4m3) : sizeof(nv_bfloat16);
     const auto num_sf_packs = use_fp8_dispatch ? get_max_num_fp8_sf_packs(hidden) : 0;
     const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
         num_max_tokens_per_rank, hidden * elem_size, num_sf_packs, num_topk, num_scaleout_ranks, num_scaleup_ranks);
     const auto [num_combine_recv_bytes, num_combine_send_bytes] = get_combine_buffer_size(
         num_max_tokens_per_rank, hidden, num_topk, num_scaleout_ranks, num_scaleup_ranks, allow_multiple_reduction);
-    return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), num_dispatch_send_bytes, num_combine_send_bytes};
+    return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), std::max(num_dispatch_send_bytes, num_combine_send_bytes)};
 }
 
-buffer::BufferArena buffer::get_buffer_arena(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const {
-    const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena_sizes(
+int64_t buffer::get_send_buffer_offset(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const {
+    const auto [num_recv_bytes, num_send_bytes] = get_buffer_arena_sizes(
         num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, use_fp8_dispatch, max_num_scaleout_ranks, max_num_scaleup_ranks);
-    EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes);
-    return {num_buffer_bytes - num_dispatch_send_bytes - num_combine_send_bytes, num_buffer_bytes - num_combine_send_bytes};
+    EP_HOST_ASSERT(num_recv_bytes + num_send_bytes <= num_buffer_bytes);
+    return num_buffer_bytes - num_send_bytes;
 }
 
 int64_t buffer::calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
@@ -474,10 +480,10 @@ int64_t buffer::calculate_buffer_size(const int& max_num_scaleout_ranks, const i
     // The worst case SF bytes must be less than the main part
     EP_HOST_ASSERT(get_max_num_fp8_sf_packs(hidden) * sizeof(sf_pack_t) <= hidden);
 
-    // Shared receive regions plus the two send buffers (see `get_buffer_arena_sizes`), aligned to 2 MB
-    const auto [num_shared_bytes, num_dispatch_send_bytes, num_combine_send_bytes] = get_buffer_arena_sizes(
+    // Separate receive and send arenas, shared by dispatch and combine, aligned to 2 MB
+    const auto [num_recv_bytes, num_send_bytes] = get_buffer_arena_sizes(
         num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, use_fp8_dispatch, max_num_scaleout_ranks, max_num_scaleup_ranks);
-    return math::align(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes, kNumAlignmentBytes);
+    return math::align(num_recv_bytes + num_send_bytes, kNumAlignmentBytes);
 }
 
 std::tuple<torch::Tensor, std::optional<torch::Tensor>,
@@ -600,12 +606,6 @@ buffer::dispatch(const torch::Tensor& x,
 
     // Combine's per-rank prefix sums; the total occupies the fixed last slot. Zero before dispatch.
     auto psum_num_recv_tokens_per_scaleup_rank = torch::empty({max_num_scaleup_ranks + 1}, int_options);
-    // A prelaunch refusal must retain storage until the queued initialization completes.
-    auto preserve_prefix_on_failure = c10::make_scope_exit([&] {
-        psum_num_recv_tokens_per_scaleup_rank.record_stream(comm_stream);
-    });
-    CUDA_RUNTIME_CHECK(cudaMemsetAsync(psum_num_recv_tokens_per_scaleup_rank.data_ptr(), 0,
-                                       psum_num_recv_tokens_per_scaleup_rank.nbytes(), comm_stream));
 
     // Decide number of channels by shared memory consumption
     const int num_smem_bytes = jit::device_runtime->get_num_smem_bytes();
@@ -615,15 +615,16 @@ buffer::dispatch(const torch::Tensor& x,
     NIXL_DEBUG << "Elastic buffer uses " << num_channels_per_sm << " channels per SM";
     const int num_channels = num_launch_sms * num_channels_per_sm;
 
-    // Handles: the forwarding metadata and the linked list are allocated in both modes (the direct mode
-    // leaves them unused), so that a captured graph can switch modes
+    // Retain forwarding capacity for graph mode changes only when multiple domains are possible.
+    // Empty tensors retain the channel dimension for combine when the maximum is one domain.
+    const bool needs_forwarding = max_num_scaleout_ranks > 1;
     const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels);
-    const int64_t max_linked_list_len = static_cast<int64_t>(num_channels) *
-        (static_cast<int64_t>(max_num_scaleout_ranks) * num_max_tokens_per_channel + 1);
+    const int64_t max_linked_list_len = needs_forwarding ? static_cast<int64_t>(num_channels) *
+        (static_cast<int64_t>(max_num_scaleout_ranks) * num_max_tokens_per_channel + 1) : 0;
 
     // Forwarded token [channel, token]: source rank/token (0), chunk-end flag (1),
     // top-k scale-up peers (2:2+topk), then their destination slots (2+topk:).
-    const auto num_max_forwarded_tokens = topo.num_scaleout_ranks * num_max_tokens_per_channel + 1;
+    const auto num_max_forwarded_tokens = needs_forwarding ? topo.num_scaleout_ranks * num_max_tokens_per_channel + 1 : 0;
     const auto num_forward_metadata_dims = 2 + num_topk * 2;
     auto token_metadata_at_forward = alloc_flat(
         max_linked_list_len * num_forward_metadata_dims,
@@ -646,7 +647,7 @@ buffer::dispatch(const torch::Tensor& x,
     }
 
     // Check buffer size
-    const auto arena = get_buffer_arena(num_max_tokens_per_rank, hidden, num_topk);
+    const auto send_buffer_offset = get_send_buffer_offset(num_max_tokens_per_rank, hidden, num_topk);
 
     // Ready and clean host workspace for this round
     const auto host_workspace_layout = layout::WorkspaceLayout(host_workspace);
@@ -669,7 +670,8 @@ buffer::dispatch(const torch::Tensor& x,
                     tensor->value().record_stream(comm_stream);
         }
     });
-    preserve_prefix_on_failure.release();
+    CUDA_RUNTIME_CHECK(cudaMemsetAsync(psum_num_recv_tokens_per_scaleup_rank.data_ptr(), 0,
+                                       psum_num_recv_tokens_per_scaleup_rank.nbytes(), comm_stream));
 
     // Do dispatch into the buffers (with SM limitation)
     launch_dispatch(x.data_ptr(), sf_ptr,
@@ -684,7 +686,7 @@ buffer::dispatch(const torch::Tensor& x,
                     num_hidden_bytes,
                     num_sf_packs, sf_token_stride, sf_hidden_stride,
                     num_experts_per_rank, num_topk, expert_alignment,
-                    buffer_ptr, math::advance_ptr(buffer_ptr, arena.dispatch_send_offset),
+                    buffer_ptr, math::advance_ptr(buffer_ptr, send_buffer_offset),
                     host_workspace,
                     get_topology_ptr(),
                     max_num_scaleout_ranks, max_num_scaleup_ranks,
@@ -819,7 +821,7 @@ buffer::dispatch(const torch::Tensor& x,
                                   recv_src_metadata.data_ptr<int>(),
                                   channel_linked_list_ptr,
                                   num_unaligned_recv_tokens_per_expert_ptr,
-                                  do_cpu_sync ? num_recv_tokens : -1, max_num_scaleup_ranks, num_max_tokens_per_rank,
+                                  do_cpu_sync ? num_recv_tokens : -1, max_num_scaleout_ranks == 1, max_num_scaleup_ranks, num_max_tokens_per_rank,
                                   num_hidden_bytes,
                                   num_sf_packs, recv_sf_token_stride, recv_sf_hidden_stride,
                                   num_experts_per_rank, num_topk, expert_alignment,
@@ -921,7 +923,7 @@ buffer::combine(const torch::Tensor& x,
     const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream, stream_guard);
 
     // Check buffer size
-    const auto arena = get_buffer_arena(num_max_tokens_per_rank, hidden, num_topk);
+    const auto send_buffer_offset = get_send_buffer_offset(num_max_tokens_per_rank, hidden, num_topk);
 
     // The forwarding metadata of the dispatch handle
     // The token metadata during forward
@@ -931,9 +933,10 @@ buffer::combine(const torch::Tensor& x,
                    "Invalid dispatch handle channel count");
     const int num_channels_per_sm = num_channels_ / num_launch_sms;
     const auto num_max_tokens_per_channel = math::ceil_div(num_max_tokens_per_rank, num_channels_);
+    const auto num_max_forwarded_tokens = max_num_scaleout_ranks > 1 ? topo.num_scaleout_ranks * num_max_tokens_per_channel + 1 : 0;
     const int num_channels = num_channels_;
     int* token_metadata_at_forward_ptr = token_metadata_at_forward.data_ptr<int>();
-    EP_HOST_ASSERT(d1 == topo.num_scaleout_ranks * num_max_tokens_per_channel + 1);
+    EP_HOST_ASSERT(d1 == num_max_forwarded_tokens);
     EP_HOST_ASSERT(d2 == 2 + num_topk * 2);
     EP_HOST_ASSERT(token_metadata_at_forward.is_cuda() and token_metadata_at_forward.is_contiguous());
 
@@ -941,7 +944,7 @@ buffer::combine(const torch::Tensor& x,
     const auto [num_channels__, d1_, d2_] = get_shape<3>(channel_linked_list);
     int* channel_linked_list_ptr = channel_linked_list.data_ptr<int>();
     EP_HOST_ASSERT(num_channels == num_channels__);
-    EP_HOST_ASSERT(d1_ == topo.num_scaleout_ranks * num_max_tokens_per_channel + 1);
+    EP_HOST_ASSERT(d1_ == num_max_forwarded_tokens);
     EP_HOST_ASSERT(d2_ == topo.num_scaleup_ranks);
     EP_HOST_ASSERT(channel_linked_list.is_cuda() and channel_linked_list.is_contiguous());
 
@@ -969,12 +972,12 @@ buffer::combine(const torch::Tensor& x,
         psum_num_recv_tokens_per_scaleup_rank.data_ptr<int>(),
         token_metadata_at_forward_ptr,
         channel_linked_list_ptr,
-        buffer_ptr, math::advance_ptr(buffer_ptr, arena.combine_send_offset),
+        buffer_ptr, math::advance_ptr(buffer_ptr, send_buffer_offset),
         get_topology_ptr(),
         recv_count_is_exact ? num_reduced_tokens : -1, num_combined_tokens, num_max_tokens_per_rank,
         hidden, num_topk,
         num_gpu_timeout_cycles,
-        max_num_scaleup_ranks,
+        max_num_scaleout_ranks == 1, max_num_scaleup_ranks,
         num_launch_sms,
         num_channels_per_sm,
         jit::device_runtime->get_num_smem_bytes(),
@@ -997,7 +1000,7 @@ buffer::combine(const torch::Tensor& x,
                                    get_topology_ptr(),
                                    jit::device_runtime->get_num_sms(), num_launch_sms,
                                    jit::device_runtime->get_num_smem_bytes(),
-                                   max_num_scaleup_ranks,
+                                   max_num_scaleout_ranks == 1, max_num_scaleup_ranks,
                                    num_channels_per_sm,
                                    use_expanded_layout, allow_multiple_reduction,
                                    comm_stream);

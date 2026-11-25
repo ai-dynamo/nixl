@@ -9,6 +9,8 @@
 
 namespace nixl::runtime::ep::elastic::nixl {
 
+bool has_gpu_rdma_device_code();
+
 // Fill `context.p2p_ptrs` from `context.remote_mvh`: `nixlGetPtr` (a device function) for every peer with an endpoint (a pointer
 // iff UCX gave the peer its CUDA IPC lane), the local base for self, nullptr otherwise; the context travels by value (a staged view, a scratch table)
 cudaError_t cache_peer_pointers(const NIXLDeviceContext& context, const int* connected, cudaStream_t stream);

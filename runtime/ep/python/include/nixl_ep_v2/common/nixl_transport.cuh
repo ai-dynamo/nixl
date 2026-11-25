@@ -10,12 +10,12 @@ namespace nixl::runtime::ep::elastic::nixl {
 
 // Host-written at every commit, device-read; lives at a fixed device address for the life of the buffer (graphs replay)
 struct alignas(16) NIXLDeviceContext {
-    void* local_mvh;    // Local memory view: one entry, this rank's region
+    void* local_mvh;    // Local RDMA source view; null for permanently single-domain buffers
     void* remote_mvh;   // Remote memory view: `num_world_ranks` entries indexed by world rank (null agent without an endpoint)
     void** p2p_ptrs;    // `[num_world_ranks]`: a peer's region base when reachable with loads/stores, else nullptr
     void* local_base;   // This rank's region base (== the workspace pointer)
     int world_rank;     // This rank's world rank
-    int num_channels;   // UCX device channels the kernels may issue on (`ucx_num_device_channels`)
+    int num_channels;   // GPU RDMA channels; zero for permanently single-domain buffers
     int num_world_ranks; // Length of the tables (read by the pointer-cache kernel only)
 };
 static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context size");
@@ -30,7 +30,7 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 // Without UCX's device header NIXL compiles stubs that fail at run time (`nixlGetPtr` returns nullptr for every peer):
 // fail the build instead; the header test tells
 #if !__has_include(<ucp/api/device/ucp_device_impl.h>)
-#error "UCX device header <ucp/api/device/ucp_device_impl.h> not on the include path: set NIXL_EP_UCX_ROOT_DIR (-I <NIXL_EP_UCX_ROOT_DIR>/include)"
+#error "UCX device header <ucp/api/device/ucp_device_impl.h> missing: rebuild and reinstall NIXL EP with UCX device headers"
 #endif
 // Without UCX's CUDA IPC lane `nixlGetPtr` returns nullptr for every peer, the same symptom
 #if !defined(UCT_CUDA_IPC_SUPPORTED) || !UCT_CUDA_IPC_SUPPORTED
@@ -46,6 +46,13 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 // `p2p_ptrs[world_rank] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; same-position peers in
 // other domains get RDMA. Kernels route through these endpoints only. The fixed context address lets graphs replay across commits.
 namespace nixl::runtime::ep::elastic::nixl {
+
+template <bool kRequired>
+__device__ __forceinline__ void require_gpu_rdma() {
+    EP_STATIC_ASSERT(not kRequired or UCT_RC_MLX5_GDA_SUPPORTED,
+                     "Multi-domain NIXL EP requires UCX GPU RDMA device support: use GDA-enabled UCX and install "
+                     "the RDMA development headers (including infiniband/mlx5dv.h) on the JIT host");
+}
 
 // The kernels copy the transport context once per block, field by field through the read-only path into registers
 // (a whole-struct copy is materialised in local memory, as for the topology descriptor (`EPTopology`))
@@ -68,7 +75,8 @@ struct NIXLTransport {
 
     __device__ __forceinline__ NIXLTransport(const NIXLDeviceContext& ctx, const int& channel):
         ctx(ctx), channel(static_cast<unsigned>(channel)) {
-        EP_DEVICE_ASSERT(0 <= channel and channel < ctx.num_channels and "Channel outside the context's channel count");
+        // Channel 0 also serves mapped-only contexts; the host requires NVLink pointers for their active peers.
+        EP_DEVICE_ASSERT(0 <= channel and (channel == 0 or channel < ctx.num_channels) and "Channel outside the context's channel count");
     }
 
     // Byte offset of a local symmetric pointer inside the region

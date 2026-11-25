@@ -40,8 +40,6 @@ with _rtld_deepbind_import():
     _C = importlib.import_module(f".nixl_ep_v2_cpp_torch{_torch_mm}", __package__)
 sys.modules[f"{__package__}._C"] = _C
 
-from .utils.find_pkgs import find_nixl_root, find_ucx_root  # noqa: E402
-
 
 @functools.lru_cache()
 def find_cuda_home() -> str:
@@ -60,12 +58,7 @@ def find_cuda_home() -> str:
 def init_jit():
     # noinspection PyUnresolvedReferences
     library_root_path = os.path.dirname(os.path.abspath(__file__))
-    _C.init_jit(
-        library_root_path,
-        find_cuda_home(),
-        find_nixl_root(),
-        find_ucx_root(),
-    )
+    _C.init_jit(library_root_path, find_cuda_home())
 
 
 init_jit()
