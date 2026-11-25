@@ -25,6 +25,7 @@
 #include <condition_variable>
 #include <cstdint>
 #include <deque>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <thread>
@@ -169,7 +170,11 @@ private:
     mutable std::condition_variable queueCv_;
     mutable std::deque<job> queue_;
     bool stop_ = false;
-    std::vector<worker *> workerState_; // protected by queueMutex_
+    bool watchdogStop_ = false; // set only after the workers have joined
+    size_t started_ = 0; // workers past client::open
+    // Filled before any thread starts and freed only with the engine, so the
+    // watchdog and registration may hold a pointer after a worker exits.
+    std::vector<std::unique_ptr<worker>> workerState_;
     std::condition_variable startCv_;
 
     // DRAM regions. registerMem registers a region with every worker's client

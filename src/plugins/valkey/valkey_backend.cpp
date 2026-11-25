@@ -30,7 +30,6 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
-#include <iterator>
 
 class nixlValkeyReqH : public nixlBackendReqH {
 public:
@@ -103,18 +102,18 @@ nixlValkeyEngine::nixlValkeyEngine(const nixlBackendInitParams *init_params)
     }
 
     // Every worker opens its fabric session before the backend is usable.
-    workerState_.assign(config_.numWorkers, nullptr);
+    for (int i = 0; i < config_.numWorkers; i++) {
+        workerState_.push_back(std::make_unique<worker>());
+    }
     for (int i = 0; i < config_.numWorkers; i++) {
         workers_.emplace_back(&nixlValkeyEngine::workerLoop, this, i);
     }
     {
         std::unique_lock<std::mutex> lk(queueMutex_);
-        startCv_.wait(lk, [&] {
-            return std::all_of(
-                workerState_.begin(), workerState_.end(), [](worker *w) { return w; });
-        });
-        initErr = std::any_of(
-            workerState_.begin(), workerState_.end(), [](worker *w) { return !w->conn; });
+        startCv_.wait(lk, [&] { return started_ == workerState_.size(); });
+        initErr = std::any_of(workerState_.begin(),
+                              workerState_.end(),
+                              [](const std::unique_ptr<worker> &w) { return !w->conn; });
     }
     if (initErr) {
         return;
@@ -132,11 +131,18 @@ nixlValkeyEngine::~nixlValkeyEngine() {
         stop_ = true;
     }
     queueCv_.notify_all();
-    if (watchdog_.joinable()) {
-        watchdog_.join();
-    }
+    // The watchdog outlives the workers so it can still cancel a transfer that
+    // stalls while they drain the queue.
     for (auto &t : workers_) {
         t.join();
+    }
+    {
+        std::lock_guard<std::mutex> lk(queueMutex_);
+        watchdogStop_ = true;
+    }
+    queueCv_.notify_all();
+    if (watchdog_.joinable()) {
+        watchdog_.join();
     }
     if (ctrl_) {
         ctrl_->close();
@@ -234,11 +240,10 @@ nixlValkeyEngine::dropRegistrations(uint64_t id) const {
 
 std::vector<nixlValkeyEngine::worker *>
 nixlValkeyEngine::workers() const {
-    std::lock_guard<std::mutex> lk(queueMutex_);
     std::vector<worker *> ws;
-    std::copy_if(workerState_.begin(), workerState_.end(), std::back_inserter(ws), [](worker *w) {
-        return w != nullptr;
-    });
+    for (const auto &w : workerState_) {
+        ws.push_back(w.get());
+    }
     return ws;
 }
 
@@ -366,11 +371,11 @@ nixlValkeyEngine::releaseReqH(nixlBackendReqH *handle) const {
 
 void
 nixlValkeyEngine::workerLoop(size_t idx) {
-    worker w;
+    worker &w = *workerState_[idx];
     w.conn = client::open(config_, true);
     {
         std::lock_guard<std::mutex> lk(queueMutex_);
-        workerState_[idx] = &w;
+        started_++;
     }
     startCv_.notify_all();
 
@@ -392,10 +397,6 @@ nixlValkeyEngine::workerLoop(size_t idx) {
         j.req->pending.fetch_sub(1, std::memory_order_acq_rel);
     }
     dropConn(w);
-    {
-        std::lock_guard<std::mutex> lk(queueMutex_);
-        workerState_[idx] = nullptr;
-    }
 }
 
 nixl_status_t
@@ -464,7 +465,7 @@ nixlValkeyEngine::watchdogLoop() {
     while (true) {
         {
             std::unique_lock<std::mutex> lk(queueMutex_);
-            if (queueCv_.wait_for(lk, period, [&] { return stop_; })) {
+            if (queueCv_.wait_for(lk, period, [&] { return watchdogStop_; })) {
                 return;
             }
         }
