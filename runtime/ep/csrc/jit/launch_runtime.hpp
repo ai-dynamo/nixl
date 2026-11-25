@@ -9,11 +9,12 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
+#include "nixl_log.h"
 #include "../utils/system.hpp"
 #include "compiler.hpp"
 #include "include_parser.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 struct LaunchArgs {
     std::pair<int, int> grid_dim;
@@ -41,8 +42,7 @@ public:
 
         // TODO: optimize string concat performance
         code = absl::StrFormat("// Includes' hash value: %s\n%s", include_hash, code);
-        if (get_env<int>("NIXL_EP_JIT_DEBUG", 0))
-            printf("Generated kernel code:\n%s\n", code.c_str());
+        NIXL_DEBUG << "Generated kernel code:\n" << code;
         return code;
     }
 
@@ -62,14 +62,12 @@ public:
                                               launch_args.cooperative, launch_args.pdl_enabled);
 
         // Launch in the derived class
-        if (get_env<int>("NIXL_EP_JIT_DEBUG")) {
-            printf("Launch kernel with {%d, %d} x %d (cooperative: %d), shared memory: %d bytes, cluster: %d, stream: %ld\n",
-                   launch_args.grid_dim.first, launch_args.grid_dim.second, launch_args.num_threads,
-                   launch_args.cooperative,
-                   launch_args.smem_size, launch_args.cluster_dim, stream.id());
-        }
+        NIXL_DEBUG << "Launch kernel with {" << launch_args.grid_dim.first << ", " << launch_args.grid_dim.second
+                   << "} x " << launch_args.num_threads << " (cooperative: " << launch_args.cooperative
+                   << "), shared memory: " << launch_args.smem_size << " bytes, cluster: " << launch_args.cluster_dim
+                   << ", stream: " << stream.id();
         Derived::launch_impl(kernel, config, args);
     }
 };
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

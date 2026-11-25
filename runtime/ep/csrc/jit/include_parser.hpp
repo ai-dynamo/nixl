@@ -22,35 +22,9 @@
 #include "../utils/hash.hpp"
 #include "../utils/lazy_init.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 class IncludeParser {
-    std::unordered_map<std::string, std::optional<std::string>> cache;
-
-    static std::vector<std::string> get_includes(const std::string& code, const std::filesystem::path& file_path = "") {
-        std::vector<std::string> includes;
-        const std::regex pattern(R"(#\s*include\s*[<"][^>"]+[>"])");
-        std::sregex_iterator iter(code.begin(), code.end(), pattern);
-        const std::sregex_iterator end;
-
-        // TODO: parse relative paths as well
-        for (; iter != end; ++ iter) {
-            const auto include_str = iter->str();
-            const int len = include_str.length();
-            if (include_str.substr(0, 10) == "#include <" and include_str[len - 1] == '>' and include_str[10] != ' ' and include_str[len - 2] != ' ') {
-                std::string filename = include_str.substr(10, len - 11);
-                if (filename.rfind("nixl_ep_v2/", 0) == 0)  // We only parse `<nixl_ep_v2/*>`
-                    includes.push_back(filename);
-            } else {
-                std::string error_info = absl::StrFormat("Non-standard include: %s", include_str);
-                if (file_path != "")
-                    error_info += absl::StrFormat(" (%s)", file_path.string());
-                EP_HOST_UNREACHABLE(error_info);
-            }
-        }
-        return includes;
-    }
-
 public:
     static std::filesystem::path library_include_path;
 
@@ -85,10 +59,37 @@ public:
         cache[path] = std::nullopt;
         return (cache[path] = get_hash_value(code, false)).value();
     }
+
+private:
+    static std::vector<std::string> get_includes(const std::string& code, const std::filesystem::path& file_path = "") {
+        std::vector<std::string> includes;
+        const std::regex pattern(R"(#\s*include\s*[<"][^>"]+[>"])");
+        std::sregex_iterator iter(code.begin(), code.end(), pattern);
+        const std::sregex_iterator end;
+
+        // TODO: parse relative paths as well
+        for (; iter != end; ++ iter) {
+            const auto include_str = iter->str();
+            const int len = include_str.length();
+            if (include_str.substr(0, 10) == "#include <" and include_str[len - 1] == '>' and include_str[10] != ' ' and include_str[len - 2] != ' ') {
+                std::string filename = include_str.substr(10, len - 11);
+                if (filename.rfind("nixl_ep_v2/", 0) == 0)  // We only parse `<nixl_ep_v2/*>`
+                    includes.push_back(filename);
+            } else {
+                std::string error_info = absl::StrFormat("Non-standard include: %s", include_str);
+                if (file_path != "")
+                    error_info += absl::StrFormat(" (%s)", file_path.string());
+                EP_HOST_UNREACHABLE(error_info);
+            }
+        }
+        return includes;
+    }
+
+    std::unordered_map<std::string, std::optional<std::string>> cache;
 };
 
 EP_DECLARE_STATIC_VAR_IN_CLASS(IncludeParser, library_include_path);
 
 static auto include_parser = std::make_shared<IncludeParser>();
 
-}  // namespace nixl_ep_v2::jit
+}  // namespace nixl::runtime::ep::jit

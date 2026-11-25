@@ -10,7 +10,7 @@
 
 #include "../utils/lazy_driver.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 template <typename arg_t>
 static void* get_kernel_arg_ptr(arg_t& arg) {
@@ -99,4 +99,4 @@ static auto launch_kernel(const KernelHandle& kernel, const LaunchConfigHandle& 
     return lazy_cuLaunchKernelEx(&config, kernel, ptr_args, nullptr);
 }
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

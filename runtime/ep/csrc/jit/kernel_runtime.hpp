@@ -11,10 +11,11 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
+#include "nixl_log.h"
 #include "../utils/system.hpp"
 #include "handle.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 class KernelRuntime final {
 public:
@@ -24,8 +25,7 @@ public:
     explicit KernelRuntime(const std::filesystem::path& dir_path) {
         // NOLINT(*-pro-type-member-init)
         const auto cubin_path = dir_path / "kernel.cubin";
-        if (get_env<int>("NIXL_EP_JIT_DEBUG"))
-            printf("Loading CUBIN: %s\n", cubin_path.c_str());
+        NIXL_DEBUG << "Loading CUBIN: " << cubin_path.string();
 
         std::string symbol_name;
         std::ifstream in(dir_path / "kernel.symbol");
@@ -55,13 +55,10 @@ public:
 
         // Print symbols
         if (symbol_names.size() != 1) {
-            printf("Corrupted JIT cache directory (expected 1 kernel symbol, found %zu): %s, "
-                   "please run `rm -rf %s` and restart your task.\n",
-                   symbol_names.size(), dir_path.c_str(), dir_path.c_str());
-            printf("Symbol names: ");
+            NIXL_ERROR << "Corrupted JIT cache directory (expected 1 kernel symbol, found " << symbol_names.size()
+                       << "): " << dir_path.string() << "; clear this cache directory and restart your task.";
             for (const auto& symbol: symbol_names)
-                printf("%s, ", symbol.c_str());
-            printf("\n");
+                NIXL_ERROR << "Symbol name: " << symbol;
             EP_HOST_ASSERT(false and "Corrupted JIT cache directory");
         }
 
@@ -75,9 +72,8 @@ public:
         // because the directory is created atomically via rename
         if (not std::filesystem::exists(dir_path / "kernel.cu") or
             not std::filesystem::exists(dir_path / "kernel.cubin")) {
-            printf("Corrupted JIT cache directory (missing kernel.cu or kernel.cubin): %s, "
-                   "please run `rm -rf %s` and restart your task.\n",
-                   dir_path.c_str(), dir_path.c_str());
+            NIXL_ERROR << "Corrupted JIT cache directory (missing kernel.cu or kernel.cubin): " << dir_path.string()
+                       << "; clear this cache directory and restart your task.";
             EP_HOST_ASSERT(false and "Corrupted JIT cache directory");
         }
         return true;
@@ -88,4 +84,4 @@ public:
     }
 };
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

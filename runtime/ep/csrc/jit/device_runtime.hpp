@@ -9,23 +9,9 @@
 
 #include "../utils/lazy_init.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 class DeviceRuntime {
-    int64_t cached_clock_rate = 0;
-    std::shared_ptr<cudaDeviceProp> cached_prop;
-
-    std::shared_ptr<cudaDeviceProp> get_prop() {
-        if (cached_prop == nullptr) {
-            int device_idx;
-            cudaDeviceProp prop;
-            CUDA_RUNTIME_CHECK(cudaGetDevice(&device_idx));
-            CUDA_RUNTIME_CHECK(cudaGetDeviceProperties(&prop, device_idx));
-            cached_prop = std::make_shared<cudaDeviceProp>(prop);
-        }
-        return cached_prop;
-    }
-
 public:
     int64_t get_clock_rate() {
         if (cached_clock_rate == 0) {
@@ -62,8 +48,23 @@ public:
             return "100f";
         return std::to_string(major * 10 + minor) + "a";
     }
+
+private:
+    std::shared_ptr<cudaDeviceProp> get_prop() {
+        if (cached_prop == nullptr) {
+            int device_idx;
+            cudaDeviceProp prop;
+            CUDA_RUNTIME_CHECK(cudaGetDevice(&device_idx));
+            CUDA_RUNTIME_CHECK(cudaGetDeviceProperties(&prop, device_idx));
+            cached_prop = std::make_shared<cudaDeviceProp>(prop);
+        }
+        return cached_prop;
+    }
+
+    int64_t cached_clock_rate = 0;
+    std::shared_ptr<cudaDeviceProp> cached_prop;
 };
 
 static auto device_runtime = LazyInit<DeviceRuntime>([](){ return std::make_shared<DeviceRuntime>(); });
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

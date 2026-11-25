@@ -171,11 +171,12 @@ py.extension_module(
     v2_ext_name,
     [
         'csrc/python_api.cpp',
+        'csrc/elastic/buffer.cpp',
         'csrc/kernels/backend/nixl.cpp',
         'csrc/kernels/backend/nixl_device.cu',
     ],
     subdir: v2_install_dir,
-    dependencies: [nixl_dep, pybind_dep, cuda_dep, torch_dep, ucx_dep, absl_str_format_dep],
+    dependencies: [nixl_dep, nixl_common_dep, pybind_dep, cuda_dep, torch_dep, ucx_dep, absl_str_format_dep],
     include_directories: v2_inc_dirs,
     cpp_args: v2_cpp_args,
     cuda_args: v2_cuda_args,

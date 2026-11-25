@@ -14,7 +14,7 @@
 #include <nixl_ep_v2/impls/combine_utils.cuh>
 
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 // Reduce epilogue of the adaptive combine: given the buffer base, it derives the rows to reduce from the topology descriptor (`EPTopology`)
 template <bool kUseExpandedLayout, bool kAllowMultipleReduction,
@@ -202,4 +202,4 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
     ptx::tma_store_wait();
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

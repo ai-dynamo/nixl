@@ -42,7 +42,7 @@ def _fabric_handle_supported(device_idx):
     return bool(_C.is_fabric_handle_supported(device_idx))
 
 
-def validate_fabric_record(record):
+def _validate_fabric_record(record):
     """Require one completed fabric enrollment."""
     if (
         record["state"] != _NVML_GPU_FABRIC_STATE_COMPLETED
@@ -125,7 +125,7 @@ def _fabric_links(records):
         identities.add(identity)
         if record["fabric"] is not None:
             try:
-                validate_fabric_record(record["fabric"])
+                _validate_fabric_record(record["fabric"])
             except ValueError as e:
                 raise ValueError(f"Fabric evidence at rank {rank}: {e}") from None
 
@@ -177,7 +177,7 @@ def group_fabric_records(records):
     return _physical_domains(records, _fabric_links(records))
 
 
-def validate_fabric_records(records, requested_scaleup=None):
+def _validate_fabric_records(records, requested_scaleup=None):
     """Validate declared contiguous domains or infer uniform, rank-contiguous domains for group-based tests."""
     if requested_scaleup is not None and (
         type(requested_scaleup) is not int

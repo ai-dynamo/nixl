@@ -5,7 +5,6 @@
 #pragma once
 
 #include <cstdint>
-#include <cstdio>
 #include <cstdlib>
 #include <exception>
 #include <memory>
@@ -17,11 +16,17 @@
 
 #include <nixl_ep_v2/common/nixl_transport.cuh>
 
+#include "nixl_log.h"
+
+namespace nixl::runtime::ep::elastic::topology {
+struct EPTopology;
+}
+
 // The NIXL transport of the adaptive EP kernels, host side: one symmetric region per rank (workspace followed by the
 // token buffer) registered with a NIXL agent over UCX; peers are addressed by their world rank in the declared
-// maximum world. `connect_ranks` / `disconnect_ranks` stage memory views, `commit` probes every endpoint peer's NVLink
-// pointer (`nixlGetPtr`), refuses when a same-domain peer has none or a rail peer has one, else swaps the views in and uploads the device context and the p2p table
-namespace nixl_ep_v2::elastic::nixl {
+// maximum world. `connect_ranks` / `disconnect_ranks` stage memory views; `commit` validates the requested active
+// endpoints' NVLink pointers and publishes staged views and the p2p table.
+namespace nixl::runtime::ep::elastic::nixl {
 
 // A failed transport mutation must not leave a captured graph free to replay on inconsistent state.
 template <typename func_t>
@@ -29,13 +34,12 @@ static void mutate_transport_or_abort(const int& world_rank, const char* operati
     try {
         func();
     } catch (const std::exception& e) {
-        fprintf(stderr, "NIXL EP world rank %d: %s failed; recovery is unsupported; restart the process: %s\n",
-                world_rank, operation, e.what());
-        fflush(stderr);
+        NIXL_ERROR << "NIXL EP world rank " << world_rank << ": " << operation
+                   << " failed; recovery is unsupported; restart the process: " << e.what();
         std::abort();
     } catch (...) {
-        fprintf(stderr, "NIXL EP world rank %d: %s failed; recovery is unsupported; restart the process\n", world_rank, operation);
-        fflush(stderr);
+        NIXL_ERROR << "NIXL EP world rank " << world_rank << ": " << operation
+                   << " failed; recovery is unsupported; restart the process";
         std::abort();
     }
 }
@@ -45,7 +49,7 @@ struct NIXLPeerInfo {
     uint64_t region_base = 0;
     int device_id = 0;
     int world_rank = -1;
-    uint64_t num_region_bytes = 0;  // The allocation size (the exporter's, granularity-aligned)
+    uint64_t num_region_bytes = 0;  // The exporter's registered length
 };
 
 struct NIXLAgentState;  // Holds the NIXL objects (defined in nixl.cpp so that only that file needs `nixl.h`)
@@ -69,28 +73,30 @@ public:
     // Release the views, deregister and free the region (idempotent)
     void finalize();
 
-    // The agent name identifies this rank's publication in NIXL's metadata manager.
     std::string get_local_agent_name() const;
+    std::string get_local_metadata() const;
     NIXLPeerInfo get_local_peer_info() const;
 
     // Register peers, wire required endpoints and stage new views; world ranks distinct, not ours, not connected; every peer calls this with us too.
-    // Validate the whole peer list before loading metadata; later failures abort because peer state may have changed.
+    // Failed preparation restores host state and leaves the active views untouched; the caller coordinates cancellation across peers.
     void connect_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
-                       const std::vector<NIXLPeerInfo>& peer_infos, const std::vector<int>& world_to_slot);
+                       const std::vector<NIXLPeerInfo>& peer_infos, const std::vector<int>& world_to_slot,
+                       const std::vector<std::string>& remote_metadata, const std::string& connection_id,
+                       const std::vector<std::string>& remote_connection_ids);
 
     // Prepared host mapping; only Buffer's drained activation publishes its device copy.
     const std::vector<int>& get_world_to_slot() const { return world_to_slot; }
 
-    // Retire peers and stage views; Buffer commits before the public disconnect returns.
-    // Invalid requests leave state unchanged; view-preparation failures abort.
-    void disconnect_ranks(const std::vector<int>& world_ranks);
+    // Retire peers, commit replacement views, then release their endpoints before returning.
+    // Invalid requests leave state unchanged; failures after retirement begins abort.
+    void disconnect_ranks(const std::vector<int>& world_ranks, const topology::EPTopology& next, cudaStream_t stream);
 
     bool is_connected(const int& wr) const;
     std::vector<int> get_connected_ranks() const;
 
-    // Make the staged views live (device sync, probe, refuse or swap, upload); never under capture or while a transport kernel may run
-    // A connected same-domain peer without a direct pointer, or a different-domain peer with one: throw, with the active views, the device context and the p2p table untouched
-    void commit(cudaStream_t stream);
+    // Validate active endpoints, then publish staged views; call after draining, outside capture.
+    // A pointer/domain mismatch leaves the active views, device context and p2p table untouched.
+    void commit(const topology::EPTopology& next, cudaStream_t stream);
 
     // The fixed device address of the context the kernels read
     const NIXLDeviceContext* get_device_context_ptr() const;
@@ -119,9 +125,10 @@ private:
     std::vector<int> connected;                // `[num_world_ranks]`, 0/1
     std::vector<int> world_to_slot;            // Prepared internal slot per world rank; -1 for unassigned ranks
     std::vector<int> endpoint_connected;       // Wired endpoints retained until peer retirement
-    std::vector<int> connect_epoch;            // `[num_world_ranks]`: endpoint connection epoch (hello tag)
-    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: every logical peer's last agent; retained across disconnects to restart epochs for a new process
-    std::vector<int> pending_disconnects;      // Retired peers awaiting metadata cleanup within the public disconnect call
+    std::vector<std::string> known_agent_names; // `[num_world_ranks]`: every logical peer's agent
+
+    // Mirror of the committed pointer table: membership-only changes need no GPU probe.
+    std::vector<void*> p2p_ptrs_host;
 
     // Device tables
     NIXLDeviceContext ctx_host{};
@@ -135,15 +142,19 @@ private:
 
     void stage_views();
     void connect_validated_ranks(const std::vector<int>& world_ranks, const std::vector<std::string>& remote_agent_names,
-                                 const std::vector<NIXLPeerInfo>& peer_infos);
+                                 const std::vector<NIXLPeerInfo>& peer_infos, const std::vector<std::string>& remote_metadata,
+                                 const std::string& connection_id, const std::vector<std::string>& remote_connection_ids,
+                                 std::vector<size_t>& endpoint_indices);
+    void require_preparation_usable() const;
+    void validate_peer_pointers(const topology::EPTopology& next, const std::vector<void*>& pointers) const;
     void release_staged_views();
     void release_active_views();
     void activate_staged_views();
-    bool finalized = false;
+    bool preparation_failed = false;
 };
 
 // Whether the device exports fabric-shareable memory handles (`CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED`); the Python
 // fabric evidence asks here instead of binding the driver itself
 bool is_fabric_handle_supported(const int& device_id);
 
-}  // namespace nixl_ep_v2::elastic::nixl
+}  // namespace nixl::runtime::ep::elastic::nixl

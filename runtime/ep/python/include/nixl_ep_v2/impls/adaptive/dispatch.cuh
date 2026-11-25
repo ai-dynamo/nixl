@@ -15,7 +15,7 @@
 #include <nixl_ep_v2/impls/adaptive/combine_policy.cuh>
 
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 // Dispatch on a fixed grid; `EPTopology` supplies the rank decomposition.
 // Elastic on the NIXL transport: the active ranks are the mask product of `topology.cuh`; masked peers are not counted, written, signalled or waited for
@@ -899,4 +899,4 @@ adaptive_dispatch_impl(
         workspace_layout.get_scaleup_atomic_sender_counter()[thread_idx] = 0;
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

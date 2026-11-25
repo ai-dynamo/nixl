@@ -11,7 +11,7 @@
 #include <nixl_ep_v2/common/ptx.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
 
-namespace nixl_ep_v2::elastic::layout {
+namespace nixl::runtime::ep::elastic::layout {
 
 // The control region of the symmetric buffer: every word a peer may write is zero at rest (each kernel zeroes what it
 // used), except the combine readiness counters and monotonic per-peer barrier words
@@ -268,4 +268,4 @@ struct BufferLayout {
     }
 };
 
-}  // namespace nixl_ep_v2::elastic::layout
+}  // namespace nixl::runtime::ep::elastic::layout

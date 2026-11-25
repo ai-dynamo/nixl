@@ -13,7 +13,7 @@
 #include <nixl_ep_v2/impls/adaptive/combine_policy.cuh>
 #include <nixl_ep_v2/impls/combine_utils.cuh>
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 // Combine on a fixed grid; `EPTopology` supplies the rank decomposition.
 // Elastic on the NIXL transport: masked positions have no linked list and get no tails, masked domains are not sent to (see `topology.cuh`)
@@ -790,4 +790,4 @@ adaptive_combine_impl(nv_bfloat16* x,
     EP_PROFILE_STAMP(ctx.local_base, CombineMainEnd);
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

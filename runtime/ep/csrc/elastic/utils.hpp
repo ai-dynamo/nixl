@@ -7,7 +7,7 @@
 #include <torch/python.h>
 #include <nixl_ep_v2/common/exception.cuh>
 
-namespace nixl_ep_v2::elastic {
+namespace nixl::runtime::ep::elastic {
 
 static at::cuda::CUDAStream get_global_comm_stream() {
     static const auto comm_stream = at::cuda::getStreamFromPool(true);
@@ -22,4 +22,4 @@ static auto get_shape(const torch::Tensor& t) {
     }(std::make_index_sequence<kNumDims>());
 }
 
-}  // nixl_ep_v2::elastic
+}  // nixl::runtime::ep::elastic

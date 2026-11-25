@@ -13,7 +13,7 @@
 #include "../../jit/compiler.hpp"
 #include "../../jit/launch_runtime.hpp"
 
-namespace nixl_ep_v2::elastic {
+namespace nixl::runtime::ep::elastic {
 
 class BarrierRuntime final : public jit::LaunchRuntime<BarrierRuntime> {
 public:
@@ -32,7 +32,7 @@ public:
         return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/barrier.cuh>
 
-using namespace nixl_ep_v2::elastic;
+using namespace nixl::runtime::ep::elastic;
 
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&barrier_impl<%d, %d, %d>);
@@ -67,4 +67,4 @@ static void launch_barrier(const topology::EPTopology* topology,
     BarrierRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace nixl_ep_v2::elastic
+}  // namespace nixl::runtime::ep::elastic

@@ -11,9 +11,9 @@
 #include <nixl_ep_v2/common/ptx.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
 
-namespace nixl_ep_v2::elastic {
+namespace nixl::runtime::ep::elastic {
 
-// Host-level barrier of the active ranks (`ElasticBuffer::barrier`): drain RDMA, then run the scale-out and scale-up
+// Host-level barrier of the active ranks (`buffer::barrier`): drain RDMA, then run the scale-out and scale-up
 // peer barriers. Membership, peers and transport come from the topology descriptor (`EPTopology`).
 template <int kNumThreads, int kNumMaxScaleupRanks, int64_t kNumTimeoutCycles>
 __global__ void __launch_bounds__(kNumThreads, 1)
@@ -52,4 +52,4 @@ barrier_impl(const topology::EPTopology* topology_ptr) {
             transport, workspace_layout, topo, comm::Leg::kScaleup, thread_idx);
 }
 
-} // namespace nixl_ep_v2::elastic
+} // namespace nixl::runtime::ep::elastic

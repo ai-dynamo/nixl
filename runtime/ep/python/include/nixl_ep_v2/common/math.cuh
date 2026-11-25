@@ -4,7 +4,7 @@
 
 #pragma once
 
-namespace nixl_ep_v2::elastic::math {
+namespace nixl::runtime::ep::elastic::math {
 
 template <typename T>
 __forceinline__ __device__ __host__ T ceil_div(T a, T b) {
@@ -57,4 +57,4 @@ __device__ __forceinline__ void unpack2(const dtype_b_t& packed, dtype_a_t& x, d
     x = unpacked_ptr[0], y = unpacked_ptr[1];
 }
 
-}  // namespace nixl_ep_v2::elastic::math
+}  // namespace nixl::runtime::ep::elastic::math

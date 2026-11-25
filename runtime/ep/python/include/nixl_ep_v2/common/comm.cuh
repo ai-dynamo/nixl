@@ -11,7 +11,7 @@
 #include <nixl_ep_v2/common/nixl_transport.cuh>
 #include <nixl_ep_v2/common/topology.cuh>
 
-namespace nixl_ep_v2::elastic::comm {
+namespace nixl::runtime::ep::elastic::comm {
 
 static constexpr int64_t kNumOneSecCycles = 2000000000;  // An approximation of the GPU clock at 2000 MHz
 
@@ -204,4 +204,4 @@ __device__ __forceinline__ void gpu_barrier_rt(const nixl::NIXLDeviceContext& ct
         cooperative_groups::this_grid().sync();
 }
 
-}  // namespace nixl_ep_v2::elastic::comm
+}  // namespace nixl::runtime::ep::elastic::comm

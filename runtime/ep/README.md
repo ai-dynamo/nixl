@@ -49,10 +49,10 @@ Runtime settings use `NIXL_EP_*`; compiler macros retain `EP_*`. Set
 width. The JIT uses the extension's compiled width; this setting has no
 effect at runtime.
 
-Construction defaults `UCX_UD_LINGER_TIMEOUT` to `1s` to avoid matching a
-replacement process to a stale wire-up endpoint. This process-wide default
-affects subsequent UCX initialization; set the variable before construction
-to override it.
+EP's UCX backend defaults `UD_LINGER_TIMEOUT` to `1s` to avoid matching a
+replacement process to a stale wire-up endpoint, without changing the process
+environment. Explicit `NIXL_UCX_UD_LINGER_TIMEOUT` or `UCX_UD_LINGER_TIMEOUT`
+settings override this default; the NIXL-prefixed setting takes precedence.
 
 UCX transport channels per peer default to 64. For tuning, set
 `NIXL_EP_NIXL_NUM_CHANNELS` to a value from 1 through 64 before construction.
@@ -62,8 +62,8 @@ UCX transport channels per peer default to 64. For tuning, set
 BF16 combine requires `hidden` divisible by 256, including pairs that use
 FP8 or NVFP4 dispatch.
 
-Configure NIXL's metadata backend as described below. Construct an `ElasticBuffer`
-per GPU with its stable world rank, maximum topology dimensions, workload capacities
+Construct an `ElasticBuffer` per GPU with its stable world rank,
+maximum topology dimensions, workload capacities
 and a shared `torch.distributed.Store`. Connect peers with `connect_ranks`, then
 activate membership with `set_active_ranks`.
 
@@ -71,11 +71,12 @@ Pass `dispatch` BF16 token rows shaped `[tokens, hidden]`, routing indices of ty
 `nixl.runtime.ep.topk_idx_t` shaped `[tokens, topk]`, and optional float32 routing
 weights of the same shape. Run local experts on the received rows, then pass their
 BF16 output and the dispatch handle to `combine`. When using explicit destruction,
-call `destroy` collectively when the buffer is no longer needed.
+call `destroy` locally after the drain and rendezvous described below, once peers
+will no longer access this buffer. Other ranks need not destroy their buffers.
 
 Construction does not use the Python Store or wait for peers. Peer connection exchanges
-metadata; activation selects the participating ranks. Communication and
-destruction are collective over the committed active world.
+metadata; activation selects the participating ranks. Communication is
+collective over the committed active world.
 When `async_with_compute_stream` is enabled, wait on the returned event
 before consuming the result. Deterministic sorting is supported only in eager
 execution. Disable `do_cpu_sync` for graph capture;
@@ -132,7 +133,7 @@ product of active domains and positions within those domains. New-peer
 connections may run while the committed graph replays. Activation and peer
 retirement run outside graph capture. Use one CUDA device per process. Serialize control operations
 on each buffer and select that device in any background setup thread. Before
-activation or peer retirement, every old-world rank must finish
+activation, peer retirement or destruction, every old-world rank must finish
 queued CUDA work, call `barrier` with `with_cpu_sync` enabled to drain the
 transport, and complete a host rendezvous before any peer departs. Joining
 ranks construct their buffers independently, then call `connect_ranks` with
@@ -143,11 +144,13 @@ An idle joiner can warm up and capture dispatch/combine on its own GPU before
 connecting peers, then reuse the graph after coordinated activation of the new
 world. Construction precompiles the barrier without launching it.
 
-`connect_ranks` exchanges agent names and region descriptors through the supplied Store,
+`connect_ranks` exchanges agent names, region descriptors and NIXL transport metadata through the supplied Store,
 publishing under `NIXL_EP/<world_rank>` and deleting it after the requested peers
 have read it and native preparation finishes. Already-connected peers are ignored;
-if no new peers remain, the call does nothing and needs no Store. New peers must request each
-other in the same exchange. World IDs must be unique within the Store, and
+if no new peers remain, the call does nothing. Complete each join across the group
+before starting another, or prepare all joiners together in one coordinated round.
+See `connect_ranks` and `disconnect_ranks` for peer participation and retirement requirements.
+World IDs must be unique within the Store, and
 all participants must finish an exchange before reusing its keys.
 Restrict access to the supplied Python Store to trusted participants; peer
 records are deserialized using `pickle`.
@@ -156,15 +159,16 @@ Mappings of connected ranks are preserved. Ranks that retire all peer connection
 may receive new internal coordinates on reconnection. Prepared mappings become
 live only on activation.
 
-NIXL's metadata manager publishes and fetches transport metadata. Configure its
-backend before buffer construction; for TCPStore, set `NIXL_TCPSTORE_ENDPOINT`
-on every rank to the server's host and port separated by a colon. This can be the
-server backing the Python Store and must remain available through buffer destruction.
-Native publication, fetch and readiness checks release the GIL, allowing another Python thread to replay the
-active graph. Publications remain available to future joiners until buffer
-destruction. The manager starts its backend connection asynchronously during
-construction without waiting for peers.
+NIXL's metadata manager cannot reuse the supplied Python Store, so EP carries the
+transport metadata in the same exchange instead; no separate metadata server
+configuration is required. Native metadata export and connection preparation
+release the GIL, allowing another Python thread to replay the active graph.
 
+Failed connection preparation restores local prepared state and preserves the serving world.
+Before retrying, finish the failed round on every participant and retire any new connections
+that succeeded, following the drain and rendezvous requirements above. Never activate a failed round.
+If local rollback cannot clean up the new endpoints, recreate the buffer before further membership changes;
+the committed world may continue serving.
 Invalid inputs and mapping refusals before peer retirement preserve active views.
 Failures after peer retirement or view activation terminate the process; restart
 it instead of attempting recovery.
@@ -181,6 +185,8 @@ it instead of attempting recovery.
 - Construction takes a stable `world_rank` and both maximum world dimensions;
   it creates only that rank's local buffer. Connect peers explicitly, then activate
   the intended world with `set_active_ranks`.
+  The Python Store is required at construction; `store` and subsequent constructor
+  options are keyword-only. Construction saves the Store without accessing it.
 - Required positive constructor argument `num_experts_per_rank` fixes physical routing slots
   per GPU. `num_experts` is removed from `dispatch`,
   `EPHandle`, and native dispatch/combine; slot
@@ -252,8 +258,7 @@ package. Launch one invocation per node with node-level `WORLD_SIZE` and `RANK`;
 `--num-processes` selects the GPUs per node. Run with `--help` for workload,
 format and timing options. `MASTER_ADDR` and `MASTER_PORT` select the test's
 Store, defaulting to loopback and port 8361; multi-node runs need a rank-0 node
-address reachable from every node. Configure NIXL's metadata backend as described
-above; `NIXL_TCPSTORE_ENDPOINT` may point to this Store or a separate metadata Store.
+address reachable from every node.
 
 `tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
 plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
@@ -312,6 +317,15 @@ writers. These are samples from different warps, not additive phase durations:
 No per-token counters, profiling atomics or extra kernel barriers are added.
 Instrumentation still changes execution, so use profiling to locate work and
 waits, and use the uninstrumented `PERF` measurements for performance claims.
+
+## Logging
+
+Host diagnostics use `NIXL_LOG_LEVEL`; select `DEBUG` for EP and JIT details.
+This replaces `NIXL_EP_BUFFER_DEBUG` and `NIXL_EP_JIT_PRINT_COMPILER_COMMAND`.
+`NIXL_EP_JIT_DEBUG` still enables compiler line information and verbose PTXAS
+output, and `NIXL_EP_JIT_PTXAS_VERBOSE` enables verbose PTXAS output alone;
+viewing that output requires the `DEBUG` log level. GPU timeout and assertion
+diagnostics continue to use CUDA device printing.
 
 ## JIT cache
 

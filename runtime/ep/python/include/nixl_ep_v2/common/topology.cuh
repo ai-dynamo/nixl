@@ -8,7 +8,7 @@
 #include <nixl_ep_v2/common/nixl_transport.cuh>
 #include <nixl_ep_v2/common/ptx.cuh>
 
-namespace nixl_ep_v2::elastic::topology {
+namespace nixl::runtime::ep::elastic::topology {
 
 // Each buffer fixes the adaptive launch grid at construction so that a captured CUDA graph survives a change of
 // topology. Every launched block participates. Clusters have two blocks.
@@ -199,13 +199,13 @@ __device__ __forceinline__ EPTopology load(const EPTopology* ptr) {
 #endif
 }
 
-}  // namespace nixl_ep_v2::elastic::topology
+}  // namespace nixl::runtime::ep::elastic::topology
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 // Compile-time channel maxima: the block shape and the channel slack of the buffers follow the fixed grid.
 constexpr int kNumMaxChannelsPerSM = 8;
 constexpr int kNumMaxChannels = kNumMaxChannelsPerSM * topology::kNumMaxLaunchSMs;
-EP_STATIC_ASSERT(kNumMaxChannels <= nixl_ep_v2::kNumMaxChannels, "The workspace channel arrays are sized by `nixl_ep_v2::kNumMaxChannels`");
+EP_STATIC_ASSERT(kNumMaxChannels <= ::nixl::runtime::ep::kNumMaxChannels, "The workspace channel arrays are sized by `nixl::runtime::ep::kNumMaxChannels`");
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

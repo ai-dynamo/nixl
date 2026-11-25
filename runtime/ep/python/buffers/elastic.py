@@ -111,6 +111,8 @@ class EPHandle:
         recv_sf: Optional[torch.Tensor],
         recv_topk_idx: torch.Tensor,
         recv_topk_weights: torch.Tensor,
+        *,
+        _remap_channel_linked_list: bool = True,
     ):
         """
         Sort received tokens to guarantee deterministic dispatch output.
@@ -162,13 +164,14 @@ class EPHandle:
             permute(recv_topk_idx, orig_indices)
             permute(self.recv_src_metadata, orig_indices)
 
-            valid_mask = (self.channel_linked_list >= 0) & (
-                self.channel_linked_list < num_recv_tokens
-            )
-            to_indices = get_reverse_permutation(orig_indices)
-            self.channel_linked_list[valid_mask] = to_indices[
-                self.channel_linked_list[valid_mask]
-            ].to(self.channel_linked_list.dtype)
+            if _remap_channel_linked_list:
+                valid_mask = (self.channel_linked_list >= 0) & (
+                    self.channel_linked_list < num_recv_tokens
+                )
+                to_indices = get_reverse_permutation(orig_indices)
+                self.channel_linked_list[valid_mask] = to_indices[
+                    self.channel_linked_list[valid_mask]
+                ].to(self.channel_linked_list.dtype)
 
         else:
             # In expand mode, `recv_x`, `recv_sf`, and `recv_topk_weights` are grouped by expert ID, possibly with padding (expert alignment). We permute tokens within each expert and update `self.recv_src_metadata[:, 2:]` accordingly.
@@ -252,9 +255,9 @@ class ElasticBuffer:
     control operations on each buffer; a background setup thread must select the buffer's CUDA device.
     Activation (`set_active_ranks`) runs outside capture, between complete dispatch/combine pairs.
     Order topology commits and graph replays on the same CUDA stream, or establish the dependencies explicitly.
-    Before activation or peer retirement, every rank of the old world, including departing ranks, must finish
-    its queued CUDA work, call `barrier(with_cpu_sync=True)` to drain the transport, and rendezvous on the host before
-    any peer departs. The update methods do not establish that completion boundary.
+    Before activation, peer retirement or destruction, every rank of the old world, including departing ranks, must finish
+    its queued CUDA work, call `barrier` with `with_cpu_sync` enabled to drain the transport, and rendezvous on the host before
+    any peer departs. The update and destruction methods do not establish that completion boundary.
     Invalid inputs and mapping refusals before peer retirement preserve active views; failures after retirement or view activation are fatal.
 
     World ranks and public expert IDs index the declared maximum world. Internal source metadata and the
@@ -274,7 +277,8 @@ class ElasticBuffer:
         deterministic: bool = False,
         allow_multiple_reduction: bool = True,
         prefer_overlap_with_compute: bool = True,
-        store: Optional[dist.Store] = None,
+        *,
+        store: dist.Store,
         num_cpu_timeout_secs: int = 300,
         num_gpu_timeout_secs: int = 100,
         explicitly_destroy: bool = False,
@@ -307,11 +311,13 @@ class ElasticBuffer:
             deterministic: whether to sort received tokens deterministically (eager execution only).
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             prefer_overlap_with_compute: whether to prefer overlapping communication with compute.
-            store: the default Store for `connect_ranks`, not accessed during construction.
+            store: required Store used by default for `connect_ranks`; not accessed during construction.
             num_cpu_timeout_secs: timeout for CPU synchronization, in seconds.
             num_gpu_timeout_secs: timeout for GPU operations, in seconds.
             explicitly_destroy: require explicit `destroy()` instead of releasing resources in the destructor.
         """
+        if store is None:
+            raise ValueError("ElasticBuffer requires a Store at construction")
         if (
             any(
                 type(value) is not int
@@ -354,15 +360,9 @@ class ElasticBuffer:
             use_fp8_dispatch,
             allow_multiple_reduction,
         )
-        if int(os.environ.get("NIXL_EP_BUFFER_DEBUG", 0)):
-            print(
-                f"Initializing EP elastic buffer with {num_bytes} bytes at world rank {world_rank}"
-            )
         self.num_bytes = num_bytes
         self.num_max_tokens_per_rank = num_max_tokens_per_rank
 
-        # Avoid matching replacement processes to closed UD wire-up endpoints.
-        os.environ.setdefault("UCX_UD_LINGER_TIMEOUT", "1s")
         num_nixl_channels = int(os.getenv("NIXL_EP_NIXL_NUM_CHANNELS", 64))
         self.explicitly_destroy = explicitly_destroy
         self.runtime = _C.ElasticBuffer(
@@ -390,7 +390,11 @@ class ElasticBuffer:
         return self._num_launch_sms
 
     def destroy(self) -> None:
-        """Destroy the runtime; requires `explicitly_destroy=True` at construction."""
+        """Release this rank's runtime locally; requires `explicitly_destroy=True` at construction.
+
+        Drain the old world and complete its host rendezvous before destruction.
+        Peers must no longer access this buffer; other ranks need not call `destroy`.
+        """
         assert self.explicitly_destroy
 
         if self.runtime is not None:
@@ -480,34 +484,37 @@ class ElasticBuffer:
         timeout_secs: float = 120.0,
     ) -> None:
         """
-        Exchange agent names and region descriptors through a Store, fetch transport metadata through
-        NIXL's metadata manager, and prepare memory views for activation by `set_active_ranks`.
+        Exchange agent names, region descriptors and NIXL transport metadata through the supplied Store,
+        and prepare memory views for activation by `set_active_ranks`.
         Discover NVLink domains and agree on internal rank coordinates without changing caller IDs.
-        Existing and joining ranks connect reciprocally, including all intended new peers; established mappings must agree.
+        The caller must coordinate each expansion from one consistently mapped connected group and singleton joiners.
+        Every retained group member, including inactive members retaining connections, requests every joiner;
+        each joiner requests every retained member and every other joiner. A round may include one or multiple joiners.
+        Calls within a round may run in parallel; finish it on all participants before another round or peer retirement.
+        Merging groups with independently assigned mappings is unsupported.
         Preparation preserves established coordinates and leaves the live mapping unchanged until activation.
-        Already-connected peers are ignored. Publish discovery data under `{key_prefix}/{world_rank}`
+        Already-connected peers are ignored. Publish connection data under `{key_prefix}/{world_rank}`
         and delete it after all listed peers have read it and
         native preparation finishes. Complete each exchange on all participants before reusing its rank keys.
         Resets only new peers' barrier words on a setup stream. Native preparation releases the GIL so another
         Python thread can replay the committed graph; it does not change the live topology or active views.
+        Failed native preparation restores local prepared state. Do not activate a failed round: finish all
+        participants' calls and retire any new connections that succeeded before coordinating a retry.
+        If local rollback cannot clean up the new endpoints, recreate the buffer before changing membership;
+        the committed world may continue serving.
 
         Arguments:
             world_ranks: world ranks of the peers (not this rank); only new peers participate in the exchange.
             store: the Store for reciprocal connection-data exchange (default: the constructor's explicit `store`).
             key_prefix: the same Store key prefix on both sides; separate buffers using the same rank IDs need separate prefixes or Stores.
-            timeout_secs: the bound for each Store wait for discovery data or read acknowledgements;
-                NIXL metadata fetch and wire-up share `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`.
+            timeout_secs: the bound for each Store wait for connection data or read acknowledgements;
+                native wire-up uses `NIXL_EP_NIXL_CONNECT_TIMEOUT_SECS`.
         """
         connected = set(self.get_connected_ranks())
         world_ranks = [rank for rank in world_ranks if rank not in connected]
         if not world_ranks:
             return
         store = self.store if store is None else store
-        if store is None:
-            raise ValueError(
-                "Peer discovery requires an explicit Store; pass store to ElasticBuffer or "
-                "connect_ranks(store=...)"
-            )
         peers = set(world_ranks)
         if len(peers) != len(world_ranks):
             raise ValueError("Connect each new peer once")
@@ -532,6 +539,7 @@ class ElasticBuffer:
             for rank, slot in self._prepared_mapping.items()
             if connected and rank in known
         }
+        connection_id = uuid.uuid4().hex
         with exchange_records(
             store,
             self.world_rank,
@@ -541,12 +549,14 @@ class ElasticBuffer:
                 self.runtime.get_local_peer_info(),
                 snapshot,
                 known,
+                self.runtime.get_local_metadata(),
+                connection_id,
             ),
             key_prefix=key_prefix,
             timeout_seconds=timeout_secs,
         ) as records:
             snapshots = [snapshot]
-            for _, _, peer_mapping, peer_records in records.values():
+            for _, _, peer_mapping, peer_records, _, _ in records.values():
                 snapshots.append(peer_mapping)
                 for rank, evidence in peer_records.items():
                     if rank in known and known[rank] != evidence:
@@ -570,6 +580,9 @@ class ElasticBuffer:
                 [records[rank][0] for rank in world_ranks],
                 [tuple(records[rank][1]) for rank in world_ranks],
                 world_to_slot,
+                [records[rank][4] for rank in world_ranks],
+                connection_id,
+                [records[rank][5] for rank in world_ranks],
             )
             self._prepared_mapping = mapping
             self._fabric_records = known
@@ -577,6 +590,8 @@ class ElasticBuffer:
     def disconnect_ranks(self, world_ranks: List[int]) -> None:
         """
         Exclude departing peers and retire their connections outside capture, after draining the old world and a host rendezvous.
+        Every retained group member must retire each departing rank; departing ranks must retire all their peers.
+        Complete retirement across the group before the next connection round.
         An active caller's remaining ranks must form a product of domains and positions; the mode follows that world.
         An inactive caller only retires connections, preserving its membership descriptor. An empty list does nothing.
         A live rank sitting a world out is only excluded with `set_active_ranks`.
@@ -794,6 +809,7 @@ class ElasticBuffer:
                 recv_sf,
                 recv_topk_idx,
                 recv_topk_weights,
+                _remap_channel_linked_list=self._get_mode() == "hybrid",
             )
             (
                 event_overlap.register_hook_after_wait(epilogue)

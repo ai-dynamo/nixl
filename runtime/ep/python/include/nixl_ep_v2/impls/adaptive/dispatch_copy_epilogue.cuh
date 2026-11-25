@@ -11,7 +11,7 @@
 #include <nixl_ep_v2/common/topology.cuh>
 
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 // Copy epilogue launched on the whole device, with ranks from `EPTopology` and channels from the fixed main grid.
 template <bool kDoExpand, bool kDoZeroPadding,
@@ -328,4 +328,4 @@ dispatch_copy_epilogue_impl(void* buffer, void* workspace,
     ptx::tma_store_wait();
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

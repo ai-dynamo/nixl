@@ -7,7 +7,7 @@
 #include "compiler.hpp"
 #include "include_parser.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 static void init(const std::string& library_root_path,
                  const std::string& cuda_home_path_by_python, const std::string& nixl_root_path_by_python, const std::string& ucx_root_path_by_python) {
@@ -19,4 +19,4 @@ static void register_apis(pybind11::module_& m) {
     m.def("init_jit", &init);
 }
 
-}  // namespace nixl_ep_v2::jit
+}  // namespace nixl::runtime::ep::jit

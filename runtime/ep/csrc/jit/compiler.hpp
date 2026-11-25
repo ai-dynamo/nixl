@@ -15,13 +15,14 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
+#include "nixl_log.h"
 #include "../utils/hash.hpp"
 #include "../utils/lazy_init.hpp"
 #include "../utils/system.hpp"
 #include "cache.hpp"
 #include "device_runtime.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 class Compiler {
 public:
@@ -177,11 +178,10 @@ public:
     static void disassemble(const std::filesystem::path &cubin_path, const std::filesystem::path &sass_path) {
         // Disassemble the CUBIN file to SASS
         const auto command = absl::StrFormat("%s --dump-sass %s > %s", quote_path(cuobjdump_path), quote_path(cubin_path), quote_path(sass_path));
-        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
-            printf("Running cuobjdump command: %s\n", command.c_str());
+        NIXL_DEBUG << "Running cuobjdump command: " << command;
         const auto [return_code, output] = call_external_command(command);
         if (return_code != 0) {
-            printf("cuobjdump failed: %s\n", output.c_str());
+            NIXL_ERROR << "cuobjdump failed: " << output;
             EP_HOST_ASSERT(false and "cuobjdump failed");
         }
     }
@@ -197,23 +197,6 @@ EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, ucx_root);
 EP_DECLARE_STATIC_VAR_IN_CLASS(Compiler, cuobjdump_path);
 
 class NVCCCompiler final: public Compiler {
-    std::filesystem::path nvcc_path;
-
-    std::pair<int, int> get_nvcc_version() const {
-        // Call the version command
-        const auto command = quote_path(nvcc_path) + " --version";
-        const auto [return_code, output] = call_external_command(command);
-        if (return_code != 0)
-            EP_HOST_UNREACHABLE(absl::StrFormat("Cannot run NVCC '%s': %s. Set NIXL_EP_JIT_NVCC_COMPILER to a CUDA 13 compiler", nvcc_path.string(), output));
-
-        int major, minor;
-        std::smatch match;
-        EP_HOST_ASSERT(std::regex_search(output, match, std::regex(R"(release (\d+\.\d+))")));
-        std::sscanf(match[1].str().c_str(), "%d.%d", &major, &minor);
-        EP_HOST_ASSERT(major >= 13 and "NIXL EP requires NVCC >= 13.0: select a CUDA 13 toolkit for JIT compilation");
-        return {major, minor};
-    }
-
 public:
     NVCCCompiler() {
         // Override the compiler signature
@@ -245,11 +228,10 @@ public:
         const auto compile_dir = make_tmp_dir();
         const auto command = absl::StrFormat("cd %s && %s %s -cubin -o %s %s",
             quote_path(compile_dir), quote_path(nvcc_path), quote_path(code_path), quote_path(cubin_path), flags);
-        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
-            printf("Running NVCC command: %s\n", command.c_str());
+        NIXL_DEBUG << "Running NVCC command: " << command;
         const auto [return_code, output] = call_external_command(command);
         if (return_code != 0) {
-            printf("NVCC compilation failed: %s\n", output.c_str());
+            NIXL_ERROR << "NVCC compilation failed: " << output;
             EP_HOST_ASSERT(false and "NVCC compilation failed");
         }
 
@@ -257,11 +239,10 @@ public:
         if (ptx_path.has_value()) {
             const auto ptx_command = absl::StrFormat("cd %s && %s %s -ptx -o %s %s",
                 quote_path(compile_dir), quote_path(nvcc_path), quote_path(code_path), quote_path(*ptx_path), flags);
-            if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PRINT_COMPILER_COMMAND", 0))
-                printf("Running NVCC PTX command: %s\n", ptx_command.c_str());
+            NIXL_DEBUG << "Running NVCC PTX command: " << ptx_command;
             const auto [ptx_return_code, ptx_output] = call_external_command(ptx_command);
             if (ptx_return_code != 0) {
-                printf("NVCC PTX compilation failed: %s\n", ptx_output.c_str());
+                NIXL_ERROR << "NVCC PTX compilation failed: " << ptx_output;
                 EP_HOST_ASSERT(false and "NVCC PTX compilation failed");
             }
         }
@@ -270,14 +251,31 @@ public:
         if (get_env("NIXL_EP_JIT_PTXAS_CHECK", 0))
             EP_HOST_ASSERT(not std::regex_search(output, std::regex(R"(Local memory used)")));
 
-        // Print PTXAS log
-        if (get_env("NIXL_EP_JIT_DEBUG", 0) or get_env("NIXL_EP_JIT_PTXAS_VERBOSE", 0))
-            printf("%s", output.c_str());
+        if (not output.empty())
+            NIXL_DEBUG << output;
     }
+
+private:
+    std::pair<int, int> get_nvcc_version() const {
+        // Call the version command
+        const auto command = quote_path(nvcc_path) + " --version";
+        const auto [return_code, output] = call_external_command(command);
+        if (return_code != 0)
+            EP_HOST_UNREACHABLE(absl::StrFormat("Cannot run NVCC '%s': %s. Set NIXL_EP_JIT_NVCC_COMPILER to a CUDA 13 compiler", nvcc_path.string(), output));
+
+        int major, minor;
+        std::smatch match;
+        EP_HOST_ASSERT(std::regex_search(output, match, std::regex(R"(release (\d+\.\d+))")));
+        std::sscanf(match[1].str().c_str(), "%d.%d", &major, &minor);
+        EP_HOST_ASSERT(major >= 13 and "NIXL EP requires NVCC >= 13.0: select a CUDA 13 toolkit for JIT compilation");
+        return {major, minor};
+    }
+
+    std::filesystem::path nvcc_path;
 };
 
 static auto compiler = LazyInit<Compiler>([]() -> std::shared_ptr<Compiler> {
     return std::make_shared<NVCCCompiler>();
 });
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

@@ -6,7 +6,7 @@
 
 #include <nixl_ep_v2/common/topology.cuh>
 
-namespace nixl_ep_v2::elastic::adaptive::combine_policy {
+namespace nixl::runtime::ep::elastic::adaptive::combine_policy {
 
 // Measured small-batch wins justify incremental completion only in hybrid mode.
 constexpr int kMaxIncrementalTokens = 16;
@@ -26,4 +26,4 @@ __forceinline__ __device__ __host__ bool finish_uses_incremental(const int flag)
     return (flag & kDispatchIncrementalCombine) != 0;
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive::combine_policy
+}  // namespace nixl::runtime::ep::elastic::adaptive::combine_policy

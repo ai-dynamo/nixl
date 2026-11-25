@@ -10,11 +10,9 @@
 
 #include "kernel_runtime.hpp"
 
-namespace nixl_ep_v2::jit {
+namespace nixl::runtime::ep::jit {
 
 class KernelRuntimeCache {
-    std::unordered_map<std::string, std::shared_ptr<KernelRuntime>> cache;
-
 public:
     KernelRuntimeCache() = default;
 
@@ -27,8 +25,11 @@ public:
             return cache[dir_path] = std::make_shared<KernelRuntime>(dir_path);
         return nullptr;
     }
+
+private:
+    std::unordered_map<std::string, std::shared_ptr<KernelRuntime>> cache;
 };
 
 static auto kernel_runtime_cache = std::make_shared<KernelRuntimeCache>();
 
-} // namespace nixl_ep_v2::jit
+} // namespace nixl::runtime::ep::jit

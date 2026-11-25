@@ -8,7 +8,7 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
-namespace nixl_ep_v2::elastic::profile {
+namespace nixl::runtime::ep::elastic::profile {
 
 // One schema for device indices and the names returned to Python. A zero slot means that writer did not reach the phase.
 #define EP_PROFILE_PHASES(X) \
@@ -66,10 +66,10 @@ __device__ __forceinline__ void stamp(const Header* header, const Phase phase) {
     }
 }
 #define EP_PROFILE_STAMP(workspace_base, phase) \
-    ::nixl_ep_v2::elastic::profile::stamp(::nixl_ep_v2::elastic::layout::WorkspaceLayout(workspace_base).get_profile_header(), \
-                                      ::nixl_ep_v2::elastic::profile::Phase::phase)
+    ::nixl::runtime::ep::elastic::profile::stamp(::nixl::runtime::ep::elastic::layout::WorkspaceLayout(workspace_base).get_profile_header(), \
+                                      ::nixl::runtime::ep::elastic::profile::Phase::phase)
 #else
 #define EP_PROFILE_STAMP(workspace_base, phase) do {} while (0)
 #endif
 
-}  // namespace nixl_ep_v2::elastic::profile
+}  // namespace nixl::runtime::ep::elastic::profile

@@ -9,7 +9,7 @@ import uuid
 from contextlib import contextmanager
 from datetime import timedelta
 
-from .nixl_fabric import inspect_fabric_device, validate_fabric_records
+from .nixl_fabric import _validate_fabric_records, inspect_fabric_device
 
 
 @contextmanager
@@ -110,7 +110,7 @@ class NixlBootstrap:
                 f"{(num_ranks, num_scaleup_ranks)}; ranks {bad} disagree"
             )
         records = tuple(config[2] for config in configurations)
-        self.num_scaleout_ranks, self.num_scaleup_ranks = validate_fabric_records(
+        self.num_scaleout_ranks, self.num_scaleup_ranks = _validate_fabric_records(
             records, num_scaleup_ranks
         )
         # A subsequent discovery may reuse the same global-rank keys.

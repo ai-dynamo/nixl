@@ -14,7 +14,7 @@
 #include "../../../jit/compiler.hpp"
 #include "../../../jit/launch_runtime.hpp"
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 class DispatchRuntime final : public jit::LaunchRuntime<DispatchRuntime> {
 public:
@@ -49,7 +49,7 @@ public:
         return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/dispatch.cuh>
 
-using namespace nixl_ep_v2::elastic::adaptive;
+using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&adaptive_dispatch_impl<%s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
@@ -206,7 +206,7 @@ public:
         return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/dispatch_copy_epilogue.cuh>
 
-using namespace nixl_ep_v2::elastic::adaptive;
+using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&dispatch_copy_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
@@ -284,4 +284,4 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
     DispatchCopyEpilogueRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

@@ -6,7 +6,7 @@
 #define EP_NIXL_DEVICE_API 1   // `nixl_transport.cuh` then includes NIXL's GPU API and checks the UCX build
 #include "nixl_device.cuh"
 
-namespace nixl_ep_v2::elastic::nixl {
+namespace nixl::runtime::ep::elastic::nixl {
 namespace {
 
 __global__ void cache_peer_pointers_kernel(const NIXLDeviceContext context, const int* connected) {
@@ -29,4 +29,4 @@ cudaError_t cache_peer_pointers(const NIXLDeviceContext& context, const int* con
     return cudaGetLastError();
 }
 
-}  // namespace nixl_ep_v2::elastic::nixl
+}  // namespace nixl::runtime::ep::elastic::nixl

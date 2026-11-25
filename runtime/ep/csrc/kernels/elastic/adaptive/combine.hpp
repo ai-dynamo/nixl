@@ -14,7 +14,7 @@
 #include "../../../jit/launch_runtime.hpp"
 #include "dispatch.hpp"
 
-namespace nixl_ep_v2::elastic::adaptive {
+namespace nixl::runtime::ep::elastic::adaptive {
 
 class CombineRuntime final : public jit::LaunchRuntime<CombineRuntime> {
 public:
@@ -46,7 +46,7 @@ public:
         return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/combine.cuh>
 
-using namespace nixl_ep_v2::elastic::adaptive;
+using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&adaptive_combine_impl<%s, %s, %d, %d, %d, %d, %d, %d>);
@@ -159,7 +159,7 @@ public:
         return absl::StrFormat(R"(
 #include <nixl_ep_v2/impls/adaptive/combine_reduce_epilogue.cuh>
 
-using namespace nixl_ep_v2::elastic::adaptive;
+using namespace nixl::runtime::ep::elastic::adaptive;
 
 static void __instantiate_kernel() {
     auto ptr = reinterpret_cast<void*>(&combine_reduce_epilogue_impl<%s, %s, %d, %d, %d, %d, %d, %d, %d, %d, %d>);
@@ -229,4 +229,4 @@ static void launch_combine_reduce_epilogue(void* combined_x,
     CombineReduceEpilogueRuntime::launch(runtime, args, stream);
 }
 
-}  // namespace nixl_ep_v2::elastic::adaptive
+}  // namespace nixl::runtime::ep::elastic::adaptive

@@ -7,7 +7,7 @@
 #include <stdexcept>
 
 
-namespace nixl_ep_v2::elastic {
+namespace nixl::runtime::ep::elastic {
 
 __forceinline__ __device__ __host__ constexpr bool use_rank_layout(bool allow_multiple_reduction, int num_ranks, int num_topk) {
     return allow_multiple_reduction and num_ranks <= num_topk;
@@ -156,4 +156,4 @@ void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
     }
 }
 
-}  // namespace nixl_ep_v2::elastic
+}  // namespace nixl::runtime::ep::elastic

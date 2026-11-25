@@ -6,7 +6,7 @@
 
 #include <cstdint>
 
-namespace nixl_ep_v2::elastic::nixl {
+namespace nixl::runtime::ep::elastic::nixl {
 
 // Host-written at every commit, device-read; lives at a fixed device address for the life of the buffer (graphs replay)
 struct alignas(16) NIXLDeviceContext {
@@ -20,7 +20,7 @@ struct alignas(16) NIXLDeviceContext {
 };
 static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context size");
 
-}  // namespace nixl_ep_v2::elastic::nixl
+}  // namespace nixl::runtime::ep::elastic::nixl
 
 // NIXL's GPU-initiated API (`nixlPut`, `nixlAtomicAdd` over memory views) and UCX's device API under it, for the
 // JIT-compiled kernels and the extension's pointer-cache unit (`nixl_device.cu`), which define `EP_NIXL_DEVICE_API`;
@@ -45,7 +45,7 @@ static_assert(sizeof(NIXLDeviceContext) == 48, "Unexpected transport context siz
 // addressed by its caller-assigned world rank. A peer mapped into our address space (UCX's CUDA IPC lane,
 // `p2p_ptrs[world_rank] != nullptr`) gets loads, stores and system-scope atomics on `base + offset`; same-position peers in
 // other domains get RDMA. Kernels route through these endpoints only. The fixed context address lets graphs replay across commits.
-namespace nixl_ep_v2::elastic::nixl {
+namespace nixl::runtime::ep::elastic::nixl {
 
 // The kernels copy the transport context once per block, field by field through the read-only path into registers
 // (a whole-struct copy is materialised in local memory, as for the topology descriptor (`EPTopology`))
@@ -155,5 +155,5 @@ struct NIXLTransport {
     }
 };
 
-}  // namespace nixl_ep_v2::elastic::nixl
+}  // namespace nixl::runtime::ep::elastic::nixl
 #endif  // __CUDACC__ && EP_NIXL_DEVICE_API

@@ -7,7 +7,6 @@
 
 #include <nixl_ep_v2/common/compiled.cuh>
 
-#include "jit/api.hpp"
 #include "elastic/buffer.hpp"
 
 #ifndef TORCH_EXTENSION_NAME
@@ -17,14 +16,11 @@
 PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
     m.doc() = "NIXL EP: an efficient expert-parallel communication library";
 
-    m.def("is_fabric_handle_supported", &nixl_ep_v2::elastic::nixl::is_fabric_handle_supported);
+    m.def("is_fabric_handle_supported", &nixl::runtime::ep::elastic::nixl::is_fabric_handle_supported);
 
     // The integer type of top-k indices
-    m.attr("topk_idx_t") = py::cast(c10::CppTypeToScalarType<nixl_ep_v2::topk_idx_t>::value);
-
-    // JIT API
-    nixl_ep_v2::jit::register_apis(m);
+    m.attr("topk_idx_t") = py::cast(c10::CppTypeToScalarType<nixl::runtime::ep::topk_idx_t>::value);
 
     // Register elastic buffer APIs
-    nixl_ep_v2::elastic::register_apis(m);
+    nixl::runtime::ep::elastic::register_apis(m);
 }

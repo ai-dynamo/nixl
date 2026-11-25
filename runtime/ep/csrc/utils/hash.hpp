@@ -10,7 +10,7 @@
 #include <sstream>
 #include <vector>
 
-namespace nixl_ep_v2 {
+namespace nixl::runtime::ep {
 
 static uint64_t fnv1a(const std::vector<char>& data, const uint64_t& seed) {
     uint64_t h = seed;
@@ -44,4 +44,4 @@ static std::string get_hex_digest(const std::string& data) {
     return get_hex_digest(std::vector<char>{data.begin(), data.end()});
 }
 
-} // namespace nixl_ep_v2
+} // namespace nixl::runtime::ep

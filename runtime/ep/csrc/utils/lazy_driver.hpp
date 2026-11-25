@@ -9,7 +9,7 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
-namespace nixl_ep_v2 {
+namespace nixl::runtime::ep {
 
 // Lazy loading all driver symbols
 static void* get_driver_handle() {
@@ -52,4 +52,4 @@ DECL_LAZY_CUDA_DRIVER_FUNCTION(cuMemGetAllocationGranularity);
 DECL_LAZY_CUDA_DRIVER_FUNCTION(cuDeviceGet);
 DECL_LAZY_CUDA_DRIVER_FUNCTION(cuDeviceGetAttribute);
 
-}  // namespace nixl_ep_v2
+}  // namespace nixl::runtime::ep

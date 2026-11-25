@@ -25,7 +25,9 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
-namespace nixl_ep_v2 {
+#include "nixl_log.h"
+
+namespace nixl::runtime::ep {
 
 // ReSharper disable once CppNotAllPathsReturnValue
 template <typename dtype_t>
@@ -82,8 +84,8 @@ static std::filesystem::path make_dirs(const std::filesystem::path& path) {
         EP_HOST_UNREACHABLE(absl::StrFormat("Failed to make directory: %s, created: %s, value: %d",
                                            path.c_str(), created ? "true" : "false", capture.value()));
     }
-    if (created and get_env<int>("NIXL_EP_JIT_DEBUG"))
-        printf("Create directory: %s\n", path.c_str());
+    if (created)
+        NIXL_DEBUG << "Create directory: " << path.string();
     return path;
 }
 
@@ -131,4 +133,4 @@ static void safe_remove_all(const std::filesystem::path& path) {
     std::filesystem::remove(path, ec);
 }
 
-} // nixl_ep_v2
+} // nixl::runtime::ep

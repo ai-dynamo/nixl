@@ -9,7 +9,7 @@
 
 #include <nixl_ep_v2/common/exception.cuh>
 
-namespace nixl_ep_v2 {
+namespace nixl::runtime::ep {
 
 struct EventHandle {
     std::shared_ptr<torch::Event> event;
@@ -45,4 +45,4 @@ static void stream_wait(const at::cuda::CUDAStream& s, const EventHandle& event)
     s.unwrap().wait(*event.event);
 }
 
-}  // namespace nixl_ep_v2
+}  // namespace nixl::runtime::ep

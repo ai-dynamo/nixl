@@ -13,9 +13,6 @@
 #endif
 
 class EPException : public std::exception {
-private:
-    std::string message = {};
-
 public:
     explicit EPException(const char* name, const char* file, const int line, const std::string& error) {
         std::stringstream ss;
@@ -24,6 +21,9 @@ public:
     }
 
     const char* what() const noexcept override { return message.c_str(); }
+
+private:
+    std::string message = {};
 };
 
 #define EPExceptionWithLineInfo(name, message) EPException(name, __FILE__, __LINE__, message)

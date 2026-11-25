@@ -38,7 +38,7 @@
 #define EP_NUM_TOPK_IDX_BITS 64
 #endif
 
-namespace nixl_ep_v2 {
+namespace nixl::runtime::ep {
 
 
 template <int kNumBits> struct int_with_bits;
@@ -57,4 +57,4 @@ constexpr int kNumAlignedSFPacks = 16 / sizeof(sf_pack_t);
 // Some communication channel settings
 constexpr int kNumMaxChannels = 1024;
 
-} // namespace nixl_ep_v2
+} // namespace nixl::runtime::ep
