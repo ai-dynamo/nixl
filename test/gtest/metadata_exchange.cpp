@@ -298,6 +298,53 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialAndLoadRemote) {
     ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, ReadAfterFullAndPartialRefresh) {
+    initAgentsDefault();
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    nixl_reg_dlist_t first(DRAM_SEG);
+    first.addDesc(src.buffers[0].getBlobDesc());
+    nixl_opt_args_t opts;
+    opts.includeConnInfo = true;
+    nixl_blob_t partial, full;
+    std::string peer;
+    ASSERT_EQ(src.agent->getLocalPartialMD(first, partial, &opts), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(partial, peer), NIXL_SUCCESS);
+
+    nixlXferReqH *requests[2]{};
+    auto prepareRead = [&](unsigned i) {
+        const auto source = src.buffers[i].getBasicDesc();
+        fillPayload(reinterpret_cast<void *>(source.addr), source.len, i, 123);
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(dst.buffers[i].getBasicDesc());
+        remote.addDesc(source);
+        ASSERT_EQ(dst.agent->createXferReq(NIXL_READ, local, remote, peer, requests[i]),
+                  NIXL_SUCCESS);
+    };
+    ASSERT_NO_FATAL_FAILURE(prepareRead(0));
+
+    // The full snapshot adds buffer 1. Replaying the older partial snapshot must keep both.
+    ASSERT_EQ(src.agent->getLocalMD(full), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(full, peer), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(partial, peer), NIXL_SUCCESS);
+    ASSERT_NO_FATAL_FAILURE(prepareRead(1));
+
+    for (unsigned i = 0; i < 2; ++i) {
+        auto status = dst.agent->postXferReq(requests[i]);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        nixl_notifs_t notifs;
+        while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+            ASSERT_EQ(src.agent->getNotifs(notifs), NIXL_SUCCESS);
+            status = dst.agent->getXferStatus(requests[i]);
+        }
+        ASSERT_EQ(status, NIXL_SUCCESS);
+        const auto dest = dst.buffers[i].getBasicDesc();
+        EXPECT_TRUE(checkPayload(reinterpret_cast<const void *>(dest.addr), dest.len, i, 123));
+        ASSERT_EQ(dst.agent->releaseXferReq(requests[i]), NIXL_SUCCESS);
+    }
+}
+
 TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
