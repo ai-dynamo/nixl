@@ -2028,6 +2028,40 @@ namespace agent {
         EXPECT_EQ(agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
     }
 
+    // Regression test: prep_xfer_dlist with the agent's own name on BOTH sides
+    // should work as a loopback transfer (equivalent to using NIXL_INIT_AGENT
+    // for local + own name for remote).
+    TEST_F(singleAgentSessionFixture, LocalXferPreppedLoopbackBothSidesOwnName) {
+        localXferSetup setup;
+        agent_helper_->setupLocalXfer(setup);
+
+        // Prep both sides using own name (simulates Python "" → self.name mapping)
+        nixlDlistH *local_side = nullptr;
+        ASSERT_EQ(
+            agent_->prepXferDlist(
+                agent_helper_->getName(), setup.srcXferDlist, local_side, &setup.extraParams),
+            NIXL_SUCCESS);
+
+        nixlDlistH *remote_side = nullptr;
+        ASSERT_EQ(
+            agent_->prepXferDlist(
+                agent_helper_->getName(), setup.dstXferDlist, remote_side, &setup.extraParams),
+            NIXL_SUCCESS);
+
+        const std::vector<int> indices{0};
+        nixlXferReqH *req = nullptr;
+        ASSERT_EQ(
+            agent_->makeXferReq(
+                NIXL_WRITE, *local_side, indices, *remote_side, indices, req, &setup.extraParams),
+            NIXL_SUCCESS);
+
+        EXPECT_EQ(agent_->postXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->getXferStatus(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releaseXferReq(req), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(local_side), NIXL_SUCCESS);
+        EXPECT_EQ(agent_->releasedDlistH(remote_side), NIXL_SUCCESS);
+    }
+
     TEST_F(singleAgentSessionFixture, LocalXferDistinctRegionsFullLifecycle) {
         localXferSetup setup;
         agent_helper_->setupLocalXfer(setup);

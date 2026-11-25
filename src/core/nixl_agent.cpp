@@ -983,8 +983,9 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     req_hndl = nullptr;
 
-    if ((!local_side.remoteAgent.empty()) || remote_side.remoteAgent.empty()) {
-        NIXL_ERROR_FUNC << "invalid sides (local must be local, remote must be remote)";
+    if ((!local_side.remoteAgent.empty() && local_side.remoteAgent != data->name_) ||
+        remote_side.remoteAgent.empty()) {
+        NIXL_ERROR_FUNC << "invalid sides (local must be local or loopback, remote must be remote)";
         data->addErrorTelemetry(NIXL_ERR_INVALID_PARAM);
         return NIXL_ERR_INVALID_PARAM;
     }
