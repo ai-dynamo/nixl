@@ -803,6 +803,73 @@ nixlLibfabricRail::setProgressThreadEnabled(bool enabled) {
     progress_thread_enabled_ = enabled;
 }
 
+void
+nixlLibfabricRail::addVramDevice(int device_id) {
+    if (device_id < 0) {
+        return;
+    }
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    ++vram_device_refs_[device_id];
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::removeVramDevice(int device_id) {
+    const std::lock_guard<std::mutex> lock(vram_devices_mutex_);
+    auto it = vram_device_refs_.find(device_id);
+    if (it == vram_device_refs_.end()) {
+        return;
+    }
+    if (--it->second == 0) {
+        vram_device_refs_.erase(it);
+    }
+    updateVramDeviceLocked();
+}
+
+void
+nixlLibfabricRail::updateVramDeviceLocked() {
+    // Most live registrations wins. std::map iterates in device order, so a tie keeps the lower id.
+    int selected = VRAM_DEVICE_NONE;
+    size_t selected_refs = 0;
+    for (const auto &[device_id, refs] : vram_device_refs_) {
+        if (refs > selected_refs) {
+            selected = device_id;
+            selected_refs = refs;
+        }
+    }
+    vram_device_id_.store(selected, std::memory_order_relaxed);
+
+    if (vram_device_refs_.size() > 1 && !vram_shared_warned_) {
+        vram_shared_warned_ = true;
+        std::string devices;
+        for (const auto &[device_id, refs] : vram_device_refs_) {
+            devices += (devices.empty() ? "" : ", ") + std::to_string(device_id);
+        }
+        NIXL_WARN << "Rail " << rail_id << " has VRAM from CUDA devices " << devices
+                  << ". Progress uses device " << selected
+                  << ", so same-host (shm) RMA into the other devices' buffers may be slower";
+    }
+}
+
+void
+nixlLibfabricRail::applyVramDeviceForProgress() const {
+#ifdef HAVE_CUDA
+    const int device_id = vram_device_id_.load(std::memory_order_relaxed);
+    if (device_id < 0) {
+        return;
+    }
+    int current_device = -1;
+    if (cudaGetDevice(&current_device) == cudaSuccess && current_device == device_id) {
+        return;
+    }
+    const cudaError_t cuda_ret = cudaSetDevice(device_id);
+    if (cuda_ret != cudaSuccess) {
+        NIXL_WARN << "Failed to set CUDA device " << device_id << " for progress on rail "
+                  << rail_id << ": " << cudaGetErrorString(cuda_ret);
+    }
+#endif
+}
+
 bool
 nixlLibfabricRail::initPostQueue(size_t post_queue_size) {
     return post_ring_.initialize(post_queue_size);

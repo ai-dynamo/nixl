@@ -172,11 +172,15 @@ public:
     /** Deregister memory from specified rails
      * @param selected_rails List of rail IDs to deregister from
      * @param mr_list Memory registration handles to deregister
+     * @param mem_type Memory type the buffer was registered with
+     * @param device_id Device ID the buffer was registered with
      * @return NIXL_SUCCESS on success, error code on failure
      */
     nixl_status_t
     deregisterMemory(const std::vector<size_t> &selected_rails,
-                     const std::vector<struct fid_mr *> &mr_list);
+                     const std::vector<struct fid_mr *> &mr_list,
+                     nixl_mem_t mem_type,
+                     int device_id);
 
     // Connection Management APIs
     /** Insert addresses into address vectors for all rails
@@ -288,11 +292,23 @@ public:
                        fi_addr_t dest_addr,
                        std::function<void(nixl_status_t)> completion_callback = nullptr);
     // Progress APIs
+    /** How progressActiveRails() handles the calling thread's current CUDA device */
+    enum class ProgressCudaDevice {
+        /** Before progressing each rail, make the CUDA device of the VRAM registered on it
+         *  current, and leave it current. For threads NIXL owns (the progress thread). */
+        Set,
+        /** Like Set, then restore the caller's CUDA context before returning. For progress
+         *  driven from an application thread (progress thread disabled). */
+        SetAndRestore,
+    };
+
     /** Process completions on active rails only (optimized for CPU overhead)
+     * @param cuda_device  see ProgressCudaDevice. Same-host RMA through the shm peer provider
+     *                     runs CUDA IPC copies inside CQ progress, on the current CUDA device.
      * @return NIXL_SUCCESS if completions processed, NIXL_IN_PROG if none, error on failure
      */
     nixl_status_t
-    progressActiveRails();
+    progressActiveRails(ProgressCudaDevice cuda_device);
 
     /** Validate that all rails are properly initialized
      * @return NIXL_SUCCESS if all rails initialized, error code otherwise
@@ -384,6 +400,11 @@ public:
     getRuntime() const;
 
 private:
+    /** Whether a registration of mem_type on device_id is counted in the rails' VRAM device
+     *  tracking (nixlLibfabricRail::addVramDevice) */
+    bool
+    tracksVramDevice(nixl_mem_t mem_type, int device_id) const;
+
     size_t striping_threshold_;
 
     /** Mapping type that a VRAM registration requests when it exports a CUDA dmabuf. Auto

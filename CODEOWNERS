@@ -61,8 +61,12 @@ CODEOWNERS @ai-dynamo/dynamo-ops-codeowners @ai-dynamo/nixl-maintainers
 # Device API
 /src/api/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 /src/utils/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
-/test/gtest/device_api/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
+/test/gtest/device/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 /test/gtest/unit/device_ops/ @ofirfarjun7 @Artemy-Mellanox @rakhmets @ai-dynamo/nixl-maintainers
 
 # NIXL EP example
 /examples/device/ep @itayalroy @ebarilanM @rakhmets @ai-dynamo/nixl-maintainers
+
+# GPUDirect-TCPXO Plugins
+/src/plugins/gpudirect_tcpxo @kugurst @mathurvedant @weichic-tw
+/test/unit/plugins/gpudirect_tcpxo @kugurst @mathurvedant @weichic-tw

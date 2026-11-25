@@ -151,19 +151,6 @@ class nixlHf3fsEngine : public nixlBackendEngine {
         nixlHf3fsEngine(const nixlBackendInitParams* init_params);
         ~nixlHf3fsEngine();
 
-        // File operations - target is the distributed FS
-        // So no requirements to connect to target.
-        // Just treat it locally.
-        bool supportsNotif () const {
-            return false;
-        }
-        bool supportsRemote  () const {
-            return false;
-        }
-        bool supportsLocal   () const {
-            return true;
-        }
-
         nixl_mem_list_t getSupportedMems () const {
             nixl_mem_list_t mems;
             mems.push_back(FILE_SEG);

@@ -34,8 +34,11 @@
 
 long nixlHf3fsEngine::page_size = sysconf(_SC_PAGESIZE);
 
+// File operations - target is the distributed FS
+// So no requirements to connect to target.
+// Just treat it locally.
 nixlHf3fsEngine::nixlHf3fsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       mem_config(NIXL_HF3FS_MEM_CONFIG_AUTO),
       iopool_size(HF3FS_DEFAULT_IOPOOL_SIZE) {
     hf3fs_utils = new hf3fsUtil();
@@ -504,13 +507,6 @@ nixl_status_t nixlHf3fsEngine::checkXfer(nixlBackendReqH* handle) const
     }
 
     nixlHf3fsBackendReqH *hf3fs_handle = (nixlHf3fsBackendReqH *) handle;
-
-    // Check if IOR is initialized
-    // TODO: This doesn't check anything...
-    // if (&hf3fs_handle->ior == nullptr) {
-    //     HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,
-    //         "Error: IOR is not initialized in checkXfer");
-    // }
 
     if (hf3fs_handle->io_status.thread == nullptr) {
         HF3FS_LOG_RETURN(NIXL_ERR_INVALID_PARAM,

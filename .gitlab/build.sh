@@ -207,23 +207,13 @@ else
         mpmath typing-extensions sympy numpy \
         networkx MarkupSafe fsspec filelock jinja2 nanobind
 
-    # Use system torch if present (>=2.7), else install it from the CUDA-matched
-    # PyTorch index. Detection mirrors contrib/Dockerfile (#1383); the
-    # nvcr.io/nvidia/pytorch base ships torch and has no cu133 wheel index.
+    # Use system torch if present (>=2.7), else install it from the PyTorch
+    # index; the nvcr.io/nvidia/pytorch base ships torch.
     if _torch_check_err=$(python3 -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then
         echo "Using PyTorch from system site-packages"
     else
         echo "System torch check failed: ${_torch_check_err}" >&2
-        cuda_version=$(nvcc --version | grep -oP 'release \K[0-9]+\.[0-9]+')
-        if [ -z "$cuda_version" ]; then
-            echo "ERROR: unable to determine CUDA version from nvcc" >&2
-            exit 1
-        fi
-        if [ "${cuda_version%%.*}" = "13" ]; then
-            torch_cu_tag="cu130"
-        else
-            torch_cu_tag="cu$(echo "${cuda_version}" | tr -d .)"
-        fi
+        torch_cu_tag="cu130"
         $SUDO pip3 --no-cache-dir install --break-system-packages \
             --index-url "https://download.pytorch.org/whl/${torch_cu_tag}" torch
     fi
@@ -265,7 +255,7 @@ else
 
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${BUILD_TMP}/rustup-init
     chmod +x ${BUILD_TMP}/rustup-init
-    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.86.0
+    ${BUILD_TMP}/rustup-init -y --default-toolchain 1.95.0
 
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${BUILD_TMP}/install_uv.sh
     chmod +x ${BUILD_TMP}/install_uv.sh
@@ -404,7 +394,7 @@ else
 
     ( \
       cd ${BUILD_TMP} && \
-      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}" && \
+      MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}" && \
       echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
       git clone --depth 1 --branch "${MOONCAKE_VERSION}" https://github.com/kvcache-ai/Mooncake.git && \
       cd Mooncake && \
@@ -412,7 +402,7 @@ else
       sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
       $SUDO bash dependencies.sh -y && \
       mkdir build && cd build && \
-      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+      cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -G Ninja && \
       ninja -j"$NPROC" && \
       $SUDO ninja install && \
       $SUDO ldconfig && \

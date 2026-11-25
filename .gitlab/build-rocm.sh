@@ -38,6 +38,7 @@ UCX_INSTALL_DIR=$2
 EXTRA_BUILD_ARGS=${3:-""}
 NIXL_BUILD_DIR=${NIXL_BUILD_DIR:-nixl_build}
 NIXLBENCH_BUILD_DIR=${NIXLBENCH_BUILD_DIR:-nixlbench_build}
+ROCM_PATH=${ROCM_PATH:-/opt/rocm}
 TMPDIR=$(mktemp -d)
 
 # DEPS_SANITIZE, when set (e.g. "address"), builds the C++ dependency stack that
@@ -210,7 +211,7 @@ else
 # Rust
     wget --tries=3 --waitretry=5 https://static.rust-lang.org/rustup/dist/${ARCH}-unknown-linux-gnu/rustup-init -O ${TMPDIR}/rustup-init
     chmod +x ${TMPDIR}/rustup-init
-    ${TMPDIR}/rustup-init -y --default-toolchain 1.86.0
+    ${TMPDIR}/rustup-init -y --default-toolchain 1.95.0
 # Astral
     wget --tries=3 --waitretry=5 "https://astral.sh/uv/install.sh" -O ${TMPDIR}/install_uv.sh
     chmod +x ${TMPDIR}/install_uv.sh
@@ -342,7 +343,7 @@ else
         $SUDO rm -rf gusli
     )
 # Mookcake
-    MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.10.post1}"
+    MOONCAKE_VERSION="${MOONCAKE_VERSION:-v0.3.14}"
     ( \
         cd ${TMPDIR} && \
         echo "MOONCAKE_VERSION: ${MOONCAKE_VERSION}" && \
@@ -352,7 +353,7 @@ else
         sed -i 's/^\([[:space:]]*\)install_go$/\1true/' dependencies.sh && \
         $SUDO bash dependencies.sh -y && \
         mkdir build && cd build && \
-        cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -G Ninja && \
+        cmake .. -DBUILD_SHARED_LIBS=ON -DWITH_STORE=OFF -DWITH_STORE_RUST=OFF -DUSE_HIP=ON -DBUILD_UNIT_TESTS=OFF -G Ninja && \
         ninja -j"$NPROC" && \
         $SUDO ninja install && \
         $SUDO ldconfig && \
@@ -426,16 +427,17 @@ else
     # This image is CUDA-free. Restrict building to plugins that do not require cuFile.
     # POSIX alone is enough to produce libnixl and nixlbench.
     NIXL_ENABLE_PLUGINS="${NIXL_ENABLE_PLUGINS:-POSIX}"
+    # wheel_variant unset: meson derives rocm<X>_<Y> from the ROCm install.
     # shellcheck disable=SC2086
     meson setup \
         ${NIXL_BUILD_DIR} \
         --prefix=${INSTALL_DIR} \
         -Ducx_path=${UCX_INSTALL_DIR} \
-        -Dwheel_variant=rocm \
         -Dbuild_docs=false \
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \
         -Dlibfabric_path="${LIBFABRIC_INSTALL_DIR}" \
+        -Drocm_path="${ROCM_PATH}" \
         --buildtype=debug \
         -Denable_plugins="${NIXL_ENABLE_PLUGINS}"
     ninja -j"$NPROC" -C ${NIXL_BUILD_DIR}
@@ -450,8 +452,8 @@ else
         ${NIXLBENCH_BUILD_DIR} \
         -Dnixl_path=${INSTALL_DIR} \
         -Dprefix=${INSTALL_DIR} \
-        -Duse_rocm=true \
-        -Drocm_path="${ROCM_INSTALL_PATH}"
+        -Dnixlbench_gpu=rocm \
+        -Drocm_path="${ROCM_PATH}"
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR}
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} install
 fi # PRE_INSTALLED_NIXL_ENV
