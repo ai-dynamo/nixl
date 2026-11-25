@@ -119,7 +119,8 @@ struct AFDTopology {
     int num_ffn_ranks;
     // Dense inbox slot within the rank's own role, independent of its NVLink position.
     int role_index[kNumMaxScaleupRanksCap];
-    uint64_t inbox_offset;
+    uint64_t inbox_offset, workspace_stride, dispatch_stride, reply_stride;
+    int num_slots;
     ScaleupMask attention_mask, ffn_mask;
     // A logical expert's owner quotient indexes this table of sorted NVLink positions.
     int ffn_ranks[kNumMaxScaleupRanksCap];

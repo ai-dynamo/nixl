@@ -269,7 +269,7 @@ def make_graph_forward(buffer, args, num_sms, inputs, slot: int, state: dict):
 
     def forward():
         recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
-            x=x, zero_copy=True, zero_copy_slot=slot, **graph_args
+            x=x, zero_copy=True, slot=slot, **graph_args
         )
         state.update(
             handle=handle,
@@ -328,7 +328,7 @@ def run_zero_copy(group, args, use_fp8: bool, use_nvfp4: bool = False):
         return buffer.dispatch(
             x=x,
             zero_copy=True,
-            zero_copy_slot=slot,
+            slot=slot,
             **common_of(topk_idx, topk_weights, sms),
         )[:4]
 
@@ -634,7 +634,7 @@ def run_worlds(group, args):
             do_cpu_sync=True,
         )
         staged = buffer.dispatch(x=x, **common)[:4]
-        zc = buffer.dispatch(x=x, zero_copy=True, zero_copy_slot=1, **common)[:4]
+        zc = buffer.dispatch(x=x, zero_copy=True, slot=1, **common)[:4]
         torch.cuda.synchronize()
         n = check_compact(
             f"{tag_w} eager zero copy vs staged", staged, zc, use_fp8=False, quiet=True
@@ -741,7 +741,7 @@ def run_tag_wrap(group, args):
             zc = buffer.dispatch(
                 x=x,
                 zero_copy=True,
-                zero_copy_slot=slot,
+                slot=slot,
                 **common_of(topk_idx, topk_weights, True),
             )[:4]
             torch.cuda.synchronize()
@@ -759,7 +759,7 @@ def run_tag_wrap(group, args):
             buffer.dispatch(
                 x=x,
                 zero_copy=True,
-                zero_copy_slot=slot,
+                slot=slot,
                 **common_of(topk_idx, topk_weights, False),
             )
     torch.cuda.synchronize()
@@ -834,8 +834,8 @@ def run_negatives(group, args):
     torch.cuda.synchronize()
     dist.barrier()
     refuse(
-        "zero_copy_slot=2 on a two-slot arena",
-        lambda: buffer.dispatch(x=x, zero_copy=True, zero_copy_slot=2, **common),
+        "slot=2 on a two-slot arena",
+        lambda: buffer.dispatch(x=x, zero_copy=True, slot=2, **common),
         "is outside the arena",
     )
     refuse(

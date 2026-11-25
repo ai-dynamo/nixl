@@ -207,7 +207,7 @@ def sweep_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                     do_cpu_sync=True,
                 )
                 if args.zero_copy:
-                    dispatch_args.update(zero_copy=True, zero_copy_slot=0)
+                    dispatch_args.update(zero_copy=True, slot=0)
                 recv_x, recv_topk_idx, recv_topk_weights, handle, _ = buffer.dispatch(
                     **dispatch_args
                 )
@@ -315,7 +315,7 @@ if __name__ == "__main__":
         "--zero-copy",
         type=int,
         default=0,
-        help="1: a one-slot zero-copy arena, dispatch(zero_copy=True, zero_copy_slot=0) (direct mode only: refused on a hybrid world)",
+        help="1: a one-slot zero-copy arena, dispatch(zero_copy=True, slot=0) (direct mode only: refused on a hybrid world)",
     )
     parser.add_argument("--skip-check", action="store_true")
     parser.add_argument("--seed", type=int, default=0)

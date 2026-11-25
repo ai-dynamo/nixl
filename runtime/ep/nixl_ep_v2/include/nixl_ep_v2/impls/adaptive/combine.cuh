@@ -237,6 +237,13 @@ adaptive_combine_impl(nv_bfloat16* x,
 
     // The transport context comes from the topology descriptor (`EPTopology`)
     const auto ctx = nixl::load_context(topo.transport);
+    uint64_t inbox_slot_offset = 0;
+    if constexpr (kDirection == kSend) {
+        if (topo.afd->num_slots > 1) {
+            const auto bank = (static_cast<uint8_t*>(workspace) - static_cast<uint8_t*>(ctx.local_base)) / topo.afd->workspace_stride;
+            inbox_slot_offset = (bank - topo.afd->num_slots) * topo.afd->reply_stride;
+        }
+    }
 
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
     const int scaleout_rank_idx = topo.scaleout_rank_idx, scaleup_rank_idx = topo.scaleup_rank_idx;
@@ -352,7 +359,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 if constexpr (kDirection == kSend) {
                     const int pos = src_rank_idx % num_scaleup_ranks;
                     const auto offset = reinterpret_cast<uintptr_t>(ptr) - reinterpret_cast<uintptr_t>(buffer);
-                    return afd_inbox_record(transport, topo, scaleup_peer_id(pos), offset);
+                    return afd_inbox_record(transport, topo, scaleup_peer_id(pos), inbox_slot_offset + offset);
                 }
                 const auto dst_ptr = transport.get_p2p_ptr(ptr, scaleup_peer_id(src_rank_idx % num_scaleup_ranks));
                 EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");

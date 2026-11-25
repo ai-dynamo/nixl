@@ -25,6 +25,7 @@
 #include <cuda_runtime.h>
 #include <limits>
 #include <memory>
+#include <mutex>
 #include <numeric>
 #include <optional>
 #include <vector>
@@ -52,6 +53,7 @@ class ElasticBuffer {
     int64_t num_buffer_bytes;
     void* buffer;
     bool role_sized;
+    int afd_slots;
 
     // Destructor settings
     bool explicitly_destroy;
@@ -64,6 +66,26 @@ class ElasticBuffer {
 
     // CUDA streams
     at::cuda::CUDAStream comm_stream;
+    std::vector<at::cuda::CUDAStream> reply_streams;
+    // The caching allocator can record events when outputs are freed after destroy().
+    // Keep dedicated streams alive and return drained streams to subsequent buffers.
+    inline static std::mutex reply_stream_mutex;
+    inline static std::vector<at::cuda::CUDAStream> idle_reply_streams;
+
+    at::cuda::CUDAStream acquire_reply_stream() const {
+        std::lock_guard lock(reply_stream_mutex);
+        const auto device = comm_stream.device_index();
+        for (auto it = idle_reply_streams.begin(); it != idle_reply_streams.end(); ++it) {
+            if (it->device_index() == device) {
+                const auto stream = *it;
+                idle_reply_streams.erase(it);
+                return stream;
+            }
+        }
+        cudaStream_t stream;
+        CUDA_RUNTIME_CHECK(cudaStreamCreateWithFlags(&stream, cudaStreamNonBlocking));
+        return at::cuda::getStreamFromExternal(stream, device);
+    }
 
     // Whether to allow multiple reductions
     bool allow_multiple_reduction;
@@ -110,12 +132,13 @@ class ElasticBuffer {
 
     struct AFDConfig {
         int hidden, num_topk, token_capacity, num_attention_ranks;
+        int64_t slot_stride;
         bool fp8_dispatch;
         AFDRole role;
         topology::ScaleupMask live_mask;
         torch::Tensor topology_tensor;
     };
-    using AFDSetup = std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool>;
+    using AFDSetup = std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool, int>;
     std::optional<AFDSetup> pending_afd;
     std::optional<AFDConfig> afd;
 
@@ -161,7 +184,7 @@ public:
                   const int& num_experts_per_rank,
                   const int64_t& num_zero_copy_bytes,
                   const int& dynamic_take_mode, std::optional<AFDSetup> afd_setup = std::nullopt):
-        num_buffer_bytes(num_buffer_bytes), role_sized(afd_setup.has_value()),
+        num_buffer_bytes(num_buffer_bytes), role_sized(afd_setup.has_value()), afd_slots(afd_setup ? std::get<6>(*afd_setup) : 1),
         explicitly_destroy(explicitly_destroy),
         comm_stream(get_global_comm_stream()),
         allow_multiple_reduction(allow_multiple_reduction),
@@ -183,7 +206,9 @@ public:
                        "The expert slots of the declared maximum world exceed the workspace capacity");
 
         // Workspace is aligned to 2 MB so that it sits cleanly at the front of the symmetric memory
-        const auto num_workspace_bytes = workspace_bytes();
+        EP_HOST_ASSERT(afd_slots > 0);
+        const auto num_workspace_bytes = workspace_bytes() * (afd_slots == 1 ? 1 : 2LL * afd_slots);
+        EP_HOST_ASSERT(num_buffer_bytes <= INT64_MAX - num_workspace_bytes - num_zero_copy_bytes);
 
         // The declared maximum world and this rank's coordinates in it
         EP_HOST_ASSERT(0 < max_num_scaleout_ranks and max_num_scaleout_ranks <= topology::kNumMaxScaleoutRanksCap and
@@ -251,8 +276,15 @@ public:
     void destroy() {
         EP_HOST_ASSERT(not destroyed);
 
+        for (const auto& stream : reply_streams)
+            stream_wait(comm_stream, stream);
         // Finish all works on all GPUs
         barrier(true, true);
+        if (!reply_streams.empty()) {
+            std::lock_guard lock(reply_stream_mutex);
+            idle_reply_streams.insert(idle_reply_streams.end(), reply_streams.begin(), reply_streams.end());
+            reply_streams.clear();
+        }
 
         // Deallocate host workspaces
         CUDA_RUNTIME_CHECK(cudaFreeHost(host_workspace));
@@ -282,7 +314,7 @@ public:
 
 private:
     void initialize_afd(const std::vector<int>& attention_ranks, const std::vector<int>& ffn_ranks,
-                       int hidden, int num_topk, int token_capacity, bool fp8_dispatch) {
+                       int hidden, int num_topk, int token_capacity, bool fp8_dispatch, int num_slots) {
         EP_HOST_ASSERT(not afd and not adaptive_num_channels_per_sm and "AFD membership is configured once before dispatch");
         EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                        "Configure AFD outside CUDA graph capture");
@@ -318,24 +350,36 @@ private:
         for (int i = 0; i < device_topology.num_ffn_ranks; ++i)
             device_topology.ffn_ranks[i] = ffn_ranks[i] % max_num_scaleup_ranks;
 
-        device_topology.inbox_offset = workspace_bytes();
+        const auto workspace_extent = static_cast<uint8_t*>(buffer) - static_cast<uint8_t*>(workspace);
+        device_topology.inbox_offset = workspace_extent;
+        device_topology.workspace_stride = workspace_bytes();
+        device_topology.num_slots = num_slots;
         for (const auto role : {AFDRole::Attention, AFDRole::FFN}) {
             const auto& ranks = role == AFDRole::Attention ? attention_ranks : ffn_ranks;
             const auto extent = calculate_buffer_size(max_num_scaleout_ranks, max_num_scaleup_ranks, token_capacity, hidden,
                                                       num_topk, fp8_dispatch, allow_multiple_reduction, role,
                                                       attention_ranks.size(), ffn_ranks.size());
+            EP_HOST_ASSERT(extent <= (INT64_MAX - workspace_extent) / num_slots);
+            if (role == AFDRole::Attention) device_topology.reply_stride = extent;
+            else device_topology.dispatch_stride = extent;
             for (int i = 0; i < static_cast<int>(ranks.size()); ++i) {
                 const int rid = ranks[i];
                 EP_HOST_ASSERT(i == 0 or ranks[i - 1] < rid);
                 device_topology.role_index[rid % max_num_scaleup_ranks] = i;
-                EP_HOST_ASSERT(nixl_context->registered_bytes(rid) >= static_cast<uint64_t>(workspace_bytes() + extent) and
+                EP_HOST_ASSERT(nixl_context->registered_bytes(rid) >= static_cast<uint64_t>(workspace_extent + extent * num_slots) and
                                "Destination registration is too small for its AFD role");
             }
         }
         auto descriptor = torch::empty({static_cast<int64_t>(sizeof(device_topology))}, topology_tensor.options());
         CUDA_RUNTIME_CHECK(cudaMemcpy(descriptor.data_ptr(), &device_topology, sizeof(device_topology), cudaMemcpyHostToDevice));
         const auto role = device_topology.attention_mask.test(scaleup_rank_idx) ? AFDRole::Attention : AFDRole::FFN;
-        afd.emplace(AFDConfig{hidden, num_topk, token_capacity, static_cast<int>(attention_ranks.size()), fp8_dispatch,
+        if (role == AFDRole::Attention && num_slots > 1) {
+            reply_streams.reserve(num_slots);
+            for (int slot = 0; slot < num_slots; ++slot)
+                reply_streams.push_back(acquire_reply_stream());
+        }
+        afd.emplace(AFDConfig{hidden, num_topk, token_capacity, static_cast<int>(attention_ranks.size()),
+                              static_cast<int64_t>(role == AFDRole::Attention ? device_topology.reply_stride : device_topology.dispatch_stride), fp8_dispatch,
                               role, live_mask, std::move(descriptor)});
     }
 
@@ -569,7 +613,7 @@ public:
             stream_wait(compute_stream, comm_stream);
     }
 
-    torch::cuda::CUDAStream stream_control_prologue(const std::optional<EventHandle>& previous_event,
+    torch::cuda::CUDAStream stream_control_prologue(const at::cuda::CUDAStream& comm_stream, const std::optional<EventHandle>& previous_event,
                                                     const bool& allocate_on_comm_stream,
                                                     const bool& async_with_compute_stream) const {
         // Allocate all tensors on communication stream if set
@@ -594,12 +638,12 @@ public:
         return compute_stream;
     }
 
-    void stream_control_before_epilogue(const std::optional<EventHandle>& previous_event_before_epilogue) const {
+    void stream_control_before_epilogue(const at::cuda::CUDAStream& comm_stream, const std::optional<EventHandle>& previous_event_before_epilogue) const {
         if (previous_event_before_epilogue.has_value())
             stream_wait(comm_stream, previous_event_before_epilogue.value());
     }
 
-    std::optional<EventHandle> stream_control_epilogue(const std::vector<std::optional<torch::Tensor>>& tensors,
+    std::optional<EventHandle> stream_control_epilogue(const at::cuda::CUDAStream& comm_stream, const std::vector<std::optional<torch::Tensor>>& tensors,
                                                        const at::cuda::CUDAStream& compute_stream,
                                                        const bool& allocate_on_comm_stream,
                                                        const bool& async_with_compute_stream) const {
@@ -855,7 +899,7 @@ public:
              const bool& do_handle_copy, const bool& do_cpu_sync,
              const bool& do_expand, const bool& do_zero_padding,
              const bool& use_tma_aligned_col_major_sf,
-             const bool& zero_copy, const int& zero_copy_slot) const {
+             const bool& zero_copy, const int& slot) const {
         require_regular_ep();
         auto [recv_x, recv_sf, recv_topk_idx, recv_topk_weights, copied_topk_idx, num_recv_tokens,
               num_expanded_tokens, counts, psum_rank, psum_expert, unaligned_expert,
@@ -863,7 +907,7 @@ public:
             x, sf, topk_idx, topk_weights, cumulative_local_expert_recv_stats,
             num_max_tokens_per_rank, expert_alignment, num_sms, previous_event, previous_event_before_epilogue,
             async_with_compute_stream, allocate_on_comm_stream, do_handle_copy, do_cpu_sync,
-            do_expand, do_zero_padding, use_tma_aligned_col_major_sf, zero_copy, zero_copy_slot, kFused);
+            do_expand, do_zero_padding, use_tma_aligned_col_major_sf, zero_copy, slot, kFused);
         return {std::move(*recv_x), std::move(recv_sf), std::move(recv_topk_idx), std::move(recv_topk_weights),
                 std::move(copied_topk_idx), num_recv_tokens, num_expanded_tokens, std::move(counts),
                 std::move(*psum_rank), std::move(*psum_expert), std::move(*unaligned_expert),
@@ -874,20 +918,20 @@ public:
     DispatchResult dispatch_send(const torch::Tensor& x, const torch::Tensor& topk_idx,
                                  const std::optional<torch::Tensor>& topk_weights,
                                  int num_max_tokens_per_rank, int expert_alignment, int num_sms,
-                                 const std::optional<torch::Tensor>& sf = std::nullopt, bool do_expand = false) const {
+                                 const std::optional<torch::Tensor>& sf = std::nullopt, bool do_expand = false, int slot = 0) const {
         require_afd_role(AFDRole::Attention);
         return dispatch_internal(
             x, sf, topk_idx, topk_weights, std::nullopt, num_max_tokens_per_rank, expert_alignment, num_sms,
-            std::nullopt, std::nullopt, false, false, true, false, do_expand, false, false, false, 0, kSend);
+            std::nullopt, std::nullopt, false, false, true, false, do_expand, false, false, false, slot, kSend);
     }
 
     DispatchResult dispatch_recv(int num_max_tokens_per_rank, int expert_alignment, int num_sms,
-                                 bool do_cpu_sync, bool do_expand = false, bool with_weights = false) const {
+                                 bool do_cpu_sync, bool do_expand = false, bool with_weights = false, int slot = 0) const {
         require_afd_role(AFDRole::FFN);
         return dispatch_internal(
             std::nullopt, std::nullopt, std::nullopt, std::nullopt, std::nullopt,
             num_max_tokens_per_rank, expert_alignment, num_sms, std::nullopt, std::nullopt,
-            false, false, false, do_cpu_sync, do_expand, false, false, false, 0, kRecv, with_weights);
+            false, false, false, do_cpu_sync, do_expand, false, false, false, slot, kRecv, with_weights);
     }
 
     std::tuple<torch::Tensor, std::optional<torch::Tensor>, std::optional<EventHandle>>
@@ -920,23 +964,23 @@ public:
     CombineResult combine_send(const torch::Tensor& x, const torch::Tensor& src_metadata,
                                const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
                                bool recv_count_is_exact, int num_max_tokens_per_rank, int num_sms,
-                               bool use_expanded_layout = false, int num_expanded_tokens = 0) const {
+                               bool use_expanded_layout = false, int num_expanded_tokens = 0, int slot = 0) const {
         require_afd_role(AFDRole::FFN);
         EP_HOST_ASSERT((not use_expanded_layout or (x.dim() == 2 and x.size(0) == num_expanded_tokens)) and
                        "Expanded AFD replies must match the dispatch row allocation");
         return combine_internal(
             x, std::nullopt, std::nullopt, std::nullopt, src_metadata, std::nullopt,
             psum_num_recv_tokens_per_scaleup_rank, std::nullopt, std::nullopt, recv_count_is_exact,
-            num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, use_expanded_layout, kSend);
+            num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, use_expanded_layout, kSend, slot);
     }
 
     CombineResult combine_recv(const torch::Tensor& combined_topk_idx, const std::optional<torch::Tensor>& bias_0,
                                const std::optional<torch::Tensor>& bias_1, int num_max_tokens_per_rank, int num_sms,
-                               bool use_expanded_layout = false) const {
+                               bool use_expanded_layout = false, int slot = 0) const {
         require_afd_role(AFDRole::Attention);
         return combine_internal(
             std::nullopt, std::nullopt, bias_0, bias_1, std::nullopt, combined_topk_idx, std::nullopt, std::nullopt,
-            std::nullopt, false, num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, false, false, use_expanded_layout, kRecv);
+            std::nullopt, false, num_max_tokens_per_rank, num_sms, std::nullopt, std::nullopt, afd_slots > 1, false, use_expanded_layout, kRecv, slot);
     }
 
 private:
@@ -956,7 +1000,11 @@ private:
         const bool& do_handle_copy, const bool& do_cpu_sync,
         const bool& do_expand, const bool& do_zero_padding,
         const bool& use_tma_aligned_col_major_sf,
-        const bool& zero_copy, const int& zero_copy_slot, Direction direction, bool with_weights = false) const {
+        const bool& zero_copy, const int& slot, Direction direction, bool with_weights = false) const {
+        EP_HOST_ASSERT(!afd || (slot >= 0 && slot < afd_slots));
+        const auto num_buffer_bytes = afd ? afd->slot_stride : this->num_buffer_bytes;
+        auto* buffer = afd ? math::advance_ptr(this->buffer, slot * num_buffer_bytes) : this->buffer;
+        auto* workspace = afd ? math::advance_ptr(this->workspace, slot * workspace_bytes()) : this->workspace;
         const bool is_send = direction == kSend;
         const bool is_recv = direction == kRecv;
         if (afd) {
@@ -983,7 +1031,7 @@ private:
             // the staged arms and the copy epilogue writes the slot, a fallback only a graph replay reaches (captured in direct mode,
             // replayed after the world grew to two domains): an eager call or a capture in hybrid mode is refused here
             EP_HOST_ASSERT(topo.mode == topology::kModeDirect and "Zero copy is a direct-mode feature (one NVLink domain): not available while the topology is hybrid");
-            EP_HOST_ASSERT(0 <= zero_copy_slot and zero_copy_slot < zc.num_slots and "Invalid zero-copy slot");
+            EP_HOST_ASSERT(0 <= slot and slot < zc.num_slots and "Invalid zero-copy slot");
         }
 
         // Check data tensor
@@ -1083,7 +1131,7 @@ private:
 
         // Stream control
         // All new tensor allocations should happen after this
-        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream, async_with_compute_stream);
+        const auto compute_stream = stream_control_prologue(comm_stream, previous_event, allocate_on_comm_stream, async_with_compute_stream);
 
         // Handle tensors: capacity storage (the maximum world, the whole launch grid) handed back as live-shaped views;
         // the expert-indexed ones have the fixed slot count of this rank in every world
@@ -1210,7 +1258,7 @@ private:
         int* zc_recv_src_metadata_ptr = nullptr;
         int* zc_count_matrix_ptr = nullptr;
         if (zero_copy) {
-            zc_slot_base = zc.base + static_cast<int64_t>(zero_copy_slot) * zc.slot_bytes;
+            zc_slot_base = zc.base + static_cast<int64_t>(slot) * zc.slot_bytes;
             zc_recv_x_ptr = zc_slot_base + zc.recv_x_offset;
             if (sf.has_value())
                 zc_recv_sf_ptr = zc_slot_base + zc.recv_sf_offset;
@@ -1248,13 +1296,13 @@ private:
                         zc_recv_src_metadata_ptr,
                         zero_copy ? zc.sf_token_stride : 0, zero_copy ? zc.sf_hidden_stride : 0,
                         zc_count_matrix_ptr, zero_copy ? zc.count_row_stride : 0, zero_copy ? zc.count_matrix_rows : 0,
-                        zero_copy ? zero_copy_slot : 0,
+                        zero_copy ? slot : 0,
                         resolve_dynamic_take(),
                         comm_stream, direction);
 
         if (is_send) {
-            stream_control_before_epilogue(previous_event_before_epilogue);
-            const auto event = stream_control_epilogue(
+            stream_control_before_epilogue(comm_stream, previous_event_before_epilogue);
+            const auto event = stream_control_epilogue(comm_stream,
                 {x, sf, topk_idx, topk_weights, copied_topk_idx, psum_num_recv_tokens_per_scaleup_rank,
                  psum_num_recv_tokens_per_expert, num_unaligned_recv_tokens_per_expert},
                 compute_stream, allocate_on_comm_stream, async_with_compute_stream);
@@ -1403,7 +1451,7 @@ private:
         EP_HOST_ASSERT(psum_num_recv_tokens_per_expert.size(0) == num_local_experts);
 
         // Launch copy kernels with full SMs
-        stream_control_before_epilogue(previous_event_before_epilogue);
+        stream_control_before_epilogue(comm_stream, previous_event_before_epilogue);
         // Without a CPU sync the count is the worst case: a negative value tells the epilogue to read the fixed slot
         // Zero copy: launched in both modes (a captured graph keeps it across a mode switch); it writes the slot in hybrid mode and returns at once in direct mode
         launch_dispatch_copy_epilogue(buffer, workspace,
@@ -1426,7 +1474,7 @@ private:
                                       comm_stream, is_recv);
 
         // Stream control
-        const auto event = stream_control_epilogue(
+        const auto event = stream_control_epilogue(comm_stream,
             {x, sf, topk_idx, topk_weights,
              recv_x, recv_sf, recv_topk_idx, recv_topk_weights,
              cumulative_local_expert_recv_stats,
@@ -1471,9 +1519,14 @@ private:
         const std::optional<EventHandle>& previous_event_before_epilogue,
         const bool& async_with_compute_stream,
         const bool& allocate_on_comm_stream,
-        const bool& use_expanded_layout, Direction direction) const {
+        const bool& use_expanded_layout, Direction direction, int slot = 0) const {
+        EP_HOST_ASSERT(!afd || (slot >= 0 && slot < afd_slots));
+        const auto num_buffer_bytes = afd ? afd->slot_stride : this->num_buffer_bytes;
+        auto* buffer = afd ? math::advance_ptr(this->buffer, slot * num_buffer_bytes) : this->buffer;
+        auto* workspace = afd ? math::advance_ptr(this->workspace, (afd_slots > 1 ? afd_slots + slot : slot) * workspace_bytes()) : this->workspace;
         const bool is_send = direction == kSend;
         const bool is_recv = direction == kRecv;
+        const auto& comm_stream = is_recv && afd_slots > 1 ? reply_streams[slot] : this->comm_stream;
         if (afd) {
             EP_HOST_ASSERT(0 < num_max_tokens_per_rank and num_max_tokens_per_rank <= afd->token_capacity);
         }
@@ -1549,7 +1602,7 @@ private:
 
         // Stream control
         // All new tensor allocations should happen after this
-        const auto compute_stream = stream_control_prologue(previous_event, allocate_on_comm_stream, async_with_compute_stream);
+        const auto compute_stream = stream_control_prologue(comm_stream, previous_event, allocate_on_comm_stream, async_with_compute_stream);
 
         // Check buffer size
         int64_t num_combine_send_bytes = 0;
@@ -1602,8 +1655,8 @@ private:
             resolve_dynamic_take(),
             comm_stream, direction);
         if (is_send) {
-            stream_control_before_epilogue(previous_event_before_epilogue);
-            const auto event = stream_control_epilogue(
+            stream_control_before_epilogue(comm_stream, previous_event_before_epilogue);
+            const auto event = stream_control_epilogue(comm_stream,
                 {x, src_metadata, psum_num_recv_tokens_per_scaleup_rank},
                 compute_stream, allocate_on_comm_stream, async_with_compute_stream);
             return {std::nullopt, std::nullopt, event};
@@ -1622,7 +1675,7 @@ private:
 
         // Combine pushed data: the reduce epilogue derives the rows to reduce from the topology descriptor
         // (`EPTopology`, its `mode` and rank counts) and takes the buffer base
-        stream_control_before_epilogue(previous_event_before_epilogue);
+        stream_control_before_epilogue(comm_stream, previous_event_before_epilogue);
         launch_combine_reduce_epilogue(combined_x.data_ptr(),
                                        combined_topk_weights_ptr,
                                        combined_topk_idx->data_ptr<topk_idx_t>(),
@@ -1643,7 +1696,7 @@ private:
                                        comm_stream, direction);
 
         // Stream control
-        const auto event = stream_control_epilogue(
+        const auto event = stream_control_epilogue(comm_stream,
             {x, topk_weights, bias_0, bias_1,
              src_metadata,
              combined_topk_idx,
@@ -1669,7 +1722,7 @@ static void register_apis(pybind11::module_& m) {
 
     pybind11::class_<ElasticBuffer>(m, "ElasticBuffer")
         .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int>())
-        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, std::optional<std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool>>>())
+        .def(pybind11::init<int64_t, bool, bool, int, int, bool, int, int, int, int, int, std::string, int, int64_t, int, std::optional<std::tuple<std::vector<int>, std::vector<int>, int, int, int, bool, int>>>())
         .def("destroy", &ElasticBuffer::destroy)
         .def("get_comm_stream", &ElasticBuffer::get_comm_stream)
         .def("get_physical_domain_size", &ElasticBuffer::get_physical_domain_size)

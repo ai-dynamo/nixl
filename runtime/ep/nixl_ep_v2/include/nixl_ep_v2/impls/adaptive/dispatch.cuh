@@ -252,7 +252,7 @@ __device__ __forceinline__ DirectDispatchRoute pack_direct_route(
 template <int kNumMaxScaleupRanks, int kDirection>
 __device__ __forceinline__ void write_direct_token(
     const nixl::NIXLTransport& transport, const topology::EPTopology& topo, const layout::BufferLayout<false>& recv_buffer,
-    const layout::TokenLayout& tma_buffer, int dst_rank_idx, int dst_slot_idx) {
+    const layout::TokenLayout& tma_buffer, int dst_rank_idx, int dst_slot_idx, uint64_t inbox_slot_offset) {
     if (dst_slot_idx < 0)
         return;
     const int pos = dst_rank_idx % topo.num_scaleup_ranks;
@@ -261,7 +261,7 @@ __device__ __forceinline__ void write_direct_token(
     if constexpr (kDirection == kSend) {
         const auto bytes = recv_buffer.get_num_bytes_per_token();
         const auto row = static_cast<int64_t>(topo.afd->role_index[topo.scaleup_rank_idx]) * recv_buffer.num_max_tokens_per_rank + dst_slot_idx;
-        dst_ptr = afd_inbox_record(transport, topo, peer, row * bytes);
+        dst_ptr = afd_inbox_record(transport, topo, peer, inbox_slot_offset + row * bytes);
     } else {
         dst_ptr = transport.get_p2p_ptr(recv_buffer.get_token_buffer(dst_slot_idx).get_base_ptr(), peer);
         EP_DEVICE_ASSERT(dst_ptr != nullptr and "Direct mode needs every live peer reachable with stores");
@@ -328,6 +328,13 @@ adaptive_dispatch_impl(
 
     // The transport context comes from the topology descriptor (`EPTopology`), not from the launch
     const auto ctx = nixl::load_context(topo.transport);
+    uint64_t inbox_slot_offset = 0;
+    if constexpr (kDirection == kSend) {
+        if (topo.afd->num_slots > 1) {
+            const auto bank = (static_cast<uint8_t*>(workspace) - static_cast<uint8_t*>(ctx.local_base)) / topo.afd->workspace_stride;
+            inbox_slot_offset = bank * topo.afd->dispatch_stride;
+        }
+    }
 
     // Runtime topology-derived values (compile-time constants in the hybrid kernel)
     const int num_scaleout_ranks = topo.num_scaleout_ranks, num_scaleup_ranks = topo.num_scaleup_ranks;
@@ -1137,7 +1144,7 @@ adaptive_dispatch_impl(
             __syncwarp();
 
             if constexpr (not kZeroCopy) {
-                write_direct_token<kNumMaxScaleupRanks, kDirection>(transport, topo, recv_buffer, tma_buffer, route.rank, stored_dst_slot_idx);
+                write_direct_token<kNumMaxScaleupRanks, kDirection>(transport, topo, recv_buffer, tma_buffer, route.rank, stored_dst_slot_idx, inbox_slot_offset);
             } else {
                 // Zero copy: per destination one bulk store of the row, then plain remote stores of its small parts
                 constexpr int kNumSFRegs = kNumSFPacks > 0 ? math::constexpr_ceil_div(kNumSFPacks, 32) : 1;

@@ -55,6 +55,7 @@ class AFDRole(str, Enum):
 @dataclass(frozen=True)
 class _AFDSettings:
     compact_wire: bool
+    num_slots: int
     use_fp8_dispatch: bool
     hidden: int
     num_topk: int
@@ -111,6 +112,8 @@ class EPHandle:
         recv_count_is_exact: whether `num_recv_tokens` is the real count (the dispatch had a CPU sync).
         num_recv_tokens_device: 0-d `torch.int` device view of the real count, valid without a CPU sync and in graphs.
     """
+
+    slot: int
 
     def __init__(
         self,
@@ -385,6 +388,7 @@ class ElasticBuffer:
         role: Optional[AFDRole] = None,
         max_attention_ranks: int = 0,
         max_ffn_ranks: int = 0,
+        num_slots: int = 1,
     ):
         """
         Initialize the elastic communication buffer.
@@ -418,6 +422,7 @@ class ElasticBuffer:
             explicitly_destroy: If this flag is set to True, you need to explicitly call `destroy()` to release resources;
                 otherwise, the resources will be released by the destructor.
             max_attention_ranks: reserved attention membership for AFD dispatch inboxes.
+            num_slots: number of independently scheduled ordinary-copy AFD exchanges.
             max_ffn_ranks: reserved FFN membership for AFD replies.
             max_num_scaleout_ranks: the maximum number of scaleout ranks (NVLink domains) the buffer, the handles and
                 the kernels are sized for; 0 = the cohort's validated layout. The live world is any product subset of it.
@@ -468,6 +473,13 @@ class ElasticBuffer:
 
         # Some useful utilities
         self.role = AFDRole(role) if role is not None else None
+        if num_slots < 1 or (self.role is None and num_slots != 1):
+            raise ValueError(
+                "Multiple ordinary-copy slots require AFD and num_slots must be positive"
+            )
+        self.num_slots = num_slots
+        if self.role is not None:
+            self._afd_handles = [None] * num_slots
         self._dispatch_topk = num_topk
         self.group = group
         if group is not None:
@@ -514,6 +526,7 @@ class ElasticBuffer:
             )
             settings = _AFDSettings(
                 compact_wire,
+                num_slots,
                 use_fp8_dispatch,
                 hidden,
                 num_topk,
@@ -578,6 +591,7 @@ class ElasticBuffer:
                 num_topk,
                 num_max_tokens_per_rank,
                 use_fp8_dispatch,
+                num_slots,
             )
             attention_count, ffn_count = len(attention), len(ffn)
             max_attention_ranks = max_attention_ranks or attention_count
@@ -618,7 +632,7 @@ class ElasticBuffer:
                 )
 
         def arena_size(role):
-            return _C.calculate_elastic_buffer_size(
+            return num_slots * _C.calculate_elastic_buffer_size(
                 max_num_scaleout_ranks,
                 max_num_scaleup_ranks,
                 num_max_tokens_per_rank,
@@ -860,6 +874,7 @@ class ElasticBuffer:
         role: Optional[AFDRole] = None,
         max_attention_ranks: int = 0,
         max_ffn_ranks: int = 0,
+        num_slots: int = 1,
     ) -> int:
         """
         Get a recommended buffer size (in bytes) for the given MoE settings, without constructing the buffer.
@@ -873,6 +888,7 @@ class ElasticBuffer:
             use_fp8_dispatch: whether to use FP8 for dispatch.
             allow_multiple_reduction: whether to allow multiple reductions in combine.
             max_attention_ranks: reserved attention membership for AFD dispatch inboxes.
+            num_slots: number of independently scheduled ordinary-copy AFD exchanges.
             max_ffn_ranks: reserved FFN membership for AFD replies.
             max_num_scaleout_ranks: the declared maximum world to size for (0 = the group's domain count).
             max_num_scaleup_ranks: likewise (0 = the group's domain size).
@@ -884,6 +900,10 @@ class ElasticBuffer:
         Returns:
             size: the recommended buffer size in bytes (2 MB-aligned).
         """
+        if num_slots < 1 or (role is None and num_slots != 1):
+            raise ValueError(
+                "Multiple ordinary-copy slots require AFD and num_slots must be positive"
+            )
         if role is not None:
             role = AFDRole(role)
             if max_attention_ranks and max_ffn_ranks:
@@ -908,7 +928,7 @@ class ElasticBuffer:
             max_attention_ranks = max_attention_ranks or max_num_scaleup_ranks - 1
             max_ffn_ranks = max_ffn_ranks or max_num_scaleup_ranks - 1
         # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
-        return _C.calculate_elastic_buffer_size(
+        return num_slots * _C.calculate_elastic_buffer_size(
             max_num_scaleout_ranks,
             max_num_scaleup_ranks,
             num_max_tokens_per_rank,
@@ -1444,7 +1464,7 @@ class ElasticBuffer:
         do_zero_padding: bool = False,
         use_tma_aligned_col_major_sf: bool = False,
         zero_copy: bool = False,
-        zero_copy_slot: int = 0,
+        slot: int = 0,
     ) -> Tuple[
         Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]],
         Optional[torch.Tensor],
@@ -1495,12 +1515,12 @@ class ElasticBuffer:
             do_zero_padding: whether to zero out the alignment padding slots in the expanded output.
                 Only valid when `do_expand` is True. Ensures alignment gaps between experts are zeroed.
             use_tma_aligned_col_major_sf: whether to use TMA-aligned column-major layout for scale factors.
-            zero_copy: the outputs in slot `zero_copy_slot` of the arena, written in place over NVLink: a DIRECT-mode feature,
+            zero_copy: the outputs in slot `slot` of the arena, written in place over NVLink: a DIRECT-mode feature,
                 refused (a host assertion, before any collective step) while the topology is hybrid; compact; a collective
                 argument. The returned tensors and the handle's `recv_src_metadata` are views of the slot (the constructor's
                 slot rule). A graph captured in direct mode and replayed after the world grew to two domains cannot be refused:
                 the kernels then run the staged path and the copy epilogue writes the slot; recapture without zero copy.
-            zero_copy_slot: which slot, `0 <= zero_copy_slot < num_zero_copy_slots`.
+            slot: which slot, `0 <= slot < num_zero_copy_slots`.
 
         Returns:
             recv_x: received tokens, the same type and tuple as the input `x` (NVFP4: `recv_fp4` `[n, hidden // 2]` uint8 and
@@ -1526,8 +1546,8 @@ class ElasticBuffer:
                 not do_expand and not use_tma_aligned_col_major_sf
             ), "Zero copy is the compact layout with row-major scaling factors"
             assert (
-                0 <= zero_copy_slot < self.num_zero_copy_slots
-            ), f"zero_copy_slot {zero_copy_slot} is outside the arena of {self.num_zero_copy_slots} slot(s)"
+                0 <= slot < self.num_zero_copy_slots
+            ), f"slot {slot} is outside the arena of {self.num_zero_copy_slots} slot(s)"
 
         # Fixed expert slots per rank: the kernels derive the expert count from the live world
         assert (
@@ -1578,7 +1598,7 @@ class ElasticBuffer:
             do_zero_padding,
             use_tma_aligned_col_major_sf,
             zero_copy,
-            zero_copy_slot,
+            slot,
         )
 
         recv_x, recv_sf, recv_topk_idx, recv_topk_weights, handle, event_overlap = (
@@ -1625,6 +1645,7 @@ class ElasticBuffer:
         topk_idx: torch.Tensor,
         topk_weights: Optional[torch.Tensor] = None,
         *,
+        slot: int = 0,
         num_max_tokens_per_rank: Optional[int] = None,
         expert_alignment: Optional[int] = None,
         do_expand: bool = False,
@@ -1638,20 +1659,24 @@ class ElasticBuffer:
         explicitly before using data or handles from this call.
         """
         x, sf = x if isinstance(x, tuple) else (x, None)
+        self._check_afd_slot(slot)
         bucket, alignment, num_sms = self._afd_dispatch_options(
             num_max_tokens_per_rank, expert_alignment
         )
         result = self.runtime.dispatch_send(
-            x, topk_idx, topk_weights, bucket, alignment, num_sms, sf, do_expand
+            x, topk_idx, topk_weights, bucket, alignment, num_sms, sf, do_expand, slot
         )
         _, _, _, _, handle, event = self._unpack_result(
             result, do_expand, alignment, bucket, num_sms, False
         )
+        handle.slot = slot
+        self._afd_handles[slot] = handle
         return handle, event
 
     def dispatch_recv(
         self,
         *,
+        slot: int = 0,
         with_weights: bool = False,
         do_cpu_sync: bool = True,
         do_expand: bool = False,
@@ -1677,17 +1702,37 @@ class ElasticBuffer:
         reserves the worst-case expert selections and alignment padding.
         Use the handle's device counts to identify valid rows.
         """
+        self._check_afd_slot(slot)
         bucket, alignment, num_sms = self._afd_dispatch_options(
             num_max_tokens_per_rank, expert_alignment
         )
         result = self.runtime.dispatch_recv(
-            bucket, alignment, num_sms, do_cpu_sync, do_expand, with_weights
+            bucket, alignment, num_sms, do_cpu_sync, do_expand, with_weights, slot
         )
         recv_x, recv_sf, recv_ids, recv_weights, handle, event = self._unpack_result(
             result, do_expand, alignment, bucket, num_sms, do_cpu_sync
         )
+        handle.slot = slot
+        self._afd_handles[slot] = handle
         payload = (recv_x, recv_sf) if recv_sf is not None else recv_x
         return payload, recv_ids, recv_weights, handle, event
+
+    def _check_afd_slot(self, slot):
+        if self.role is None:
+            raise ValueError("Directional dispatch requires an AFD buffer")
+        if not 0 <= slot < len(self._afd_handles):
+            raise ValueError(f"AFD slot {slot} is outside the configured slots")
+        if self._afd_handles[slot] is not None:
+            raise ValueError(f"AFD slot {slot} has a pending exchange")
+
+    def _check_afd_handle(self, handle):
+        slot = getattr(handle, "slot", -1)
+        if (
+            self.role is None
+            or not 0 <= slot < len(self._afd_handles)
+            or self._afd_handles[slot] is not handle
+        ):
+            raise ValueError("AFD dispatch handle is foreign or already consumed")
 
     def _dispatch_sms(self, num_topk, num_sms):
         return self._adaptive_active_sms(
@@ -1852,6 +1897,7 @@ class ElasticBuffer:
             raise ValueError(
                 "Apply routing weights to the BF16 replies before combine_send"
             )
+        self._check_afd_handle(handle)
         check_torch_deterministic()
         _, _, event = self.runtime.combine_send(
             x,
@@ -1862,7 +1908,9 @@ class ElasticBuffer:
             handle.num_sms,
             handle.do_expand,
             handle.num_expanded_tokens,
+            handle.slot,
         )
+        self._afd_handles[handle.slot] = None
         return EventOverlap(event)
 
     def combine_recv(
@@ -1871,7 +1919,13 @@ class ElasticBuffer:
         *,
         bias: Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]] = None,
     ) -> Tuple[torch.Tensor, Optional[torch.Tensor], EventOverlap]:
-        """Collect FFN replies in source-token order using the dispatch handle."""
+        """Collect FFN replies in source-token order using the dispatch handle.
+
+        With multiple slots, this posts the receive independently of subsequent dispatches.
+        Call the returned event's current_stream_wait() before consuming the output.
+        The next receive on this slot publishes READY after this reduction finishes.
+        """
+        self._check_afd_handle(handle)
         check_torch_deterministic()
         bias_0, bias_1 = self._unpack_bias(bias)
         combined_x, weights, event = self.runtime.combine_recv(
@@ -1881,5 +1935,7 @@ class ElasticBuffer:
             handle.num_max_tokens_per_rank,
             handle.num_sms,
             handle.do_expand,
+            handle.slot,
         )
+        self._afd_handles[handle.slot] = None
         return combined_x, weights, EventOverlap(event)

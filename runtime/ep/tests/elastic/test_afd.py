@@ -230,14 +230,14 @@ def run(me, layout, repeats, weighted):
         # Exercise native role checks with arguments accepted by each binding.
         if rank in attention:
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.dispatch_recv(BUCKET, 1, 1, True, False, False)
+                buf.runtime.dispatch_recv(BUCKET, 1, 1, True, False, False, 0)
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.combine_send(x, ids, ids, True, BUCKET, 1, False, 0)
+                buf.runtime.combine_send(x, ids, ids, True, BUCKET, 1, False, 0, 0)
         else:
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.dispatch_send(x, ids, weights, BUCKET, 1, 1, None, False)
+                buf.runtime.dispatch_send(x, ids, weights, BUCKET, 1, 1, None, False, 0)
             with TestCase().assertRaisesRegex(RuntimeError, "Wrong AFD role"):
-                buf.runtime.combine_recv(ids, None, None, BUCKET, 1, False)
+                buf.runtime.combine_recv(ids, None, None, BUCKET, 1, False, 0)
     print(
         f"AFD-ARENA layout={layout} rank={rank} role={role} token_bytes={buf.num_bytes}",
         flush=True,
