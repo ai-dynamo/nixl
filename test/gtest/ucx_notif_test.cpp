@@ -44,10 +44,6 @@ protected:
         // On a host with NVIDIA GPUs, NIXL rejects transports without CUDA support
         const std::string tls =
             (nixl::hwInfo::instance().numNvidiaGpus == 0) ? "tcp" : "tcp,cuda_copy";
-        // Set in the environment, not passed to the context: the context keeps
-        // a setting that the environment already has (NIXL_UCX_* or UCX_*,
-        // which CI images may set), and these checks need TCP with small
-        // socket buffers
         env_.addVar("UCX_TLS", tls);
         env_.addVar("UCX_ZCOPY_THRESH", zcopyThresh());
         // Small socket buffers keep a large send in progress while the
@@ -59,7 +55,7 @@ protected:
         receiver_ = std::make_unique<nixlUcxWorker>(*context_);
         ASSERT_EQ(UCS_OK,
                   receiver_->regAmCallback(nixl::ucx::am_cb_op_t::NOTIF_STR, receive, &received_));
-        sender_ = std::make_unique<nixlUcxWorker>(*context_, errHandlingMode());
+        sender_ = std::make_unique<nixlUcxWorker>(*context_);
         auto address = receiver_->epAddr();
         ep_ = sender_->connect(address.data());
         ASSERT_NE(nullptr, ep_);
@@ -70,12 +66,6 @@ protected:
     [[nodiscard]] virtual std::string
     zcopyThresh() const {
         return "0";
-    }
-
-    // Error handling of the sender: only a check that loses the receiver needs it
-    [[nodiscard]] virtual ucp_err_handling_mode_t
-    errHandlingMode() const {
-        return UCP_ERR_HANDLING_MODE_NONE;
     }
 
     template<typename Predicate>
@@ -272,20 +262,14 @@ TEST_F(ucxNotification, ReleaseLeavesNotificationSendToItsCallback) {
     EXPECT_EQ(0, in_progress.getIgnoredCount());
 }
 
-// The receiver goes away while it holds back the notification, so the sender
-// handles peer errors. The notification is sent with bcopy: when the
-// connection fails while a zero-copy send is partly written, UCX TCP can
-// complete it twice (openucx/ucx#12376).
+// The notification is sent with bcopy: when the connection fails while a
+// zero-copy send is partly written, UCX TCP can complete it twice
+// (openucx/ucx#12376)
 class ucxNotificationBcopy : public ucxNotification {
 protected:
     [[nodiscard]] std::string
     zcopyThresh() const override {
         return "inf";
-    }
-
-    [[nodiscard]] ucp_err_handling_mode_t
-    errHandlingMode() const override {
-        return UCP_ERR_HANDLING_MODE_PEER;
     }
 };
 
