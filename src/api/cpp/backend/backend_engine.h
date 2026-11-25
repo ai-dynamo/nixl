@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "nixl_types.h"
@@ -35,7 +36,6 @@ enum class nixl_backend_capability_t : uint64_t {
     NOTIF = 1ULL << 2,
     TRACE_CONTEXT = 1ULL << 3,
     NOTIF_CALLBACK = 1ULL << 4,
-    NOTIF_BACKGROUND_PROGRESS = 1ULL << 5,
 };
 
 [[nodiscard]] constexpr nixl_backend_capability_t
@@ -53,12 +53,19 @@ class nixlBackendEngine {
         std::vector<nixlTelemetryEvent> telemetryEvents_;
         std::mutex telemetryEventsMutex_;
         const nixl_backend_capability_t capabilities_;
+        const nixlBackendNotifSink *const notifSink_;
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
         bool              initErr = false;
         const std::string localAgent;
         const bool enableTelemetry_;
+
+        // False leaves the notification for the backend to queue for getNotifs().
+        [[nodiscard]] bool
+        deliverNotif(std::string_view remote_agent, std::string_view message) const noexcept {
+            return notifSink_ && notifSink_->dispatch(remote_agent, message);
+        }
 
         [[nodiscard]] nixl_status_t
         setInitParam(const std::string &key, const std::string &value) {
@@ -97,6 +104,7 @@ class nixlBackendEngine {
               customParams(init_params->customParams ? *init_params->customParams :
                                                        nixl_b_params_t{}),
               capabilities_(capabilities),
+              notifSink_(init_params->notifSink),
               localAgent(init_params->localAgent),
               enableTelemetry_(init_params->enableTelemetry_) {}
 
