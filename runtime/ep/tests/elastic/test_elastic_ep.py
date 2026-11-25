@@ -3,33 +3,17 @@
 # SPDX-License-Identifier: MIT AND Apache-2.0
 
 """
-Elastic membership of the adaptive EP kernels on the NIXL transport (RDMA + NVLink; the host derives the kernel mode of
-each phase, direct iff one NVLink domain is active): a plan of phases
-(phases: lists of public world ranks whose discovered slots form a product of
-NVLink domains and positions) on a job whose processes all stay alive. Participating ranks activate each phase.
-By default, departing ranks also adopt that phase to become inactive while keeping their connections.
-With `--reconnect-on-leave`, departing ranks retire their peers into a local singleton state and sit out;
-rejoining ranks reconnect before activation and may receive new internal positions. Custom plans must remain a product
-of domains and positions after reconnection; unsupported plans fail activation. The default plan restores the full cohort
-between shrinks. Participating ranks run one eager dispatch (CPU sync) + combine routed over the ACTIVE experts, checked without
-any collective (every rank regenerates every other rank's routing from a seed), then replay the CUDA graph captured at
-the first phase they took part in, both with its original routing (departed owners are dropped) and with fresh routing
-over the current active experts. Payloads, received expert indices/weights and expert statistics are checked.
-Single-rank traffic phases are supported. `--dtype` selects BF16, FP8 or synthetic NVFP4 dispatch bytes for
-checked and timed pairs; combine stays BF16. Each run uses matching buffer capacity.
-Ranks outside the phase mirror host barriers but do not dispatch or combine. Timing is opt-in: `--benchmark` measures CUDA-event
-call/pair times, `--kineto` measures kernels, `--perf-phases` selects phases for both, and `--feed-pairs` measures transitions.
-Feed warm-up retains connections while visiting phases with new participants; those phases must also be valid under the initial mapping.
-`--skip-perf-test` suppresses event benchmarks; `--save-output [PATH]` saves per-rank results and configuration as JSON.
+Test elastic membership of adaptive EP kernels over NIXL (RDMA and NVLink).
 
-Launch: one invocation per node (`--num-processes` GPUs each) under node-level `WORLD_SIZE` / `RANK`,
-no process group; the rank 0 process serves a TCPStore on `MASTER_ADDR` / `MASTER_PORT` (127.0.0.1:8361) for the whole
-run and keeps it alive until every peer has torn down (if a previous run still holds the port, choose another).
-`--store-timeout-secs` bounds every Store wait, `--num-cpu-timeout-secs` only the dispatch's CPU sync. `--num-experts`
-is the total physical slot count of the declared maximum world and must be divisible by its rank count.
-For a single-domain eight-GPU job, setting `--num-processes` to 8, `--max-scaleup-ranks` to 72,
-`--position-offset` to 64 and `--num-experts` to 576 assigns public IDs 64..71 with eight expert slots per rank;
-internal positions are discovered, not prescribed. `--plan` accepts an inline JSON list of phases or a plan file.
+The host derives each phase's kernel mode from the active topology: direct when
+exactly one NVLink domain is active, hybrid when multiple domains are active.
+A plan scales membership up and down through lists of public world ranks; their
+discovered slots must form a product of NVLink domains and positions. All job
+processes stay alive, and participating ranks activate each phase.
+
+Each active rank checks eager dispatch/combine and retained CUDA-graph replay.
+The test also exercises buffer setup, peer connections, membership updates and
+teardown APIs. See `--help` for options.
 """
 import argparse
 import json
@@ -1149,8 +1133,8 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     rank_idx, num_ranks = init_test_environment(local_rank, num_local_ranks, args.seed)
     # The job's Store, served by the rank 0 process for the whole run; every Store wait is bounded by `--store-timeout-secs`
     store = dist.TCPStore(
-        os.getenv("MASTER_ADDR", "127.0.0.1"),
-        int(os.getenv("MASTER_PORT", "8361")),
+        os.getenv("SERVER_ADDR", "127.0.0.1"),
+        int(os.getenv("SERVER_PORT", "8361")),
         world_size=num_ranks,
         is_master=rank_idx == 0,
         timeout=timedelta(seconds=args.store_timeout_secs),

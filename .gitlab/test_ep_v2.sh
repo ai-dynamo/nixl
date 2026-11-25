@@ -45,6 +45,7 @@ export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPAT
 
 # The container limits UCX to one Ethernet port: let UCX select the RDMA devices.
 unset UCX_NET_DEVICES
+unset NIXL_ETCD_ENDPOINTS NIXL_ETCD_PEER_URLS NIXL_ETCD_NAMESPACE UCX_TLS
 
 echo "==== Show system info ===="
 env
@@ -63,7 +64,7 @@ cd runtime/ep
 run_v2_test() {
     local port
     port=$(get_next_tcp_port)
-    WORLD_SIZE=1 RANK=0 MASTER_ADDR=127.0.0.1 MASTER_PORT=${port} \
+    WORLD_SIZE=1 RANK=0 SERVER_ADDR=127.0.0.1 SERVER_PORT=${port} \
     NIXL_TCPSTORE_ENDPOINT=127.0.0.1:${port} \
     timeout 600 "${EP_PYTHON}" tests/elastic/test_elastic_ep.py --num-processes 4 "$@"
 }
