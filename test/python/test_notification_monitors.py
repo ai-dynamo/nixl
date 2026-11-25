@@ -2,7 +2,6 @@
 # SPDX-License-Identifier: Apache-2.0
 
 import gc
-import logging
 import os
 import select
 import signal
@@ -15,7 +14,12 @@ import weakref
 import pytest
 
 import nixl._bindings as bindings
-from nixl import nixl_agent, nixl_agent_config, nixl_notification_monitor
+from nixl import (
+    nixl_agent,
+    nixl_agent_config,
+    nixl_notification_monitor,
+    nixlNotificationOverflowError,
+)
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="requires Linux eventfd"
@@ -191,40 +195,44 @@ def test_conflicting_subscription_requires_removal(ucx_peers):
         assert _legacy_notifications(target, source, 1) == [b"legacy fallback"]
 
 
-def test_full_queue_redirects_to_legacy_notifications(ucx_peers, caplog):
+def test_full_queue_reports_each_overflow_and_preserves_notifications(ucx_peers):
     source, target = ucx_peers
     source.add_remote_agent(target.get_agent_metadata())
-    capacity, extra = 16, 3
-    # The nixl logger does not propagate to the root logger that caplog watches,
-    # and NIXL_LOG_LEVEL may raise its threshold. Both are restored afterwards.
-    caplog.set_level(logging.WARNING, logger="nixl")
-    nixl_logger = logging.getLogger("nixl")
-    nixl_logger.addHandler(caplog.handler)
+    capacity = 16
+    total_redirected = 0
+    with nixl_notification_monitor(max_queued=capacity) as monitor:
+        target.add_notif_monitor(monitor, b"flood:")
+        for wave, extra in enumerate((3, 5)):
+            payloads = [b"flood:%d:%d" % (wave, i) for i in range(capacity + extra)]
+            for message in payloads:
+                source.send_notif(target.name, message)
 
-    def overflow_warnings():
-        return [r for r in caplog.records if "queue was full" in r.getMessage()]
+            total_redirected += extra
+            deadline = time.monotonic() + WAIT_MS / 1000
+            while (
+                monitor.overflow_count() < total_redirected
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.001)
+            assert monitor.overflow_count() == total_redirected
 
-    try:
-        with nixl_notification_monitor(max_queued=capacity) as monitor:
-            target.add_notif_monitor(monitor, b"flood:")
-            for index in range(capacity + extra):
-                source.send_notif(target.name, b"flood:%d" % index)
+            with pytest.raises(nixlNotificationOverflowError) as raised:
+                monitor.wait_any(timeout_ms=0)
+            assert raised.value.redirected == extra
+            queued = raised.value.notifications
+            assert len(queued) == capacity
+            assert all(
+                local == target.name and remote == source.name
+                for local, remote, _ in queued
+            )
 
             received = _legacy_notifications(target, source, extra)
             assert len(received) == extra
-            assert monitor.overflow_count() == extra
-            assert overflow_warnings() == []
-            queued = monitor.wait_any(timeout_ms=0)
-            assert len(queued) == capacity
             assert sorted(received + [message for _, _, message in queued]) == sorted(
-                b"flood:%d" % index for index in range(capacity + extra)
+                payloads
             )
             assert monitor.wait_any(timeout_ms=0) == []
-    finally:
-        nixl_logger.removeHandler(caplog.handler)
-
-    warnings = overflow_warnings()
-    assert len(warnings) == 1 and warnings[0].levelno == logging.WARNING
+            assert monitor.overflow_count() == total_redirected
 
 
 def test_agent_destruction_keeps_monitor_open_and_quiet():

@@ -139,4 +139,5 @@ if TYPE_CHECKING:
         nixl_prepped_dlist_handle,
         nixl_thread_sync_t,
         nixl_xfer_handle,
+        nixlNotificationOverflowError,
     )

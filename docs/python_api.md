@@ -67,11 +67,11 @@ with nixl_notification_monitor() as incoming:
 - Unconsumed notifications remain available through `get_new_notifs()`.
   A monitor queues up to 4,096 notifications, or `max_queued` when created as
   `nixl_notification_monitor(max_queued=...)`. Further matching messages go to
-  the normal notification queue instead. The next `wait_any()` after the first
-  overflow logs one warning through the `nixl` Python logger. Later overflows of
-  the same monitor are not logged again, and `overflow_count()` reports the total
-  number of redirected messages. Backends without callback support keep their
-  normal polling behavior.
+  `get_new_notifs()` instead. If messages were redirected since the previous
+  drain, `wait_any()` raises `nixlNotificationOverflowError`. Its `notifications`
+  attribute contains the batch drained by that call, and `redirected` counts
+  only the new redirects. `overflow_count()` reports the monitor's lifetime
+  total. Backends without callback support keep their normal polling behavior.
 - Use `fd()` or `fileno()` with poll or an event loop. The descriptor is borrowed.
   When it becomes readable, call `wait_any(timeout_ms=0)` to drain the monitor.
   Remove any external reader before closing the monitor. `close()`, including at
