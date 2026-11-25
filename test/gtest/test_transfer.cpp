@@ -1242,6 +1242,11 @@ TEST(InvalidatedTransferMock, KeepsMetadataUntilRelease) {
     EXPECT_EQ(local_agent->getXferStatus(req), NIXL_SUCCESS);
     {
         const LogIgnoreGuard lig("invalidated or re-registered after");
+        EXPECT_CALL(local_engine, estimateXferCost).Times(0);
+        std::chrono::microseconds duration{}, err_margin{};
+        nixl_cost_t method = nixl_cost_t::ANALYTICAL_BACKEND;
+        EXPECT_EQ(local_agent->estimateXferCost(req, duration, err_margin, method),
+                  NIXL_ERR_NOT_FOUND);
         EXPECT_EQ(local_agent->postXferReq(req), NIXL_ERR_NOT_FOUND);
         nixlXferReqH *stale = nullptr;
         EXPECT_EQ(local_agent->makeXferReq(

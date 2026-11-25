@@ -1061,7 +1061,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
     auto remote_sec_ref = remote_side.remoteSectionRef.lock();
-    if (!remote_sec_ref || remote_sec_ref->isInvalidated()) {
+    if (!remote_sec_ref || !remote_sec_ref->isValid()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
                            "creation; prepped descriptor lists must be re-created";
@@ -1297,7 +1297,7 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
     if (!req_hndl->remoteAgent.empty() &&
-        (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated())) {
+        (!req_hndl->remoteSection || !req_hndl->remoteSection->isValid())) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated or "
                            "re-registered after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1368,7 +1368,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     req_hndl->traceRequestSpanIdUsed_ = true;
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (!req_hndl->remoteSection || req_hndl->remoteSection->isInvalidated()) {
+    if (!req_hndl->remoteSection || !req_hndl->remoteSection->isValid()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
@@ -1590,7 +1590,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
 
     std::shared_lock<nixlLock> read_lock(data->lock);
     std::unique_lock<nixlLock> write_lock(data->lock, std::defer_lock);
-    if (req_hndl->remoteSection && req_hndl->remoteSection->isInvalidated()) [[unlikely]] {
+    if (req_hndl->remoteSection && !req_hndl->remoteSection->isValid()) [[unlikely]] {
         read_lock.unlock();
         write_lock.lock();
     }
