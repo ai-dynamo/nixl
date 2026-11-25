@@ -66,6 +66,7 @@ flush(const nixlMemViewH &, unsigned) {
 #endif
 
 #include <gpu/impl/gpunetio/device_gpunetio.cuh>
+
 namespace nixl::gpu::impl::gpunetio {
 inline constexpr bool available = NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE;
 }

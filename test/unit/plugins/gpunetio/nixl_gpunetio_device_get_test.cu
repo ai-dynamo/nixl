@@ -77,9 +77,8 @@ publicDefaultAdmission(nixlMemViewH local, nixlMemViewH remote, int *result) {
     uint64_t ticket = 0;
     *result = session.bind(local, remote) == NIXL_SUCCESS && session.acquire() == NIXL_SUCCESS &&
             session.reserve(1, ticket) == NIXL_ERR_NOT_SUPPORTED &&
-            session.poll(ticket) == NIXL_ERR_NOT_SUPPORTED &&
-            session.finish() == NIXL_SUCCESS && session.acquireFifo() == NIXL_SUCCESS &&
-            session.finish() == NIXL_SUCCESS ?
+            session.poll(ticket) == NIXL_ERR_NOT_SUPPORTED && session.finish() == NIXL_SUCCESS &&
+            session.acquireFifo() == NIXL_SUCCESS && session.finish() == NIXL_SUCCESS ?
         0 :
         1;
 }
@@ -131,11 +130,9 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
         *result = 25;
         return;
     }
-    if (nixl::gpu::get({local, 0, kScalarDst},
-                       {remote, 0, 17},
-                       {local, 0, kScratch},
-                       256,
-                       &status) != NIXL_ERR_REPOST_ACTIVE) {
+    if (nixl::gpu::get(
+            {local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status) !=
+        NIXL_ERR_REPOST_ACTIVE) {
         *result = 26;
         return;
     }
@@ -155,11 +152,8 @@ scalarGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *re
         return;
     }
     status = {};
-    rc = nixl::gpu::get({local, 0, kScalarDst},
-                        {remote, 0, 17},
-                        {local, 0, kScratch},
-                        256,
-                        &status);
+    rc =
+        nixl::gpu::get({local, 0, kScalarDst}, {remote, 0, 17}, {local, 0, kScratch}, 256, &status);
     if (rc != NIXL_IN_PROG) {
         *result = 30;
         return;
@@ -271,7 +265,8 @@ expectFifoCqError(nixlMemViewH local, nixlMemViewH remote, int *result) {
 template<bool Fifo>
 __global__ void
 batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *result) {
-    __shared__ __align__(16) unsigned char storage[sizeof(nixl::gpu::gpunetio::experimental::readSession)];
+    __shared__ __align__(
+        16) unsigned char storage[sizeof(nixl::gpu::gpunetio::experimental::readSession)];
     __shared__ uint64_t first;
     __shared__ int error;
     auto *session = reinterpret_cast<nixl::gpu::gpunetio::experimental::readSession *>(storage);
@@ -280,7 +275,8 @@ batchGet(nixlMemViewH local, nixlMemViewH remote, uint8_t *destination, int *res
         error = 0;
         const auto bind_rc = session->bind(local, remote);
         const auto acquire_rc = bind_rc == NIXL_SUCCESS ?
-            (Fifo ? session->acquireFifo() : session->acquire()) : bind_rc;
+            (Fifo ? session->acquireFifo() : session->acquire()) :
+            bind_rc;
         if (acquire_rc != NIXL_SUCCESS) {
             error = acquire_rc == NIXL_ERR_NOT_SUPPORTED ? 29 : 3;
         }
@@ -457,6 +453,7 @@ fifoPipeline(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination
 }
 
 using ReadSession = nixl::gpu::gpunetio::experimental::readSession;
+
 struct PersistentRead {
     alignas(16) unsigned char storage[sizeof(ReadSession)];
     uint64_t ticket;
@@ -480,8 +477,7 @@ publishPersistent(nixlMemViewH local,
         state->result = session->reserve(1, state->ticket);
     }
     if (state->result == NIXL_SUCCESS) {
-        state->result = session->prepare(
-            state->ticket, 0, src_offset, 0, dst_offset, kItemBytes);
+        state->result = session->prepare(state->ticket, 0, src_offset, 0, dst_offset, kItemBytes);
     }
     if (state->result == NIXL_SUCCESS) {
         state->result = session->publish(state->ticket, 1);
@@ -650,8 +646,9 @@ main(int argc, char **argv) {
         if (peer_qps) {
             const auto status = reader.loadRemoteMD(metadata, peer);
             if (status != NIXL_ERR_INVALID_PARAM) {
-                throw std::runtime_error("mismatched pool did not return INVALID_PARAM at metadata load: " +
-                                         std::to_string(status));
+                throw std::runtime_error(
+                    "mismatched pool did not return INVALID_PARAM at metadata load: " +
+                    std::to_string(status));
             }
             std::cout << "PASS mismatched native QP counts rejected at metadata load; "
                          "SETUP_RESOURCES_RETAINED_UNTIL_EXIT\n"
@@ -779,13 +776,17 @@ main(int argc, char **argv) {
             check(cudaMemcpy(&after, device_generation, sizeof(after), cudaMemcpyDeviceToHost),
                   "copy generation after");
             uint64_t after_identity[3];
-            check(cudaMemcpy(after_identity, device_generation, sizeof(after_identity),
+            check(cudaMemcpy(after_identity,
+                             device_generation,
+                             sizeof(after_identity),
                              cudaMemcpyDeviceToHost),
                   "copy re-prepared lane identity");
             uint64_t before_identity[3];
             inspectLane<<<1, 1>>>(local_view, device_generation, false);
             check(cudaDeviceSynchronize(), "read original lane identity");
-            check(cudaMemcpy(before_identity, device_generation, sizeof(before_identity),
+            check(cudaMemcpy(before_identity,
+                             device_generation,
+                             sizeof(before_identity),
                              cudaMemcpyDeviceToHost),
                   "copy original lane identity");
             if (!before || before != after || before_identity[1] != after_identity[1] ||
@@ -844,13 +845,10 @@ main(int argc, char **argv) {
               "begin contention capture");
         publishPersistent<<<1, 1, 0, contention_stream>>>(
             locals[0], remotes[0], kBatchDst, 512, contention);
-        rejectBusyLane<<<1, 1, 0, contention_stream>>>(
-            locals[0], remotes[0], contention_result);
-        retirePersistent<<<1, 1, 0, contention_stream>>>(
-            destination, kBatchDst, 512, contention);
+        rejectBusyLane<<<1, 1, 0, contention_stream>>>(locals[0], remotes[0], contention_result);
+        retirePersistent<<<1, 1, 0, contention_stream>>>(destination, kBatchDst, 512, contention);
         check(cudaGetLastError(), "capture ordered lane ownership nodes");
-        check(cudaStreamEndCapture(contention_stream, &contention_graph),
-              "end contention capture");
+        check(cudaStreamEndCapture(contention_stream, &contention_graph), "end contention capture");
         check(cudaGraphInstantiate(&contention_exec, contention_graph, 0),
               "instantiate contention graph");
         for (unsigned replay = 0; replay < 10; ++replay) {
@@ -866,8 +864,9 @@ main(int argc, char **argv) {
             if (busy_result != 0) {
                 throw std::runtime_error("held FIFO lane admitted a second session");
             }
-            check(cudaMemcpy(&busy_result, &contention->result, sizeof(int), cudaMemcpyDeviceToHost),
-                  "read contention retirement result");
+            check(
+                cudaMemcpy(&busy_result, &contention->result, sizeof(int), cudaMemcpyDeviceToHost),
+                "read contention retirement result");
             if (busy_result != NIXL_SUCCESS) {
                 throw std::runtime_error("ordered lane ownership replay failed");
             }
@@ -893,9 +892,11 @@ main(int argc, char **argv) {
                       "create publication event");
                 check(cudaStreamBeginCapture(streams[i], cudaStreamCaptureModeGlobal),
                       "begin publication Graph capture");
-                publishPersistent<<<1, 1, 0, streams[i]>>>(
-                    locals[i], remotes[i], kBatchDst + i * kItemBytes,
-                    512 + i * kItemBytes, parallel[i]);
+                publishPersistent<<<1, 1, 0, streams[i]>>>(locals[i],
+                                                           remotes[i],
+                                                           kBatchDst + i * kItemBytes,
+                                                           512 + i * kItemBytes,
+                                                           parallel[i]);
                 check(cudaGetLastError(), "capture lane publication");
                 check(cudaStreamEndCapture(streams[i], &publish_graphs[i]),
                       "end publication Graph capture");
@@ -923,17 +924,17 @@ main(int argc, char **argv) {
                 for (unsigned i = 0; i < 2; ++i) {
                     check(cudaStreamWaitEvent(streams[i], published[1 - i], 0),
                           "wait for both lane publications");
-                    check(cudaGraphLaunch(retire_execs[i], streams[i]),
-                          "launch retirement Graph");
+                    check(cudaGraphLaunch(retire_execs[i], streams[i]), "launch retirement Graph");
                 }
                 for (auto stream : streams) {
                     check(cudaStreamSynchronize(stream), "synchronize parallel Graphs");
                 }
                 int results[2]{};
                 for (unsigned i = 0; i < 2; ++i) {
-                    check(cudaMemcpy(&results[i], &parallel[i]->result, sizeof(int),
-                                     cudaMemcpyDeviceToHost),
-                          "read parallel Graph result");
+                    check(
+                        cudaMemcpy(
+                            &results[i], &parallel[i]->result, sizeof(int), cudaMemcpyDeviceToHost),
+                        "read parallel Graph result");
                 }
                 if (results[0] != NIXL_SUCCESS || results[1] != NIXL_SUCCESS) {
                     throw std::runtime_error("parallel FIFO Graph GET failed");

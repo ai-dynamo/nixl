@@ -22,8 +22,7 @@
 #include <doca_gpunetio_dev_verbs_onesided.cuh>
 #include <doca_version.h>
 #if DOCA_VERSION_MAJOR < 3 || (DOCA_VERSION_MAJOR == 3 && DOCA_VERSION_MINOR < 5)
-#error \
-    "GPUNETIO device API requires DOCA 3.5 or newer"
+#error "GPUNETIO device API requires DOCA 3.5 or newer"
 #endif
 #else
 #define NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE 0

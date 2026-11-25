@@ -176,7 +176,8 @@ public:
      */
     __device__ nixl_status_t
     reserve(uint32_t count, uint64_t &first) {
-        if (acquired_ && impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
+        if (acquired_ &&
+            impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
             return NIXL_ERR_BACKEND;
         }
 #if NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
@@ -247,7 +248,8 @@ public:
      */
     __device__ nixl_status_t
     publish(uint64_t first, uint32_t count) {
-        if (acquired_ && impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
+        if (acquired_ &&
+            impl::gpunetio::deviceAtomic(lane_->failed).load(cuda::memory_order_relaxed)) {
             return NIXL_ERR_BACKEND;
         }
         if (!acquired_ || !reserved_ || first != reserved_first_ || count != reserved_count_) {
