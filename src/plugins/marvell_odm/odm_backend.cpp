@@ -16,7 +16,6 @@
  * limitations under the License.
  */
 
-#include <chrono>
 #include <climits>
 #include <cstdlib>
 #include <cstring>
@@ -35,12 +34,6 @@
 namespace {
 
 constexpr const char *ODM_DEFAULT_DMA_DEVICE = "odm0";
-
-#if defined(HAVE_ODM_IO_URING) && defined(HAVE_CUDA)
-constexpr std::chrono::microseconds k_uring_reap_sleep_us{20};
-/* ~2 s of transient submit retries (EAGAIN/EBUSY) before the chunk is failed. */
-constexpr unsigned k_uring_submit_max_retries = 100000;
-#endif
 
 /* 64KB-aligned, fits dma-buf FD ioctl u32 transfer size field. The GPU dma-buf
  * export wants 64KB-aligned ranges. IOVA allocation itself is now u64. */
@@ -131,6 +124,10 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
       sync_mode_(init_params->syncMode),
       enable_prog_th_(init_params->enableProgTh),
       thread_assign_lock_(init_params->syncMode)
+#ifdef HAVE_ODM_IO_URING
+      ,
+      uring_lock_(init_params->syncMode)
+#endif
 #ifdef HAVE_CUDA
       ,
       cuda_available_(false),
@@ -244,7 +241,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
             odmUringInit();
         }
     }
-    if (!use_io_uring_.load()) {
+    if (!use_io_uring_) {
         const char *env = getenv("ODM_USE_IO_URING");
         if (env && want_io_uring(env)) {
             odmUringInit();
@@ -261,7 +258,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
 #ifdef HAVE_CUDA
 #if defined(HAVE_ODM_IO_URING)
     /* io_uring uses async submit/reap; worker pool is ioctl multi-queue only. */
-    const bool pool_eligible = odm_num_queues_ > 1 && !use_io_uring_.load();
+    const bool pool_eligible = odm_num_queues_ > 1 && !use_io_uring_;
 #else
     const bool pool_eligible = odm_num_queues_ > 1;
 #endif
@@ -281,7 +278,7 @@ nixlOdmEngine::nixlOdmEngine(const nixlBackendInitParams *init_params)
               << " worker_pool=" << (odm_pool_started_ ? "on" : "off")
 #endif
 #ifdef HAVE_ODM_IO_URING
-              << " io_uring=" << (use_io_uring_.load() ? "on" : "off")
+              << " io_uring=" << (use_io_uring_ ? "on" : "off")
 #endif
               << " engine=ODM/dma-buf (both directions)";
     initErr = false;
@@ -587,7 +584,8 @@ nixlOdmEngine::prepXfer(const nixl_xfer_op_t &operation,
     req->is_dram_to_dram = dram_to_dram;
 
 #ifdef HAVE_ODM_IO_URING
-    if (dram_to_dram && use_io_uring_.load() && !warned_uring_host_.exchange(true)) {
+    if (dram_to_dram && use_io_uring_ && !warned_uring_host_) {
+        warned_uring_host_ = true;
         NIXL_WARN << "ODM: odm_use_io_uring is ignored for DRAM_SEG host-VA transfers";
     }
 #endif
@@ -1083,18 +1081,18 @@ nixlOdmEngine::odmUringInit() {
 #else
     NIXL_WARN << "ODM: liburing lacks SQE128 support; the ODM spray command does not fit "
                  "a 64-byte SQE. Falling back to ioctl";
-    use_io_uring_.store(false);
+    use_io_uring_ = false;
     return;
 #endif
     const int rc = io_uring_queue_init_params(k_uring_ring_entries, &uring_, &params);
     if (rc < 0) {
         NIXL_WARN << "ODM: io_uring_queue_init_params failed: " << strerror(-rc)
                   << "; falling back to ioctl";
-        use_io_uring_.store(false);
+        use_io_uring_ = false;
         return;
     }
     uring_initialized_ = true;
-    use_io_uring_.store(true);
+    use_io_uring_ = true;
     warnIfKernelOdmUringDisabled(device_path_);
 #if defined(HAVE_ODM_IO_URING_CMD128) || defined(HAVE_ODM_IO_URING_SQE128)
     NIXL_INFO << "ODM: io_uring submit enabled (SQE128 kernel-side queue spray)";
@@ -1106,10 +1104,10 @@ nixlOdmEngine::odmUringInit() {
 void
 nixlOdmEngine::odmUringDestroy() {
     if (!uring_initialized_) {
-        use_io_uring_.store(false);
+        use_io_uring_ = false;
         return;
     }
-    std::lock_guard<std::mutex> uring_lk(uring_mtx_);
+    NIXL_LOCK_GUARD(uring_lock_);
     while (uring_inflight_ > 0) {
         struct io_uring_cqe *cqe = nullptr;
         int wait_rc = 0;
@@ -1124,7 +1122,8 @@ nixlOdmEngine::odmUringDestroy() {
     }
     io_uring_queue_exit(&uring_);
     uring_initialized_ = false;
-    use_io_uring_.store(false);
+    use_io_uring_ = false;
+    uring_backlog_.clear();
 }
 
 void
@@ -1139,58 +1138,112 @@ nixlOdmEngine::odmUringDropSqe(struct io_uring_sqe *sqe) const {
     if (rc < 0) {
         NIXL_ERROR << "ODM: io_uring_submit while dropping stale SQE: " << strerror(-rc);
         if (uring_inflight_ == 0) {
-            use_io_uring_.store(false);
+            use_io_uring_ = false;
         }
     }
 }
 
 bool
+nixlOdmEngine::isUringActive(const nixlOdmBackendReqH *req) {
+#ifdef HAVE_ODM_IO_URING
+    return req->uring_chunks_total_ > 0 && req->uring_chunks_done_ < req->uring_chunks_total_;
+#else
+    (void)req;
+    return false;
+#endif
+}
+
+void
+nixlOdmEngine::resetUringReq(nixlOdmBackendReqH *req) const {
+#ifdef HAVE_ODM_IO_URING
+    req->uring_chunks_.clear();
+    req->uring_chunks_total_ = 0;
+    req->uring_chunks_done_ = 0;
+    req->uring_failed_ = false;
+#else
+    (void)req;
+#endif
+}
+
+void
+nixlOdmEngine::dropUringBacklogForReqLocked(nixlOdmBackendReqH *req) const {
+#ifdef HAVE_ODM_IO_URING
+    for (auto it = uring_backlog_.begin(); it != uring_backlog_.end();) {
+        if ((*it)->req == req) {
+            if (req->uring_chunks_total_ > 0) {
+                req->uring_chunks_total_--;
+            }
+            it = uring_backlog_.erase(it);
+        } else {
+            ++it;
+        }
+    }
+#else
+    (void)req;
+#endif
+}
+
+nixl_status_t
+nixlOdmEngine::uringXferStatusLocked(const nixlOdmBackendReqH *req) const {
+#ifdef HAVE_ODM_IO_URING
+    if (uring_ring_fatal_) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (req->uring_failed_) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (req->uring_chunks_done_ < req->uring_chunks_total_) {
+        return NIXL_IN_PROG;
+    }
+    return NIXL_SUCCESS;
+#else
+    (void)req;
+    return NIXL_ERR_BACKEND;
+#endif
+}
+
+void
 nixlOdmEngine::odmUringCqeConsumeLocked(struct io_uring_cqe *cqe) const {
 #ifndef HAVE_CUDA
     (void)cqe;
-    return true;
 #else
     const uint64_t data = io_uring_cqe_get_data64(cqe);
     const int res = cqe->res;
     io_uring_cqe_seen(&uring_, cqe);
     if (data == 0) {
-        return true;
+        return;
     }
-    const auto *chunk = reinterpret_cast<const OdmUringChunk *>(data);
-    if (!chunk || !chunk->batch) {
-        return true;
+    auto *chunk = reinterpret_cast<OdmUringChunk *>(data);
+    if (!chunk || !chunk->req) {
+        return;
     }
+    nixlOdmBackendReqH *req = chunk->req;
     if (uring_inflight_ > 0) {
         uring_inflight_--;
     }
     releaseVramDmabuf(chunk->gpu_va, chunk->len);
-    OdmBatch &batch = *chunk->batch;
-    if (res < 0) {
-        int expected = NIXL_SUCCESS;
-        if (batch.status.compare_exchange_strong(expected, NIXL_ERR_BACKEND)) {
-            NIXL_ERROR << "ODM: uring_cmd failed: " << strerror(-res);
-        }
+    if (res < 0 && !req->uring_failed_) {
+        req->uring_failed_ = true;
+        NIXL_ERROR << "ODM: uring_cmd failed: " << strerror(-res);
+        dropUringBacklogForReqLocked(req);
     }
-    if (batch.remaining.fetch_sub(1, std::memory_order_acq_rel) == 1) {
-        std::lock_guard<std::mutex> lk(batch.m);
-        batch.cv.notify_all();
-    }
-    return true;
+    req->uring_chunks_done_++;
 #endif
 }
 
-unsigned
-nixlOdmEngine::odmUringReapPeekableLocked() const {
+void
+nixlOdmEngine::odmUringReapLocked() const {
 #ifndef HAVE_CUDA
-    return 0;
+    return;
 #else
-    unsigned consumed = 0;
+    if (!uring_initialized_ || uring_ring_fatal_) {
+        return;
+    }
     while (true) {
         struct io_uring_cqe *cqe = nullptr;
         const int peek_rc = io_uring_peek_cqe(&uring_, &cqe);
         if (peek_rc == 0 && cqe) {
             odmUringCqeConsumeLocked(cqe);
-            consumed++;
             continue;
         }
         if (peek_rc != -EAGAIN && peek_rc != -EBUSY) {
@@ -1198,224 +1251,166 @@ nixlOdmEngine::odmUringReapPeekableLocked() const {
                 NIXL_ERROR << "ODM: io_uring_peek_cqe failed: " << strerror(-peek_rc);
                 uring_ring_fatal_ = true;
                 if (uring_inflight_ == 0) {
-                    use_io_uring_.store(false);
+                    use_io_uring_ = false;
                 }
             }
-            break;
         }
         break;
     }
-    return consumed;
 #endif
 }
 
-bool
-nixlOdmEngine::odmUringReap(bool block) const {
+void
+nixlOdmEngine::odmUringDriveLocked() const {
 #ifndef HAVE_CUDA
-    (void)block;
-    return true;
+    return;
 #else
-    if (uring_ring_fatal_) {
-        return false;
-    }
-    if (!block) {
-        std::lock_guard<std::mutex> uring_lk(uring_mtx_);
-        if (!uring_initialized_) {
-            return true;
-        }
-        odmUringReapPeekableLocked();
-        return !uring_ring_fatal_;
+    if (!uring_initialized_ || uring_ring_fatal_) {
+        return;
     }
 
-    while (true) {
-        {
-            std::lock_guard<std::mutex> uring_lk(uring_mtx_);
-            if (!uring_initialized_) {
-                return true;
+    odmUringReapLocked();
+
+    const auto fail_chunk =
+        [&](nixlOdmBackendReqH *req, OdmUringChunk *chunk, struct io_uring_sqe *sqe) {
+            if (sqe) {
+                odmUringDropSqe(sqe);
             }
-            const unsigned n = odmUringReapPeekableLocked();
-            if (n > 0 || uring_inflight_ == 0) {
-                return !uring_ring_fatal_;
+            if (chunk->len > 0) {
+                releaseVramDmabuf(chunk->gpu_va, chunk->len);
             }
+            req->uring_failed_ = true;
+            dropUringBacklogForReqLocked(req);
+        };
+
+    while (!uring_ring_fatal_ && uring_inflight_ < k_uring_ring_entries &&
+           !uring_backlog_.empty()) {
+        OdmUringChunk *chunk = uring_backlog_.front();
+        auto *req = chunk->req;
+        if (req->uring_failed_) {
+            uring_backlog_.pop_front();
+            if (req->uring_chunks_total_ > 0) {
+                req->uring_chunks_total_--;
+            }
+            continue;
         }
-        std::this_thread::sleep_for(k_uring_reap_sleep_us);
+
+        if (uring_inflight_ >= k_uring_ring_entries) {
+            break;
+        }
+
+        struct io_uring_sqe *sqe = odmUringGetSqe(&uring_);
+        if (!sqe) {
+            break;
+        }
+
+        OdmCudaCtxScope ctx_scope;
+        const nixl_status_t cst = ensureCudaContext(chunk->gpu_id, &ctx_scope);
+        if (cst != NIXL_SUCCESS) {
+            fail_chunk(req, chunk, sqe);
+            uring_backlog_.pop_front();
+            if (req->uring_chunks_total_ > 0) {
+                req->uring_chunks_total_--;
+            }
+            continue;
+        }
+
+        int dmabuf_fd = -1;
+        const nixl_status_t export_st = exportVramDmabuf(chunk->gpu_va, chunk->len, dmabuf_fd);
+        if (export_st != NIXL_SUCCESS) {
+            fail_chunk(req, chunk, sqe);
+            uring_backlog_.pop_front();
+            if (req->uring_chunks_total_ > 0) {
+                req->uring_chunks_total_--;
+            }
+            continue;
+        }
+
+        struct mrvl_dma_xfer_commands_fd_spray spray{};
+        spray.dmabuf_fd = static_cast<uint32_t>(dmabuf_fd);
+        spray.target_iova_addr = chunk->iova;
+        spray.tranfer_size = static_cast<uint32_t>(chunk->len);
+        spray.tranfer_type = chunk->xfer_type;
+        spray.qid_start = qid_start_;
+        spray.qid_end = qid_end_;
+
+        odmUringPrepCmd(sqe, static_cast<int>(chunk->uring_op), dma_fd_);
+        memcpy(sqe->cmd, &spray, sizeof(spray));
+        io_uring_sqe_set_data64(sqe, reinterpret_cast<uint64_t>(chunk));
+        uring_backlog_.pop_front();
+
+        int submit_rc = 0;
+        do {
+            submit_rc = io_uring_submit(&uring_);
+        } while (submit_rc == -EINTR);
+
+        if (submit_rc > 0) {
+            uring_inflight_ += static_cast<size_t>(submit_rc);
+            NIXL_DEBUG << "ODM uring_cmd op=" << chunk->uring_op << " iova=0x" << std::hex
+                       << chunk->iova << " size=" << std::dec << chunk->len;
+            continue;
+        }
+
+        if (submit_rc == -EAGAIN || submit_rc == -EBUSY || submit_rc == 0) {
+            /* SQE prepared but not submitted; leave chunk queued for the next drive. */
+            odmUringDropSqe(sqe);
+            releaseVramDmabuf(chunk->gpu_va, chunk->len);
+            break;
+        }
+
+        NIXL_ERROR << "ODM: io_uring_submit failed: " << strerror(-submit_rc);
+        fail_chunk(req, chunk, sqe);
+        if (req->uring_chunks_total_ > 0) {
+            req->uring_chunks_total_--;
+        }
+        break;
     }
 #endif
 }
 
-/* Async io_uring dma-buf path: submit all chunk SQEs, return NIXL_IN_PROG; CQEs reaped in
- * checkXfer via odmUringReap (CUDA export runs outside uring_mtx_). */
+/* POSIX-style io_uring: stage chunks, non-blocking drive; completion in checkXfer. Caller
+ * holds uring_lock_. */
 nixl_status_t
-nixlOdmEngine::postOdmDmabufUring(nixlOdmBackendReqH *req) const {
+nixlOdmEngine::postOdmDmabufUringLocked(nixlOdmBackendReqH *req) const {
 #ifndef HAVE_CUDA
     (void)req;
     return NIXL_ERR_NOT_SUPPORTED;
 #else
-    if (!use_io_uring_.load()) {
+    if (!use_io_uring_) {
         return postOdmDmabuf(req);
     }
-    OdmCudaCtxScope ctx_scope;
-    const nixl_status_t cst = ensureCudaContext(req->gpu_id, &ctx_scope);
-    if (cst != NIXL_SUCCESS) {
-        return cst;
+    if (!uring_initialized_) {
+        return NIXL_ERR_BACKEND;
     }
-
-    const auto drain_submitted_on_error = [&](nixl_status_t err) -> nixl_status_t {
-        if (req->async_batch_.remaining.load(std::memory_order_acquire) > 0) {
-            req->uring_async_ = true;
-            while (req->async_batch_.remaining.load(std::memory_order_acquire) > 0) {
-                if (!odmUringReap(true)) {
-                    return err;
-                }
-            }
-            req->uring_async_ = false;
-            req->uring_chunks_.clear();
-        }
-        return err;
-    };
-
-    req->uring_chunks_.clear();
-    req->uring_async_ = false;
-    req->async_batch_.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
 
     const int uring_op =
         (req->direction == OdmDirection::Outbound) ? ODM_URING_CMD_READ_FD : ODM_URING_CMD_WRITE_FD;
     const uint32_t xfer_type =
         (req->direction == OdmDirection::Outbound) ? ODM_XTYPE_OUTBOUND : ODM_XTYPE_INBOUND;
-    OdmBatch &batch = req->async_batch_;
 
     for (const auto &seg : req->segments) {
         uint64_t remaining = seg.len;
         uint64_t gpu_va = seg.host_addr;
         uint64_t iova = seg.dma_dev_addr;
         while (remaining > 0) {
-            const uint64_t chunk = std::min<uint64_t>(remaining, ODM_MAX_FD_CHUNK);
-            int fd = -1;
-            const nixl_status_t export_st = exportVramDmabuf(gpu_va, chunk, fd);
-            if (export_st != NIXL_SUCCESS) {
-                return drain_submitted_on_error(export_st);
-            }
-
-            req->uring_chunks_.push_back(OdmUringChunk{&batch, gpu_va, chunk});
-            OdmUringChunk *chunk_ptr = &req->uring_chunks_.back();
-            batch.remaining.fetch_add(1, std::memory_order_relaxed);
-
-            struct mrvl_dma_xfer_commands_fd_spray spray{};
-            spray.dmabuf_fd = static_cast<uint32_t>(fd);
-            spray.target_iova_addr = iova;
-            spray.tranfer_size = static_cast<uint32_t>(chunk);
-            spray.tranfer_type = xfer_type;
-            spray.qid_start = qid_start_;
-            spray.qid_end = qid_end_;
-
-            /* Undo the accounting for a chunk whose SQE was never submitted. */
-            const auto unaccount_chunk = [&]() {
-                batch.remaining.fetch_sub(1, std::memory_order_relaxed);
-                releaseVramDmabuf(gpu_va, chunk);
-                req->uring_chunks_.pop_back();
-            };
-
-            /*
-             * sqe_queued: the SQE is prepared in the SQ ring but not yet submitted. A retry
-             * after EAGAIN/EBUSY must only re-submit it; fetching a second SQE would DMA the
-             * chunk twice and underflow batch.remaining.
-             */
-            bool sqe_queued = false;
-            struct io_uring_sqe *queued_sqe = nullptr;
-            bool submitted = false;
-            unsigned retries = 0;
-            while (!submitted) {
-                std::unique_lock<std::mutex> uring_lk(uring_mtx_);
-                if (!uring_initialized_) {
-                    uring_lk.unlock();
-                    unaccount_chunk();
-                    return drain_submitted_on_error(NIXL_ERR_BACKEND);
-                }
-
-                if (!sqe_queued) {
-                    /* Backpressure: bound in-flight chunks to the ring depth. */
-                    if (uring_inflight_ >= k_uring_ring_entries) {
-                        if (odmUringReapPeekableLocked() == 0) {
-                            uring_lk.unlock();
-                            if (!odmUringReap(true)) {
-                                unaccount_chunk();
-                                return drain_submitted_on_error(NIXL_ERR_BACKEND);
-                            }
-                        }
-                        continue;
-                    }
-
-                    struct io_uring_sqe *sqe = odmUringGetSqe(&uring_);
-                    if (!sqe) {
-                        /* SQ full: reap at least one CQE, then retry. */
-                        if (odmUringReapPeekableLocked() == 0) {
-                            uring_lk.unlock();
-                            if (!odmUringReap(true)) {
-                                unaccount_chunk();
-                                return drain_submitted_on_error(NIXL_ERR_BACKEND);
-                            }
-                        }
-                        continue;
-                    }
-                    odmUringPrepCmd(sqe, uring_op, dma_fd_);
-                    memcpy(sqe->cmd, &spray, sizeof(spray));
-                    io_uring_sqe_set_data64(sqe, reinterpret_cast<uint64_t>(chunk_ptr));
-                    queued_sqe = sqe;
-                    sqe_queued = true;
-                }
-
-                int submit_rc = 0;
-                do {
-                    submit_rc = io_uring_submit(&uring_);
-                } while (submit_rc == -EINTR);
-
-                if (submit_rc > 0) {
-                    uring_inflight_++;
-                    sqe_queued = false;
-                    submitted = true;
-                    NIXL_DEBUG << "ODM uring_cmd "
-                               << (uring_op == ODM_URING_CMD_READ_FD ? "READ_FD(ODM->VRAM)" :
-                                                                       "WRITE_FD(VRAM->ODM)")
-                               << " fd=" << fd << " iova=0x" << std::hex << iova
-                               << " size=" << std::dec << chunk << " qid=" << qid_start_ << ".."
-                               << qid_end_;
-                    continue;
-                }
-
-                const bool transient =
-                    submit_rc == 0 || submit_rc == -EAGAIN || submit_rc == -EBUSY;
-                if (transient && ++retries <= k_uring_submit_max_retries) {
-                    /* SQE stays queued; let completions free resources, then re-submit it. */
-                    uring_lk.unlock();
-                    if (odmUringReap(true)) {
-                        std::this_thread::sleep_for(k_uring_reap_sleep_us);
-                        continue;
-                    }
-                    /* Fatal ring error: neutralize the still-queued SQE before bailing out. */
-                    uring_lk.lock();
-                }
-
-                /* Hard failure: turn the queued SQE into a NOP so it cannot DMA this chunk. */
-                NIXL_ERROR << "ODM: io_uring_submit failed: "
-                           << (submit_rc < 0 ? strerror(-submit_rc) : "no SQE submitted");
-                odmUringDropSqe(queued_sqe);
-                uring_lk.unlock();
-                unaccount_chunk();
-                return drain_submitted_on_error(NIXL_ERR_BACKEND);
-            }
-
-            remaining -= chunk;
-            gpu_va += chunk;
-            iova += chunk;
+            const uint64_t chunk_len = std::min<uint64_t>(remaining, ODM_MAX_FD_CHUNK);
+            req->uring_chunks_.push_back(OdmUringChunk{req,
+                                                       gpu_va,
+                                                       iova,
+                                                       chunk_len,
+                                                       req->gpu_id,
+                                                       static_cast<uint32_t>(uring_op),
+                                                       xfer_type});
+            uring_backlog_.push_back(&req->uring_chunks_.back());
+            req->uring_chunks_total_++;
+            remaining -= chunk_len;
+            gpu_va += chunk_len;
+            iova += chunk_len;
         }
     }
 
-    if (batch.remaining.load(std::memory_order_acquire) == 0) {
-        /* Everything already completed while posting; surface any recorded error. */
-        return static_cast<nixl_status_t>(batch.status.load(std::memory_order_acquire));
-    }
-    req->uring_async_ = true;
-    return NIXL_IN_PROG;
+    odmUringDriveLocked();
+    return uringXferStatusLocked(req);
 #endif
 }
 #endif /* HAVE_ODM_IO_URING */
@@ -1639,21 +1634,6 @@ nixlOdmEngine::waitReqAsyncComplete(nixlOdmBackendReqH *req) const {
     if (!req) {
         return true;
     }
-#ifdef HAVE_ODM_IO_URING
-    if (req->uring_async_) {
-        while (req->async_batch_.remaining.load(std::memory_order_acquire) > 0) {
-            if (!odmUringReap(true)) {
-                return false;
-            }
-        }
-        /* Barrier: a reaper that just credited our last CQE still holds uring_mtx_ while it
-         * touches this request's batch; wait for it before the request is reused or freed. */
-        { std::lock_guard<std::mutex> uring_lk(uring_mtx_); }
-        req->uring_async_ = false;
-        req->uring_chunks_.clear();
-        return true;
-    }
-#endif
     if (!req->dispatched) {
         return true;
     }
@@ -1693,6 +1673,33 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_BACKEND;
     }
 
+#ifdef HAVE_ODM_IO_URING
+    if (use_io_uring_ && req && !req->is_dram_to_dram) {
+        NIXL_LOCK_GUARD(uring_lock_);
+        if (isUringActive(req)) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+        req->posted = false;
+        req->dispatched = false;
+        req->status = NIXL_SUCCESS;
+        req->async_batch_.remaining.store(0, std::memory_order_relaxed);
+        req->async_batch_.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
+        resetUringReq(req);
+        const nixl_status_t st = postOdmDmabufUringLocked(req);
+        if (st != NIXL_SUCCESS && st != NIXL_IN_PROG) {
+            return st;
+        }
+        if (st == NIXL_IN_PROG) {
+            req->posted = true;
+            req->status = NIXL_SUCCESS;
+            return NIXL_IN_PROG;
+        }
+        req->status = st;
+        req->posted = true;
+        return NIXL_SUCCESS;
+    }
+#endif
+
     /* NIXL may repost completed handles; multi-queue pool work may finish asynchronously. */
     req->posted = false;
     req->dispatched = false;
@@ -1700,20 +1707,15 @@ nixlOdmEngine::postXfer(const nixl_xfer_op_t &operation,
 #ifdef HAVE_CUDA
     req->async_batch_.remaining.store(0, std::memory_order_relaxed);
     req->async_batch_.status.store(NIXL_SUCCESS, std::memory_order_relaxed);
-#ifdef HAVE_ODM_IO_URING
-    req->uring_async_ = false;
-    req->uring_chunks_.clear();
 #endif
+#ifdef HAVE_ODM_IO_URING
+    resetUringReq(req);
 #endif
     nixl_status_t st;
     if (req->is_dram_to_dram) {
         st = postOdmHostVa(req);
     } else {
-#ifdef HAVE_ODM_IO_URING
-        st = use_io_uring_.load() ? postOdmDmabufUring(req) : postOdmDmabuf(req);
-#else
         st = postOdmDmabuf(req);
-#endif
     }
     if (st != NIXL_SUCCESS && st != NIXL_IN_PROG) {
         return st;
@@ -1739,15 +1741,15 @@ nixlOdmEngine::checkXfer(nixlBackendReqH *handle) const {
     }
 #ifdef HAVE_CUDA
 #ifdef HAVE_ODM_IO_URING
-    if (req->uring_async_) {
-        const bool ring_ok = odmUringReap(false);
-        OdmBatch &batch = req->async_batch_;
-        if (batch.remaining.load(std::memory_order_acquire) > 0) {
-            /* A fatal ring error means these CQEs may never arrive; do not report IN_PROG
-             * forever. Their dma-buf pins are intentionally kept (DMA may still be running). */
-            return ring_ok ? NIXL_IN_PROG : NIXL_ERR_BACKEND;
+    if (use_io_uring_ && !req->is_dram_to_dram && req->uring_chunks_total_ > 0) {
+        NIXL_LOCK_GUARD(uring_lock_);
+        odmUringReapLocked();
+        odmUringDriveLocked();
+        const nixl_status_t st = uringXferStatusLocked(req);
+        if (st == NIXL_SUCCESS) {
+            req->status = NIXL_SUCCESS;
         }
-        return static_cast<nixl_status_t>(batch.status.load(std::memory_order_relaxed));
+        return st;
     }
 #endif
     if (req->dispatched) {
@@ -1767,10 +1769,17 @@ nixlOdmEngine::releaseReqH(nixlBackendReqH *handle) const {
     if (!req) {
         return NIXL_SUCCESS;
     }
+#ifdef HAVE_ODM_IO_URING
+    if (use_io_uring_) {
+        NIXL_LOCK_GUARD(uring_lock_);
+        dropUringBacklogForReqLocked(req);
+        if (isUringActive(req)) {
+            return NIXL_ERR_REPOST_ACTIVE;
+        }
+    }
+#endif
     if (!waitReqAsyncComplete(req)) {
-        NIXL_ERROR << "ODM: cannot release request handle with outstanding io_uring CQEs; "
-                      "leaking handle to avoid use-after-free";
-        return NIXL_SUCCESS;
+        return NIXL_ERR_BACKEND;
     }
     delete req;
     return NIXL_SUCCESS;

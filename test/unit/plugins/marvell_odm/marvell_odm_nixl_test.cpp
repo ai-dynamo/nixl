@@ -33,8 +33,9 @@
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
+#include <atomic>
 #include <string>
-#include <vector>
+#include <thread>
 #include <vector>
 
 #include "nixl.h"
@@ -311,12 +312,136 @@ readBackAndValidate(nixlAgent &agent,
     return true;
 }
 
+static int
+runIoUringStrictMultiThreadPhase(const std::string &dev_name,
+                                 const std::string &qid_start_str,
+                                 const std::string &qid_end_str,
+                                 unsigned char test_pattern) {
+    constexpr int k_threads = 4;
+    constexpr size_t k_xfer = 256u * 1024u;
+
+    nixlAgentConfig cfg;
+    cfg.useProgThread = true;
+    cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_STRICT;
+    nixlAgent agent("ODM_uring_mt", cfg);
+
+    nixl_b_params_t params;
+    nixl_mem_list_t mems;
+    if (agent.getPluginParams("MARVELL_ODM", mems, params) != NIXL_SUCCESS) {
+        return 1;
+    }
+    params["dmadev"] = dev_name;
+    params["odm_qid_start"] = qid_start_str;
+    params["odm_qid_end"] = qid_end_str;
+    params["odm_use_io_uring"] = "1";
+    nixlBackendH *backend = nullptr;
+    if (agent.createBackend("MARVELL_ODM", params, backend) != NIXL_SUCCESS || backend == nullptr) {
+        return 1;
+    }
+    nixl_opt_args_t extra;
+    extra.backends.push_back(backend);
+
+    void *gpu_base = nullptr;
+    if (cudaMalloc(&gpu_base, k_xfer * static_cast<size_t>(k_threads)) != cudaSuccess) {
+        return 1;
+    }
+    nixl_reg_dlist_t vram_list(VRAM_SEG);
+    nixl_reg_dlist_t odm_list(DRAM_SEG);
+    nixlBlobDesc blob_vram;
+    blob_vram.addr = reinterpret_cast<uintptr_t>(gpu_base);
+    blob_vram.len = k_xfer * static_cast<size_t>(k_threads);
+    blob_vram.devId = 0;
+    vram_list.addDesc(blob_vram);
+    nixlBlobDesc blob_odm;
+    blob_odm.addr = 0;
+    blob_odm.len = k_xfer * static_cast<size_t>(k_threads);
+    blob_odm.devId = 0;
+    odm_list.addDesc(blob_odm);
+    if (agent.registerMem(vram_list, &extra) != NIXL_SUCCESS ||
+        agent.registerMem(odm_list, &extra) != NIXL_SUCCESS) {
+        cudaFree(gpu_base);
+        return 1;
+    }
+
+    std::atomic<int> failures{0};
+    std::vector<std::thread> workers;
+    workers.reserve(static_cast<size_t>(k_threads));
+    for (int t = 0; t < k_threads; ++t) {
+        workers.emplace_back([&, t] {
+            void *gpu = static_cast<char *>(gpu_base) + static_cast<size_t>(t) * k_xfer;
+            void *host = nullptr;
+            if (posix_memalign(&host, static_cast<size_t>(sysconf(_SC_PAGESIZE)), k_xfer) != 0) {
+                failures.fetch_or(1);
+                return;
+            }
+            fillPattern(
+                host, k_xfer, static_cast<unsigned char>(test_pattern + static_cast<unsigned>(t)));
+
+            nixl_xfer_dlist_t src(VRAM_SEG);
+            nixl_xfer_dlist_t dst(DRAM_SEG);
+            nixlBlobDesc vb;
+            vb.addr = reinterpret_cast<uintptr_t>(gpu);
+            vb.len = k_xfer;
+            vb.devId = 0;
+            src.addDesc(vb);
+            nixlBlobDesc db;
+            db.addr = static_cast<uintptr_t>(t) * k_xfer;
+            db.len = k_xfer;
+            db.devId = 0;
+            dst.addDesc(db);
+
+            if (cudaMemcpy(gpu, host, k_xfer, cudaMemcpyHostToDevice) != cudaSuccess) {
+                failures.fetch_or(1);
+                free(host);
+                return;
+            }
+
+            nixlXferReqH *req = nullptr;
+            nixl_status_t st = agent.createXferReq(
+                NIXL_WRITE, src.trim(), dst.trim(), "ODM_uring_mt", req, &extra);
+            if (st != NIXL_SUCCESS) {
+                failures.fetch_or(1);
+                free(host);
+                return;
+            }
+            st = agent.postXferReq(req);
+            if (st != NIXL_IN_PROG && st != NIXL_SUCCESS) {
+                failures.fetch_or(1);
+                agent.releaseXferReq(req);
+                free(host);
+                return;
+            }
+            if (st == NIXL_IN_PROG) {
+                st = pollXferToDone(agent, req);
+            }
+            if (st != NIXL_SUCCESS) {
+                failures.fetch_or(1);
+            }
+            agent.releaseXferReq(req);
+            free(host);
+        });
+    }
+    for (auto &th : workers) {
+        th.join();
+    }
+    agent.deregisterMem(vram_list, &extra);
+    agent.deregisterMem(odm_list, &extra);
+    cudaFree(gpu_base);
+    if (failures.load() == 0) {
+        std::cout << "ODM io_uring multi-thread (STRICT) PASSED" << std::endl;
+    }
+    return failures.load();
+}
+
 int
 runAsyncPostPollAndReleaseTests(nixlAgent &agent,
                                 nixlBackendH *backend,
                                 bool multi_queue,
                                 bool use_io_uring,
-                                unsigned char test_pattern) {
+                                unsigned char test_pattern,
+                                const std::string &dev_name,
+                                const std::string &qid_start_str,
+                                const std::string &qid_end_str) {
     if (!multi_queue && !use_io_uring) {
         return 0;
     }
@@ -547,6 +672,12 @@ runAsyncPostPollAndReleaseTests(nixlAgent &agent,
                     }
                 }
             }
+        }
+
+        if (failures == 0) {
+            std::cout << "Phase 8: multi-thread io_uring (NIXL_THREAD_SYNC_STRICT)" << std::endl;
+            failures = runIoUringStrictMultiThreadPhase(
+                dev_name, qid_start_str, qid_end_str, test_pattern);
         }
     }
 
@@ -915,8 +1046,14 @@ main(int argc, char **argv) {
                 q_start = 0;
                 q_end = 0;
             }
-            result += runAsyncPostPollAndReleaseTests(
-                agent, backend, q_end > q_start, use_io_uring, test_pattern);
+            result += runAsyncPostPollAndReleaseTests(agent,
+                                                      backend,
+                                                      q_end > q_start,
+                                                      use_io_uring,
+                                                      test_pattern,
+                                                      dev_name,
+                                                      qid_start_str,
+                                                      qid_end_str);
         }
     }
 

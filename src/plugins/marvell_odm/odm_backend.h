@@ -139,11 +139,15 @@ class nixlOdmBackendReqH;
 
 #ifdef HAVE_CUDA
 #ifdef HAVE_ODM_IO_URING
-/** One in-flight io_uring SQE (dma-buf chunk); CQE user_data points here. */
+/** One dma-buf chunk for io_uring; CQE user_data points here (stable address in req deque). */
 struct OdmUringChunk {
-    OdmBatch *batch{nullptr};
+    nixlOdmBackendReqH *req{nullptr};
     uint64_t gpu_va{0};
+    uint64_t iova{0};
     uint64_t len{0};
+    uint32_t gpu_id{0};
+    uint32_t uring_op{0};
+    uint32_t xfer_type{0};
 };
 #endif
 #endif
@@ -153,8 +157,8 @@ struct OdmUringChunk {
  * @brief Per-transfer request handle.
  *
  * With the worker pool or io_uring async submit, postXfer may return NIXL_IN_PROG
- * and checkXfer polls async_batch until completion. Synchronous paths include
- * single-queue ioctl (no pool) and host-VA when the pool is off.
+ * and checkXfer polls until completion. Synchronous paths include single-queue ioctl
+ * (no pool) and host-VA when the pool is off.
  */
 class nixlOdmBackendReqH : public nixlBackendReqH {
 public:
@@ -168,7 +172,9 @@ public:
 #ifdef HAVE_CUDA
     OdmBatch async_batch_;
 #ifdef HAVE_ODM_IO_URING
-    bool uring_async_{false}; /* SQEs submitted; reap in checkXfer / release */
+    size_t uring_chunks_total_{0};
+    size_t uring_chunks_done_{0};
+    bool uring_failed_{false};
     std::deque<OdmUringChunk> uring_chunks_;
 #endif
 #endif
@@ -340,6 +346,9 @@ private:
     nixl_thread_sync_t sync_mode_;
     bool enable_prog_th_{false};
     mutable nixlLock thread_assign_lock_;
+#ifdef HAVE_ODM_IO_URING
+    mutable nixlLock uring_lock_;
+#endif
     mutable std::unordered_map<std::thread::id, uint16_t> thread_qid_;
     mutable std::deque<std::thread::id> thread_order_;
     mutable uint32_t next_thread_slot_{0};
@@ -375,21 +384,21 @@ private:
 
 #ifdef HAVE_ODM_IO_URING
     static constexpr unsigned k_uring_ring_entries = 32;
+    [[nodiscard]] static bool
+    isUringActive(const nixlOdmBackendReqH *req);
+    [[nodiscard]] nixl_status_t
+    uringXferStatusLocked(const nixlOdmBackendReqH *req) const;
+    void
+    resetUringReq(nixlOdmBackendReqH *req) const;
+    void
+    dropUringBacklogForReqLocked(nixlOdmBackendReqH *req) const;
     nixl_status_t
-    postOdmDmabufUring(nixlOdmBackendReqH *req) const;
-    /*
-     * Reap CQEs from the shared ring and credit each one to the request that owns it
-     * (a CQE for request A may be reaped while servicing request B). With block==true,
-     * wait until at least one CQE is reaped or nothing is in flight, polling with a
-     * short backoff so uring_mtx_ is never held across a wait.
-     * @return false only after a fatal ring error.
-     */
-    bool
-    odmUringReap(bool block) const;
-    /* @return number of CQEs consumed; caller must hold uring_mtx_. */
-    unsigned
-    odmUringReapPeekableLocked() const;
-    bool
+    postOdmDmabufUringLocked(nixlOdmBackendReqH *req) const;
+    void
+    odmUringReapLocked() const;
+    void
+    odmUringDriveLocked() const;
+    void
     odmUringCqeConsumeLocked(struct io_uring_cqe *cqe) const;
     void
     odmUringInit();
@@ -400,15 +409,11 @@ private:
 
     mutable struct io_uring uring_;
     mutable bool uring_initialized_{false};
-    mutable std::atomic<bool> use_io_uring_{false};
-    mutable std::atomic<bool> warned_uring_host_{false};
+    mutable bool use_io_uring_{false};
+    mutable bool warned_uring_host_{false};
     mutable size_t uring_inflight_{0};
-    mutable std::atomic<bool> uring_ring_fatal_{false};
-    /*
-     * liburing rings are not thread-safe; this mutex gates SQ/CQ operations only
-     * (submit and peek), not CUDA export or blocking kernel waits.
-     */
-    mutable std::mutex uring_mtx_;
+    mutable bool uring_ring_fatal_{false};
+    mutable std::deque<OdmUringChunk *> uring_backlog_;
 #endif
 
 #ifdef HAVE_CUDA

@@ -1064,8 +1064,10 @@ single-instance runs.
 Multi-queue runs (`--odm_qid_end` > `--odm_qid_start`) enable the agent progress
 thread automatically so the plugin can fan work across queues. Use
 `--enable_pt=1` explicitly to match other backends; transfers are asynchronous
-(`NIXL_IN_PROG`) when the worker pool or io_uring async submit is on. Single-queue
-ioctl (no pool, no io_uring) completes inside `postXfer`.
+(`NIXL_IN_PROG`) when the worker pool or io_uring async submit is on. ODM io_uring
+`postXfer` does not block: chunks beyond ring depth drain from a backlog during
+`checkXfer`, and releasing an active handle returns `NIXL_ERR_REPOST_ACTIVE`.
+Single-queue ioctl (no pool, no io_uring) completes inside `postXfer`.
 
 ```bash
 export LD_LIBRARY_PATH=.../build/src/core:.../build/src/plugins/marvell_odm
