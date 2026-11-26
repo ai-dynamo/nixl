@@ -1192,7 +1192,8 @@ nixlLibfabricRailManager::progressActiveRails(ProgressCudaDevice cuda_device) {
         ~CudaCtxRestorer() {
             CUcontext current = nullptr;
             if (active && cuCtxGetCurrent(&current) == CUDA_SUCCESS && current != saved) {
-                cuCtxSetCurrent(saved);
+                // Nothing to do about a failure in a destructor; HIP's is nodiscard.
+                (void)cuCtxSetCurrent(saved);
             }
         }
     } ctx_restorer;
