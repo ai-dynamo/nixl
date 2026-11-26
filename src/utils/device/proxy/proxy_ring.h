@@ -30,6 +30,8 @@
 
 namespace nixl {
 
+inline constexpr uint64_t kProxyConsumerIdxPublishBatch = 32;
+
 /** One in-flight record, retained until the completion frontier passes its ring slot. */
 struct proxyRequestState {
     uint64_t op_idx = 0;
@@ -166,8 +168,8 @@ private:
 
     /** Host-only submit frontier; consumer_idx_shadow_ remains the completion frontier. */
     uint64_t submit_idx_ = 0;
-    /** Host shadow of the authoritative GPU-visible consumer index. */
     uint64_t consumer_idx_shadow_ = 0;
+    uint64_t published_consumer_idx_ = 0;
     /** In-flight state retained until the completion frontier passes its ring slot. */
     std::vector<proxyRequestState> inflight_;
 
