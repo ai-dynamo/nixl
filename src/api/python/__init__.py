@@ -22,7 +22,6 @@ from ._api import (
     nixl_prepped_dlist_handle,
     nixl_thread_sync_t,
     nixl_xfer_handle,
-    nixlNotificationOverflowError,
 )
 
 __all__ = [
@@ -36,5 +35,4 @@ __all__ = [
     "nixl_prepped_dlist_handle",
     "nixl_thread_sync_t",
     "nixl_xfer_handle",
-    "nixlNotificationOverflowError",
 ]

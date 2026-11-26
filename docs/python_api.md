@@ -64,22 +64,11 @@ with nixl_notification_monitor() as incoming:
   `agent.remove_notif_monitor(monitor, prefix)` first to replace a subscription.
   It returns whether the monitor had that subscription. Already queued messages
   remain available.
-- Unconsumed notifications remain available through `get_new_notifs()`.
-  A monitor queues up to 4,096 notifications, or `max_queued` when created as
-  `nixl_notification_monitor(max_queued=...)`. Further matching messages go to
-  `get_new_notifs()` instead. If messages were redirected since the previous
-  drain, `wait_any()` raises `nixlNotificationOverflowError`. Its `notifications`
-  attribute contains the batch drained by that call, and `redirected` counts
-  only the new redirects across the monitor's subscriptions. Redirected messages
-  are available through `get_new_notifs()` on the receiving agent. If
-  `get_new_notifs()` drives progress before you wait, it may already have
-  returned redirected messages. With concurrent progress, including
-  application-driven progress on another thread, messages may become
-  available after `wait_any()` raises. To recover them, keep the results
-  of every `get_new_notifs()` call on the
-  subscribed agents, and poll with a deadline until the redirected messages have
-  arrived. `overflow_count()` reports the monitor's lifetime total. Backends
-  without callback support keep their normal polling behavior.
+- Every message that matches a subscription goes to the monitor. Messages that
+  match none, and all notifications of backends without callback support, remain
+  available through `get_new_notifs()`. Like the agent's own notification queue,
+  the monitor's queue is unbounded. Queued messages stay in memory until
+  `wait_any()` returns them.
 - Use `fd()` or `fileno()` with poll or an event loop. The descriptor is borrowed.
   When it becomes readable, call `wait_any(timeout_ms=0)` to drain the monitor.
   Remove any external reader before closing the monitor. `close()`, including at

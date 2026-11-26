@@ -115,7 +115,7 @@ Backends that advertise `NOTIF_CALLBACK` call `deliverNotif(remote_agent, messag
 they receive a notification. If it returns false, the backend queues the original notification
 for `getNotifs()`. The base engine uses the agent's `notifSink` from the initialization
 parameters. The sink stays valid for the backend's lifetime and sees callbacks registered after
-backend creation. The `notifSink` initialization parameter is part of backend plugin API version 5.
+backend creation. The `notifSink` initialization parameter is part of backend plugin API version 4.
 
 Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
 

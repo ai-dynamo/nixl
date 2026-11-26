@@ -3,7 +3,6 @@
 
 import gc
 import os
-import pickle
 import select
 import signal
 import sys
@@ -15,12 +14,7 @@ import weakref
 import pytest
 
 import nixl._bindings as bindings
-from nixl import (
-    nixl_agent,
-    nixl_agent_config,
-    nixl_notification_monitor,
-    nixlNotificationOverflowError,
-)
+from nixl import nixl_agent, nixl_agent_config, nixl_notification_monitor
 
 pytestmark = pytest.mark.skipif(
     sys.platform != "linux", reason="requires Linux eventfd"
@@ -98,30 +92,24 @@ def test_add_notif_monitor_with_application_driven_progress():
         assert received == [(target.name, source.name, b"watch:ready")]
 
 
-def test_application_driven_progress_returns_redirects_before_overflow_error():
-    target = _ucx_target_without_backends(enable_prog_thread=False)
-    target.create_backend("UCX")
-    source = nixl_agent(f"source-{uuid.uuid4()}")
-    capacity, extra = 2, 1
-    payloads = [b"flood:%d" % i for i in range(capacity + extra)]
+def test_burst_goes_entirely_to_monitor(ucx_peers):
+    source, target = ucx_peers
+    source.add_remote_agent(target.get_agent_metadata())
+    payloads = [b"burst:%d" % i for i in range(1_000)]
 
-    with nixl_notification_monitor(max_queued=capacity) as monitor:
-        target.add_notif_monitor(monitor, b"flood:")
-        source.add_remote_agent(target.get_agent_metadata())
+    with nixl_notification_monitor() as monitor:
+        target.add_notif_monitor(monitor, b"burst:")
         for message in payloads:
             source.send_notif(target.name, message)
 
-        # The get_new_notifs() call that drives progress returns the redirect
-        # before wait_any() reports the overflow.
-        redirected = _legacy_notifications(target, source, extra)
-        assert len(redirected) == extra
-        assert monitor.overflow_count() == extra
+        received = []
+        deadline = time.monotonic() + WAIT_MS / 1000
+        while len(received) < len(payloads) and time.monotonic() < deadline:
+            batch = monitor.wait_any(timeout_ms=100)
+            received.extend(message for _, _, message in batch)
 
-        with pytest.raises(nixlNotificationOverflowError) as raised:
-            monitor.wait_any(timeout_ms=0)
-        assert raised.value.redirected == extra
-        queued = [message for _, _, message in raised.value.notifications]
-        assert sorted(redirected + queued) == sorted(payloads)
+        assert sorted(received) == sorted(payloads)
+        assert target.get_new_notifs() == {}
 
 
 def test_notification_fd_and_legacy_fallback(ucx_peers):
@@ -230,58 +218,6 @@ def test_conflicting_subscription_requires_removal(ucx_peers):
         assert _legacy_notifications(target, source, 1) == [b"legacy fallback"]
 
 
-def test_notification_overflow_error_pickle_round_trip():
-    notifications = [("target", "source", b"watch:\x00\xff")]
-    error = nixlNotificationOverflowError(notifications, 3)
-
-    restored = pickle.loads(pickle.dumps(error))
-
-    assert type(restored) is type(error)
-    assert restored.notifications == notifications
-    assert restored.redirected == 3
-    assert str(restored) == str(error)
-
-
-def test_full_queue_reports_each_overflow_and_preserves_notifications(ucx_peers):
-    source, target = ucx_peers
-    source.add_remote_agent(target.get_agent_metadata())
-    capacity = 16
-    total_redirected = 0
-    with nixl_notification_monitor(max_queued=capacity) as monitor:
-        target.add_notif_monitor(monitor, b"flood:")
-        for wave, extra in enumerate((3, 5)):
-            payloads = [b"flood:%d:%d" % (wave, i) for i in range(capacity + extra)]
-            for message in payloads:
-                source.send_notif(target.name, message)
-
-            total_redirected += extra
-            deadline = time.monotonic() + WAIT_MS / 1000
-            while (
-                monitor.overflow_count() < total_redirected
-                and time.monotonic() < deadline
-            ):
-                time.sleep(0.001)
-            assert monitor.overflow_count() == total_redirected
-
-            with pytest.raises(nixlNotificationOverflowError) as raised:
-                monitor.wait_any(timeout_ms=0)
-            assert raised.value.redirected == extra
-            queued = raised.value.notifications
-            assert len(queued) == capacity
-            assert all(
-                local == target.name and remote == source.name
-                for local, remote, _ in queued
-            )
-
-            received = _legacy_notifications(target, source, extra)
-            assert len(received) == extra
-            assert sorted(received + [message for _, _, message in queued]) == sorted(
-                payloads
-            )
-            assert monitor.wait_any(timeout_ms=0) == []
-            assert monitor.overflow_count() == total_redirected
-
-
 def test_agent_destruction_keeps_monitor_open_and_quiet():
     agent = nixl_agent(
         f"receiver-{uuid.uuid4()}",
@@ -321,17 +257,12 @@ def test_notification_wait_clears_stale_eventfd_wakeup(timeout_ms):
             poller.unregister(fd)
 
 
-def test_max_queued_must_be_positive():
-    with pytest.raises(ValueError):
-        nixl_notification_monitor(max_queued=0)
-
-
 def test_close_releases_eventfd():
     with nixl_notification_monitor() as monitor:
         fd = monitor.fileno()
         os.fstat(fd)
 
-    for operation in (monitor.fileno, monitor.overflow_count, monitor.wait_any):
+    for operation in (monitor.fileno, monitor.wait_any):
         with pytest.raises(RuntimeError):
             operation()
     with pytest.raises(OSError):

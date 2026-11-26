@@ -144,63 +144,18 @@ class nixl_xfer_handle:
 nixl_backend_handle = int
 
 
-class nixlNotificationOverflowError(RuntimeError):
-    """The monitor redirected notifications to get_new_notifs().
-
-    notifications contains the batch drained by this call. redirected counts
-    the notifications redirected to get_new_notifs() since the previous drain.
-    A get_new_notifs() call may already have returned them, for example the
-    call that drove progress, or they may arrive there shortly after this
-    exception.
-    """
-
-    def __init__(
-        self, notifications: list[tuple[str, str, bytes]], redirected: int
-    ) -> None:
-        super().__init__(notifications, redirected)
-        self.notifications = notifications
-        self.redirected = redirected
-
-    def __str__(self) -> str:
-        return (
-            f"Notification monitor overflow redirected {self.redirected} notifications "
-            "to get_new_notifs()"
-        )
-
-
 class nixl_notification_monitor(nixlBind._NotificationMonitor):
     """Wait on notifications that agents route to it by byte prefix.
 
-    Subscribe with nixl_agent.add_notif_monitor(). Construct with max_queued to
-    change the queue capacity, 4,096 by default. overflow_count() reports the
-    total number of notifications redirected to get_new_notifs().
+    Subscribe with nixl_agent.add_notif_monitor(), then drain with wait_any().
+    The queue is unbounded, like the agent's own notification queue.
     """
-
-    _reported_overflow_count = 0
 
     def __enter__(self) -> nixl_notification_monitor:
         return self
 
     def __exit__(self, *exc_info) -> None:
         self.close()
-
-    def wait_any(self, timeout_ms: int = -1) -> list[tuple[str, str, bytes]]:
-        """Return all queued (local_agent, remote_agent, message) tuples.
-
-        Waits until at least one notification is queued. timeout_ms=0 drains
-        without blocking, -1 waits indefinitely, and a timeout returns an empty
-        list. Raises RuntimeError when the monitor is closed.
-
-        Raises nixlNotificationOverflowError with the drained batch and the
-        new redirect count when the queue has overflowed since the last drain.
-        Use one consumer per monitor.
-        """
-        notifications, overflow_count = self._wait_any(timeout_ms)
-        redirected = overflow_count - self._reported_overflow_count
-        if redirected:
-            self._reported_overflow_count = overflow_count
-            raise nixlNotificationOverflowError(notifications, redirected)
-        return notifications
 
 
 class nixl_thread_sync_t(Enum):

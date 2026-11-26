@@ -22,8 +22,6 @@
 
 #include <cerrno>
 #include <chrono>
-#include <cstddef>
-#include <cstdint>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -50,43 +48,28 @@ struct Notification {
     std::string message;
 };
 
-// Drained notifications and the total number redirected so far, read under one lock.
-struct NotificationBatch {
-    std::vector<Notification> notifications;
-    std::uint64_t overflowCount;
-};
-
 // Native queue of one monitor. Receive and progress threads push into it and never call
-// Python or log; the Python wrapper reports overflow. Its eventfd is readable exactly while
-// notifications are queued or the inbox is closed. Only an external write to the borrowed
-// descriptor breaks that, and the next wait repairs it.
+// Python or log. Like the agent's own notification queue, it is unbounded and is emptied
+// only by draining it. Its eventfd is readable exactly while notifications are queued or
+// the inbox is closed. Only an external write to the borrowed descriptor breaks that, and
+// the next wait repairs it.
 class NotificationInbox {
 public:
     using Clock = std::chrono::steady_clock;
     // No deadline waits indefinitely.
     using Deadline = std::optional<Clock::time_point>;
 
-    static constexpr std::size_t defaultMaxQueued = 4096;
-
-    explicit NotificationInbox(std::size_t max_queued = defaultMaxQueued)
-        : maxQueued_(max_queued),
-          fd_(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
-        if (max_queued == 0) {
-            throw std::invalid_argument("max_queued must be positive");
-        }
+    NotificationInbox() : fd_(eventfd(0, EFD_NONBLOCK | EFD_CLOEXEC)) {
         if (!fd_.valid()) {
             throw std::system_error(errno, std::generic_category(), "eventfd");
         }
     }
 
+    // False only once the inbox is closed and its subscriptions are being removed.
     [[nodiscard]] bool
     push(std::string_view local, std::string_view remote, std::string_view message) {
         const std::lock_guard lock(mutex_);
         if (closed_) {
-            return false;
-        }
-        if (ready_.size() == maxQueued_) {
-            ++overflowCount_;
             return false;
         }
         const bool was_empty = ready_.empty();
@@ -100,7 +83,7 @@ public:
     // Returns every queued notification once at least one is available, or an empty batch
     // at the deadline. Returns nullopt when a signal interrupts the wait, so the caller can
     // run signal handlers and wait again with the same deadline.
-    [[nodiscard]] std::optional<NotificationBatch>
+    [[nodiscard]] std::optional<std::vector<Notification>>
     waitAny(const Deadline &deadline) {
         std::unique_lock lock(mutex_);
         while (!closed_ && ready_.empty()) {
@@ -136,7 +119,7 @@ public:
         }
         // The queue is drained below, so the descriptor must stop being readable.
         clearSignal();
-        return NotificationBatch{std::exchange(ready_, {}), overflowCount_};
+        return std::exchange(ready_, {});
     }
 
     void
@@ -147,12 +130,6 @@ public:
             ready_.clear();
             signal();
         }
-    }
-
-    [[nodiscard]] std::uint64_t
-    overflowCount() const {
-        const std::lock_guard lock(mutex_);
-        return overflowCount_;
     }
 
     [[nodiscard]] int
@@ -174,11 +151,9 @@ private:
         (void)eventfd_read(fd(), &count);
     }
 
-    const std::size_t maxQueued_;
     const scopedFd fd_;
     mutable std::mutex mutex_;
     std::vector<Notification> ready_;
-    std::uint64_t overflowCount_ = 0;
     bool closed_ = false;
 };
 
@@ -188,8 +163,7 @@ private:
 // closes as soon as no wait still uses it.
 class NotificationMonitor {
 public:
-    explicit NotificationMonitor(std::size_t max_queued = NotificationInbox::defaultMaxQueued)
-        : inbox_(std::make_shared<NotificationInbox>(max_queued)) {}
+    NotificationMonitor() : inbox_(std::make_shared<NotificationInbox>()) {}
 
     ~NotificationMonitor() {
         close();
@@ -262,11 +236,6 @@ public:
     [[nodiscard]] int
     fd() const {
         return inbox()->fd();
-    }
-
-    [[nodiscard]] std::uint64_t
-    overflowCount() const {
-        return inbox()->overflowCount();
     }
 
 private:

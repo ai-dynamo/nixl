@@ -145,7 +145,7 @@ namespace {
 
 // Wait without the GIL. When a signal interrupts poll, run the Python signal handlers,
 // which may raise, and otherwise resume waiting until the original deadline.
-nixl::python::NotificationBatch
+std::vector<nixl::python::Notification>
 waitForNotifications(nixl::python::NotificationInbox &inbox, int timeout_ms) {
     using Inbox = nixl::python::NotificationInbox;
     if (timeout_ms < -1) {
@@ -155,7 +155,7 @@ waitForNotifications(nixl::python::NotificationInbox &inbox, int timeout_ms) {
         Inbox::Deadline() :
         Inbox::Deadline(Inbox::Clock::now() + std::chrono::milliseconds(timeout_ms));
     for (;;) {
-        std::optional<nixl::python::NotificationBatch> batch;
+        std::optional<std::vector<nixl::python::Notification>> batch;
         {
             const py::gil_scoped_release release;
             batch = inbox.waitAny(deadline);
@@ -257,38 +257,34 @@ PYBIND11_MODULE(_bindings, m) {
 
     py::class_<NotificationMonitor>(
         m, "_NotificationMonitor", "Wait on notifications routed by an agent's byte prefixes.")
-        .def(py::init<std::size_t>(),
-             py::arg("max_queued") = nixl::python::NotificationInbox::defaultMaxQueued)
+        .def(py::init<>())
         .def("fd",
              &NotificationMonitor::fd,
              "Borrow the eventfd for poll or an event loop. When it becomes readable, "
              "drain the monitor with wait_any(timeout_ms=0) instead of reading it. "
              "Raises RuntimeError after close().")
         .def("fileno", &NotificationMonitor::fd, "Same as fd(), for select and asyncio.")
-        .def("overflow_count",
-             &NotificationMonitor::overflowCount,
-             "Number of matching notifications that arrived while max_queued were "
-             "already queued. They are available through get_new_notifs() instead.")
         .def("close",
              &NotificationMonitor::close,
              py::call_guard<py::gil_scoped_release>(),
              "Remove all subscriptions, discard queued notifications, wake a waiter with "
              "RuntimeError, and release the eventfd. Closing twice is allowed.")
-        // The Python subclass provides wait_any() on top of this and reports overflow.
         .def(
-            "_wait_any",
+            "wait_any",
             [](const NotificationMonitor &monitor, int timeout_ms) {
                 const auto inbox = monitor.inbox();
-                const auto batch = waitForNotifications(*inbox, timeout_ms);
                 py::list notifications;
-                for (const auto &event : batch.notifications) {
+                for (const auto &event : waitForNotifications(*inbox, timeout_ms)) {
                     notifications.append(
                         py::make_tuple(event.local, event.remote, py::bytes(event.message)));
                 }
-                return py::make_tuple(notifications, batch.overflowCount);
+                return notifications;
             },
             py::arg("timeout_ms") = -1,
-            "Drain like wait_any(), returning (notifications, overflow_count) read together.");
+            "Return all queued (local_agent, remote_agent, message) tuples. Waits until at "
+            "least one notification is queued. timeout_ms=0 drains without blocking, -1 "
+            "waits indefinitely, and a timeout returns an empty list. Raises RuntimeError "
+            "when the monitor is closed. Use one consumer per monitor.");
 
     // Whether NIXL was built against a UCX with the GPU device API, which the
     // prepMemView/releaseMemView path requires. Mirrors the meson
