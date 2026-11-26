@@ -65,6 +65,18 @@ failLane(GpunetioDeviceLane *lane) {
     deviceAtomic(lane->phase).store(gpunetio_lane_phase_failed, cuda::memory_order_release);
 }
 
+// Sleep with exponential backoff while another thread holds the lane, so spinning
+// callers, including ones in the holder's own warp, leave it issue slots.
+__device__ inline void
+backoff(unsigned &delay_ns) {
+#if defined(__CUDA_ARCH__) && __CUDA_ARCH__ >= 700
+    __nanosleep(delay_ns);
+#endif
+    if (delay_ns < 1024) {
+        delay_ns *= 2;
+    }
+}
+
 __device__ inline void
 unlockLane(GpunetioDeviceLane *lane) {
     const uint32_t phase = lane->failed ?
@@ -233,6 +245,7 @@ submitGet(const memViewElem &local,
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
+    unsigned delay_ns = 32;
     for (;;) {
         uint32_t previous = phase.load(cuda::memory_order_acquire);
         if (previous == gpunetio_lane_phase_failed) {
@@ -251,6 +264,7 @@ submitGet(const memViewElem &local,
             unlockLane(lane);
             return result;
         }
+        backoff(delay_ns);
     }
 }
 
@@ -309,6 +323,7 @@ flushChannel(nixlMemViewH remote, unsigned channel) {
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
+    unsigned delay_ns = 32;
     for (;;) {
         uint32_t previous = phase.load(cuda::memory_order_acquire);
         if (previous == gpunetio_lane_phase_failed) {
@@ -330,6 +345,7 @@ flushChannel(nixlMemViewH remote, unsigned channel) {
             unlockLane(lane);
             return result;
         }
+        backoff(delay_ns);
     }
 }
 #endif
