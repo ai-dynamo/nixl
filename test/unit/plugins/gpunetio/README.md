@@ -2,17 +2,21 @@
 
 ## Native pool qualification
 
-`native_qp_count=1` is the default. Native mode accepts1..32 active READ
-channels per backend, selected once at view preparation with
-`hint.customParam="native_channel=N"`. The GPU API/device-view ABI is unchanged.
-Use matching channel views; channels are independently ordered, even with
-strict registrations. Native pools still support one peer per engine.
+`native_qp_count=1` is the default. Native mode accepts 1..32 active data
+channels per backend. Standard GET, PUT and atomicAdd select `channel_id` per
+call using one prepared view pair. The backend readSession extension retains
+`hint.customParam="native_channel=N"` and requires matching selected views.
+Device-view ABI 2 requires rebuilding CUDA consumers with the matching backend.
+Channels are independently ordered; native pools support one peer per engine.
 
 Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
-GET test below. It checks distinct lane/QP identities, mixed-channel rejection,
-generation preservation on re-preparation, copied-status safety, fixed-mode
-submissions, immediate GPU consumption, and repeated SQ/CQ wrap on every
-channel. The default remains the one-QP test.
+device API test below. It checks distinct lane/QP identities, batch mixed-view
+rejection, standard per-call channel selection, generation preservation on
+re-preparation, copied-status safety, fixed-mode submissions and immediate GPU
+consumption. Standard GET/PUT/atomic/status/flush checks include nullable status,
+defer, reverse polling, queue wrap, same-channel THREAD/WARP/BLOCK producers,
+GPU-produced PUT data, channel isolation and Graph replay. The default remains
+the one-QP test. GRID is unsupported; RDMA getPtr returns nullptr.
 
 The following are disposable-process fault modes; failed resources stay alive
 until process exit, not normal resource reclamation or recovery:
@@ -27,6 +31,11 @@ until process exit, not normal resource reclamation or recovery:
 - Add `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to use a real invalid-rkey READ instead
   of synthetic poisoning. It requires a CQ error, sticky refusal and continued
   healthy-channel progress before testing retention.
+- Add `NIXL_GPUNETIO_TEST_STANDARD_CQ_ERROR=1` with the retention and CQ-error
+  flags to put a bad key in the middle of a standard deferred request sequence.
+  Polling the last request must detect the error while the checked prefix stays
+  successful. Use `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` instead for the separate
+  readSession FIFO regression; run the two modes in separate processes.
 
 `nixl_gpunetio_native_pool_options_test` is a CPU-only parser test with no
 GPU/network dependency. It covers all supported sizes/channels and invalid
@@ -68,9 +77,11 @@ process exit. The public FIFO completion path is the default. Define
 when testing the unsupported private parallel CQ helper.
 
 With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
-`nixl_gpunetio_device_get_test` exercises GPU-initiated GET from registered
-pinned Host or VRAM memory. It creates two agents on the selected GPUs and checks scalar and
-CTA-batched reads, individual completions, result bytes, and guard bytes.
+`nixl_gpunetio_device_get_test` exercises standard GPU-initiated operations and
+the CTA batch extension against registered pinned Host or VRAM memory. It
+creates two agents on the selected GPUs and checks payloads, guards, completion,
+ordering and Graph replay. The DRAM case also samples the receiver counter and
+checks the preceding PUT payload immediately after observing the increment.
 Run it manually on a configured GPUNETIO system with two free consecutive OOB
 ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
 
@@ -79,9 +90,18 @@ ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
 ```
 
 The source type defaults to `DRAM`, and the reader GPU defaults to the owner
-GPU. The test requires the explicitly enabled DOCA 3.5 device API. Native GET
-qualification prints a skip when the hardware requires MCST consistency, which
-the current GET path reports as unsupported. Its same-host result does not establish cross-node correctness or performance.
+GPU. The OOB interface must have an active IPv4 address inside the execution
+environment; an RDMA sysfs netdev name alone does not establish that address.
+The test requires the explicitly enabled DOCA 3.5+ device API. It prints a skip
+when the hardware requires MCST consistency, which this implementation reports
+as unsupported. Its same-host result covers component correctness.
+
+Set `NIXL_GPUNETIO_TEST_LARGE=1` for one additional GET and PUT of
+`DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE + 64` bytes, with a full GPU byte check
+and 64-byte guards on each end. It allocates two additional VRAM buffers
+(about 2 GiB total on DOCA 3.5), regardless of the small test's source type.
+This mode requires matching QP counts and cannot be combined with the peer-count
+mismatch mode. No large host mirror is allocated.
 
 Target should start first. A command line example:
 
