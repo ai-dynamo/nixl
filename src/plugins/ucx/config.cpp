@@ -128,6 +128,25 @@ config::keptValue(std::string_view key, condition_t condition, std::string_view 
 }
 
 void
+config::modifyMaxRmaRails(unsigned rails) const {
+    const auto value = std::to_string(rails);
+
+    // Some UCX versions dump a configuration file value as a default one, so keep any rails other
+    // than the UCX default. Since openucx/ucx#12325 that default is "1,assigned:auto", dumped as
+    // "default:1,assigned:auto": 1 rail, except for the GPU buffers whose NICs UCX assigns, which
+    // get every lane of their NICs
+    const auto it = initialValues_.find("MAX_RMA_RAILS");
+    if ((it != initialValues_.end()) && it->second.value.starts_with("default:")) {
+        modify("MAX_RMA_RAILS",
+               value + ",assigned:auto",
+               condition_t::EQUAL,
+               "default:1,assigned:auto");
+    } else {
+        modify("MAX_RMA_RAILS", value, condition_t::EQUAL, "1");
+    }
+}
+
+void
 config::validateTlsCudaSupport() const {
     const auto tls = findUcxEnvVar("TLS");
     if (nixl::hwInfo::instance().numNvidiaGpus == 0 || !tls || tlsEnablesCudaSupport(tls->second)) {

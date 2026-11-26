@@ -49,6 +49,10 @@ public:
            condition_t condition = condition_t::DEFAULT,
            std::string_view expected = {}) const;
 
+    // Set the RMA rails unless they differ from the UCX default
+    void
+    modifyMaxRmaRails(unsigned rails) const;
+
     void
     validateTlsCudaSupport() const;
 

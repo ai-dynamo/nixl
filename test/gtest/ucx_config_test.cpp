@@ -137,7 +137,7 @@ getValue(const nixl::ucx::config &config, std::string_view key) {
 [[nodiscard]] std::string
 modifyMaxRmaRails() {
     const nixl::ucx::config config;
-    config.modify("MAX_RMA_RAILS", "2", condition_t::EQUAL, "1");
+    config.modifyMaxRmaRails(2);
     return getValue(config, "MAX_RMA_RAILS");
 }
 
