@@ -269,6 +269,7 @@ ucx_device_cuda_args = []
 ucx_device_override_options = []
 ucx_gpu_device_api_available = false
 nixl_device_api_available = false
+gpunetio_device_api_available = false
 nvcc_prog = find_program('nvcc', required: false)
 doca_gpunetio_dep = disabler()
 
@@ -351,7 +352,8 @@ else
         int main() { return 0; }
         ''',
         dependencies: [ucx_dep, doca_gpunetio_dep],
-        args: ['-I' + nixl_inc] + ucx_device_cuda_args,
+        # Checks do not get add_project_arguments(); the device headers need C++20.
+        args: ['-std=c++20', '-I' + nixl_inc] + ucx_device_cuda_args,
         name: 'NIXL Device API')
     if have_nixl_device_api
         nixl_device_api_available = true
@@ -365,12 +367,29 @@ else
             '-DHAVE_UCX_GPU_DEVICE_API',
             language: ['cpp', 'cuda'])
     endif
+
+    # GPUNETIO device GET: the NIXL headers compile it only with DOCA 3.5+ device headers.
+    gpunetio_device_args = ['-DNIXL_ENABLE_GPUNETIO_DEVICE_API=1']
+    if (have_nixl_device_api and doca_gpunetio_dep.found() and
+            doca_gpunetio_dep.version().version_compare('>=3.5') and cuda.compiles(
+            '''
+            #include <gpu/nixl_device.cuh>
+            int main() { return 0; }
+            ''',
+            dependencies: [ucx_dep, doca_gpunetio_dep],
+            args: ['-std=c++20', '-I' + nixl_inc] + gpunetio_device_args + ucx_device_cuda_args,
+            name: 'NIXL GPUNETIO Device API'))
+        gpunetio_device_api_available = true
+        ucx_device_cuda_args += gpunetio_device_args
+        add_project_arguments('-DNIXLBENCH_GPUNETIO_DEVICE_API', language: ['cpp', 'cuda'])
+    endif
 endif
 
 summary(
     {
         'NIXL Device API': nixl_device_api_available,
         'UCX GPU Device API': ucx_gpu_device_api_available,
+        'GPUNETIO Device API': gpunetio_device_api_available,
         'nvcc available': nvcc_prog.found(),
         'DOCA GPUNETIO found': doca_gpunetio_dep.found(),
     },

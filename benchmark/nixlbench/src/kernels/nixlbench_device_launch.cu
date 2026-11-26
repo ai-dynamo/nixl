@@ -2,8 +2,8 @@
  * SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
  * SPDX-License-Identifier: Apache-2.0
  *
- * GPU-side nixlPut after host-side prepMemView (see xferBenchNixlWorker::prepareGPULocalView
- * and prepareGPURemoteView in nixl_worker.cpp).
+ * GPU-side nixlPut, or GET for GPUNETIO, after host-side prepMemView (see
+ * xferBenchNixlWorker::prepareGPULocalView and prepareGPURemoteView in nixl_worker.cpp).
  *
  * Flattening order (must match prepMemView):
  *   for each inner list in local_trans_lists / remote_trans_lists:
@@ -48,6 +48,28 @@ nixlbenchPostPut(const nixlbenchDeviceXferParams &params,
     const nixlMemViewElem src{params.localMvh, region_idx, 0};
     const nixlMemViewElem dst{params.remoteMvh, region_idx, 0};
     return nixlPut<Level>(src, dst, params.regionSize, channel_id, 0, &xfer_status);
+}
+
+// First failing status of a read launch; one-sided GET has no remote error counter.
+__device__ int nixlbenchDeviceReadStatus;
+
+// GET every region but the last deferred and without a status: the last GET rings the doorbell,
+// and GPUNETIO completes its status only after every earlier CQE on the channel.
+template<nixl_gpu_level_t Level>
+__device__ nixl_status_t
+nixlbenchPostGet(const nixlbenchDeviceXferParams &params,
+                 size_t region_idx,
+                 bool last,
+                 unsigned channel_id,
+                 nixlGpuXferStatusH &xfer_status) {
+    const nixlMemViewElem dst{params.localMvh, region_idx, 0};
+    const nixlMemViewElem src{params.remoteMvh, region_idx, 0};
+    return nixl::gpu::get<Level>(dst,
+                                 src,
+                                 params.regionSize,
+                                 channel_id,
+                                 last ? 0 : nixl_gpu_flags::defer,
+                                 last ? &xfer_status : nullptr);
 }
 
 template<nixl_gpu_level_t Level>
@@ -120,14 +142,23 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
     const bool group_leader = Level == nixl_gpu_level_t::THREAD || threadIdx.x % warpSize == 0;
     const size_t region_base = group_id * params.numRegions;
     bool group_failed = false;
+    if (group_leader) {
+        xfer_status = nixlGpuXferStatusH{}; // Shared memory starts uninitialized.
+    }
+    if constexpr (Level == nixl_gpu_level_t::WARP) {
+        __syncwarp();
+    }
 
     for (uint64_t iter = 0; iter < params.numIterations && !group_failed; ++iter) {
         const uint64_t post_start_ns = nixlbenchGetTimeNs();
 
         nixl_status_t put_status = NIXL_SUCCESS;
         for (size_t region_idx = 0; region_idx < params.numRegions; ++region_idx) {
-            put_status =
-                nixlbenchPostPut<Level>(params, region_base + region_idx, channel_id, xfer_status);
+            const size_t region = region_base + region_idx;
+            put_status = params.read ?
+                nixlbenchPostGet<Level>(
+                    params, region, region_idx + 1 == params.numRegions, channel_id, xfer_status) :
+                nixlbenchPostPut<Level>(params, region, channel_id, xfer_status);
             if (put_status != NIXL_IN_PROG) {
                 break;
             }
@@ -156,11 +187,19 @@ nixlbenchPutKernel(nixlbenchDeviceXferParams params) {
                        blockIdx.x,
                        blockDim.x,
                        static_cast<int>(put_status));
+                if (params.read) {
+                    atomicCAS(&nixlbenchDeviceReadStatus,
+                              static_cast<int>(NIXL_SUCCESS),
+                              static_cast<int>(put_status));
+                }
             }
             group_failed = true;
         }
     }
 
+    if (params.read) {
+        return; // One-sided GET: the target only meets the initiator's barriers.
+    }
     if (group_failed) {
         (void)nixlbenchSignalError<Level>(params, channel_id, xfer_status);
     } else if (nixlbenchSignalCompletion<Level>(
@@ -202,6 +241,14 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         return NIXL_ERR_INVALID_PARAM;
     }
 
+    const int no_failure = NIXL_SUCCESS;
+    if (params.read &&
+        cudaMemcpyToSymbol(nixlbenchDeviceReadStatus, &no_failure, sizeof(no_failure)) !=
+            cudaSuccess) {
+        std::cerr << "nixlbench: nixlbenchLaunchDevicePut: cannot reset the read status\n";
+        return NIXL_ERR_BACKEND;
+    }
+
     if (block_threads <= kWarpSize) {
         nixlbenchPutKernel<nixl_gpu_level_t::THREAD><<<1, block_threads, 0, nullptr>>>(params);
     } else {
@@ -222,5 +269,14 @@ nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block
         return NIXL_ERR_BACKEND;
     }
 
+    if (params.read) {
+        int read_status = NIXL_SUCCESS;
+        if (cudaMemcpyFromSymbol(&read_status, nixlbenchDeviceReadStatus, sizeof(read_status)) !=
+            cudaSuccess) {
+            std::cerr << "nixlbench: nixlbenchLaunchDevicePut: cannot read the read status\n";
+            return NIXL_ERR_BACKEND;
+        }
+        return static_cast<nixl_status_t>(read_status);
+    }
     return NIXL_SUCCESS;
 }

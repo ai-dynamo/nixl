@@ -193,8 +193,9 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
     }
     if (xferBenchConfig::use_device_api) {
         std::cout << "Device API mode: configuring " << xferBenchConfig::device_channel_num
-                  << (device_proxy ? " CPU proxy" : " UCX device") << " channels for "
-                  << xferBenchConfig::deviceGroupNum() << " execution groups" << std::endl;
+                  << (device_proxy ? " CPU proxy" : " " + xferBenchConfig::backend + " device")
+                  << " channels for " << xferBenchConfig::deviceGroupNum() << " execution groups"
+                  << std::endl;
     }
 
     if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_UCX)) {
@@ -302,6 +303,12 @@ xferBenchNixlWorker::xferBenchNixlWorker(const std::vector<std::string> &devices
                 std::to_string(xferBenchConfig::gpunetio_write_stripe_min_bytes);
         }
         backend_params["oob_port"] = xferBenchConfig::gpunetio_oob_port;
+        if (xferBenchConfig::use_device_api) {
+            // Device GET runs on the native QP pool: one QP per device channel.
+            backend_params["native_device_api"] = "true";
+            backend_params["native_qp_count"] = std::to_string(xferBenchConfig::device_channel_num);
+            backend_params["data_qp_count"] = "1";
+        }
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_MOONCAKE)) {
         std::cout << "Mooncake backend" << std::endl;
     } else if (0 == xferBenchConfig::backend.compare(XFERBENCH_BACKEND_HF3FS)) {
@@ -2223,6 +2230,7 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
+    params.read = xferBenchConfig::op_type == XFERBENCH_OP_READ;
     xferBenchTimer total_timer;
     nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads));
     const nixlTime::us_t total_duration = total_timer.lap();
@@ -2656,6 +2664,13 @@ xferBenchNixlWorker::poll(size_t block_size) {
             }
         }
     };
+
+    if (xferBenchConfig::use_device_api && xferBenchConfig::op_type == XFERBENCH_OP_READ) {
+        // Device GET is one-sided: meet the initiator's warmup and transfer barriers.
+        synchronize();
+        synchronize();
+        return;
+    }
 
     const bool use_device_completion_counter =
         xferBenchConfig::use_device_api && completion_counter_iov.has_value();
