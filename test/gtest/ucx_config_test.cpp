@@ -195,6 +195,10 @@ TEST_F(UcxConfigTest, GlobalVarAppliesWithoutPrefixedVar) {
 
 TEST_F(UcxConfigTest, DefaultAppliesWithoutEnvVar) {
     const nixl::ucx::config config;
+    if (!getDumpLine(config, "RNDV_THRESH").starts_with("# ")) {
+        GTEST_SKIP() << "UCX_RNDV_THRESH is set in a UCX configuration file";
+    }
+
     config.modify("RNDV_THRESH", "inf");
     EXPECT_EQ(getConfigValue(config.getUcpConfig(), "RNDV_THRESH"),
               getPrintedValue("RNDV_THRESH", "inf"));
@@ -230,6 +234,11 @@ TEST_F(UcxConfigDeathTest, ModifyKeepsConfigFileValue) {
         {
             addConfigFileLine("UCX_MAX_EAGER_RAILS=3");
             const nixl::ucx::config config;
+            if (getValue(config, "MAX_EAGER_RAILS") != "3") {
+                std::cerr << "The UCX configuration file is not applied" << std::endl;
+                std::_Exit(1);
+            }
+
             const bool reported =
                 (getDumpLine(config, "MAX_EAGER_RAILS") == "UCX_MAX_EAGER_RAILS=3");
             config.modify("MAX_EAGER_RAILS", "2");
@@ -279,6 +288,11 @@ TEST_F(UcxConfigDeathTest, ModifyNotInEnvOverridesConfigFileValue) {
         {
             addConfigFileLine("UCX_MAX_EAGER_RAILS=3");
             const nixl::ucx::config config;
+            if (getValue(config, "MAX_EAGER_RAILS") != "3") {
+                std::cerr << "The UCX configuration file is not applied" << std::endl;
+                std::_Exit(1);
+            }
+
             config.modify("MAX_EAGER_RAILS", "2", condition_t::NOT_IN_ENV);
             std::cerr << "MAX_EAGER_RAILS=" << getValue(config, "MAX_EAGER_RAILS") << std::endl;
             std::_Exit(0);
