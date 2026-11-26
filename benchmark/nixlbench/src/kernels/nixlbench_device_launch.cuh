@@ -32,6 +32,9 @@ struct nixlbenchDeviceCounters {
  *
  * Each group signals independently using @c nixlAtomicAdd over channel @c group_id%channelNum.
  * Duration outputs contain @c numIterations * num_groups entries in iteration-major order.
+ *
+ * With @a read set, groups GET their regions instead (GPUNETIO). GET is one-sided: the counter is
+ * not signaled, and the launcher returns the first device failure.
  */
 struct nixlbenchDeviceXferParams {
     nixlMemViewH localMvh; ///< Local memory view from prepMemView
@@ -43,6 +46,7 @@ struct nixlbenchDeviceXferParams {
     unsigned channelNum; ///< Logical channels shared by groups using group_id % channelNum
     uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
     uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
+    bool read = false; ///< GET the regions instead of PUT
 };
 
 /**
@@ -64,7 +68,8 @@ struct nixlbenchDeviceXferParams {
  * @return NIXL_SUCCESS if the kernel launches and synchronizes without CUDA runtime errors;
  *         NIXL_ERR_INVALID_PARAM for invalid parameters;
  *         NIXL_ERR_BACKEND for CUDA launch or synchronization failures.
- *         Device transfer failures are reported separately through the remote error counter.
+ *         PUT failures are reported separately through the remote error counter; with
+ *         @a params.read, the first failing GET status is returned instead.
  */
 nixl_status_t
 nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block_threads);

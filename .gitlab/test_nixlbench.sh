@@ -213,6 +213,15 @@ if $HAS_GPU ; then
             done
         done
     done
+    # Device API GET on the native QP pool (build.sh enables it with DOCA 3.5+):
+    # 4 THREAD-level groups and 2 WARP-level groups, sharing 2 channels.
+    if pkg-config --atleast-version=3.5 doca-gpunetio 2>/dev/null; then
+        for num_threads in 4 64; do
+            run_nixlbench_two_workers_gpunetio --backend GPUNETIO --use_device_api --op_type READ --initiator_seg_type VRAM --target_seg_type VRAM --check_consistency --num_threads=$num_threads --device_channel_num=2
+        done
+    else
+        echo "DOCA 3.5+ not found, skipping GPUNETIO Device API GET tests"
+    fi
 fi
 
 kill -9 $ETCD_PID 2>/dev/null || true

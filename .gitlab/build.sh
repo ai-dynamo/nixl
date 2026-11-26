@@ -491,6 +491,10 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # Build the GPUNETIO device API with DOCA 3.5+, so CI compiles it and nixlbench runs it.
+    if pkg-config --atleast-version=3.5 doca-gpunetio 2>/dev/null; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dgpunetio_device_api=enabled"
+    fi
     # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
     # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
     # Only NIXL's Meson build uses this venv; dependency builds keep system Python.
