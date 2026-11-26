@@ -25,7 +25,7 @@
 #include <span>
 
 #include "nixl.h"
-#include "nixl_monitor.h"
+#include "nixl_monitor_impl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -1421,7 +1421,8 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->hasNotif = opt_args.hasNotif;
     }
 
-    nixlCompletionMonitor *const monitor = extra_params ? extra_params->monitor : nullptr;
+    auto *const monitor =
+        static_cast<nixlCompletionMonitorImpl *>(extra_params ? extra_params->monitor : nullptr);
     if (monitor != nullptr) {
         // TODO: for such a backend the monitor wait could poll getXferStatus instead of failing
         if (!req_hndl->engine->supportsCapability(nixl_backend_capability_t::COMPLETION)) {
@@ -1435,7 +1436,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         opt_args.callback = req_hndl;
     }
     // Set before the post, because the backend can report the completion during the post
-    nixlCompletionMonitor *const prev_monitor = req_hndl->monitor_.exchange(monitor);
+    nixlCompletionMonitorImpl *const prev_monitor = req_hndl->monitor_.exchange(monitor);
 
     req_hndl->tracePostContext_ = call_context;
     opt_args.traceContext = &req_hndl->tracePostContext();
@@ -1644,7 +1645,7 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         req_hndl->backendHandle = nullptr;
     }
     NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
-    nixlCompletionMonitor *const monitor = req_hndl->monitor_;
+    nixlCompletionMonitorImpl *const monitor = req_hndl->monitor_;
     if (monitor != nullptr) {
         monitor->detach(req_hndl);
     }

@@ -14,11 +14,11 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "nixl_monitor.h"
+#include "nixl_monitor_impl.h"
 
 #include <cerrno>
 #include <limits>
-#include <stdexcept>
+#include <memory>
 #include <poll.h>
 #include <sys/eventfd.h>
 #include <unistd.h>
@@ -28,52 +28,22 @@
 #include "common/nixl_log.h"
 #include "common/nixl_time.h"
 
-nixlCompletionMonitor::nixlCompletionMonitor(const nixlAgent &agent)
-    : agent_(agent),
-      fd_(eventfd(0, EFD_CLOEXEC | EFD_NONBLOCK)) {
-    if (fd_ < 0) {
-        throw std::runtime_error("Failed to create monitor eventfd");
-    }
+std::unique_ptr<nixlCompletionMonitor>
+nixlCompletionMonitor::create(const nixlAgent &agent) {
+    return std::make_unique<nixlCompletionMonitorImpl>(agent);
 }
 
-nixlCompletionMonitor::~nixlCompletionMonitor() {
+nixlCompletionMonitorImpl::~nixlCompletionMonitorImpl() {
     for (nixlXferReqH *req : handles_) {
         req->monitor_ = nullptr;
     }
     close(fd_);
 }
 
-void
-nixlCompletionMonitor::attach(nixlXferReqH *req) {
-    handles_.push_back(req);
-}
-
-void
-nixlCompletionMonitor::detach(nixlXferReqH *req) {
-    std::erase(handles_, req);
-}
-
-void
-nixlCompletionMonitor::completed(const nixlXferCompletion &) {
-    if (eventfd_write(fd_, 1) < 0) {
-        NIXL_PERROR << "Failed to write to monitor eventfd";
-    }
-}
-
 nixl_status_t
-nixlCompletionMonitor::waitAny(std::vector<nixlXferCompletion> &completions, int timeout_ms) {
-    return wait(completions, timeout_ms, true);
-}
-
-nixl_status_t
-nixlCompletionMonitor::waitAll(std::vector<nixlXferCompletion> &completions, int timeout_ms) {
-    return wait(completions, timeout_ms, false);
-}
-
-nixl_status_t
-nixlCompletionMonitor::wait(std::vector<nixlXferCompletion> &completions,
-                            int timeout_ms,
-                            bool any) {
+nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
+                                int timeout_ms,
+                                bool any) {
     if (timeout_ms < 0) {
         timeout_ms = std::numeric_limits<int>::max();
     }

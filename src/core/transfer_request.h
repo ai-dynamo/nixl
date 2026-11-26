@@ -25,7 +25,7 @@
 #include <utility>
 
 #include "nixl_types.h"
-#include "nixl_monitor.h"
+#include "nixl_monitor_impl.h"
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
@@ -96,12 +96,12 @@ public:
     }
 
     friend class nixlAgent;
-    friend class nixlCompletionMonitor;
+    friend class nixlCompletionMonitorImpl;
 
 private:
     void
     completed(nixl_status_t status) override {
-        nixlCompletionMonitor *const monitor = monitor_.load();
+        nixlCompletionMonitorImpl *const monitor = monitor_.load();
         if (monitor != nullptr) {
             monitor->completed({this, status});
         }
@@ -125,7 +125,7 @@ private:
 
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
-    std::atomic<nixlCompletionMonitor *> monitor_ = nullptr;
+    std::atomic<nixlCompletionMonitorImpl *> monitor_ = nullptr;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;

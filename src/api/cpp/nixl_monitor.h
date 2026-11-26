@@ -22,6 +22,7 @@
 #define NIXL_SRC_API_CPP_NIXL_MONITOR_H
 
 #include <cstddef>
+#include <memory>
 #include <vector>
 
 #include "nixl_types.h"
@@ -37,35 +38,31 @@ class nixlAgent;
  *
  *        A monitor must not be used concurrently: one thread posts, waits for and releases
  *        its requests. It must outlive the requests posted with it until they are released.
+ *
+ *        Monitors are created by create() only, other implementations are not supported.
  */
-class nixlCompletionMonitor final : private nixlXferCallback {
+class nixlCompletionMonitor {
 public:
     /**
      * @param  agent         Agent that posts the requests attached to this monitor
      */
-    explicit nixlCompletionMonitor(const nixlAgent &agent);
-    ~nixlCompletionMonitor();
+    [[nodiscard]] static std::unique_ptr<nixlCompletionMonitor>
+    create(const nixlAgent &agent);
 
-    nixlCompletionMonitor(const nixlCompletionMonitor &) = delete;
-    nixlCompletionMonitor &
-    operator=(const nixlCompletionMonitor &) = delete;
+    virtual ~nixlCompletionMonitor() = default;
 
     /**
      * @brief  Event file descriptor for poll, epoll or an event loop. It becomes readable
      *         when an attached request completes, and the waits reset it.
      */
-    [[nodiscard]] int
-    fd() const noexcept {
-        return fd_;
-    }
+    [[nodiscard]] virtual int
+    fd() const noexcept = 0;
 
     /**
      * @brief  Number of attached requests, which no wait has returned yet
      */
-    [[nodiscard]] size_t
-    size() const noexcept {
-        return handles_.size();
-    }
+    [[nodiscard]] virtual size_t
+    size() const noexcept = 0;
 
     /**
      * @brief  Wait until at least one attached request completes, successfully or not
@@ -77,8 +74,8 @@ public:
      * @return nixl_status_t NIXL_SUCCESS if a request completed or no request is attached,
      *                       NIXL_IN_PROG if the time limit expired, or an error code
      */
-    nixl_status_t
-    waitAny(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1);
+    virtual nixl_status_t
+    waitAny(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1) = 0;
 
     /**
      * @brief  Wait until all attached requests complete, successfully or not
@@ -90,28 +87,8 @@ public:
      * @return nixl_status_t NIXL_SUCCESS if no request remains attached, NIXL_IN_PROG if the
      *                       time limit expired, or an error code
      */
-    nixl_status_t
-    waitAll(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1);
-
-private:
-    friend class nixlAgent;
-    friend class nixlXferReqH;
-
-    void
-    attach(nixlXferReqH *req);
-
-    void
-    detach(nixlXferReqH *req);
-
-    void
-    completed(const nixlXferCompletion &completion) override;
-
-    nixl_status_t
-    wait(std::vector<nixlXferCompletion> &completions, int timeout_ms, bool any);
-
-    const nixlAgent &agent_;
-    const int fd_;
-    std::vector<nixlXferReqH *> handles_;
+    virtual nixl_status_t
+    waitAll(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1) = 0;
 };
 
 #endif // NIXL_SRC_API_CPP_NIXL_MONITOR_H
