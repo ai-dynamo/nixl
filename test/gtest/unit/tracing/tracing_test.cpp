@@ -1305,8 +1305,7 @@ TEST(Tracing, RequestDrawsItsIdentityFromItsTracer) {
     const auto tracer = makeMockTracer(a, b, 1.0);
 
     const nixl::trace::CallScope call(tracer.get(), nullptr);
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
 
     const auto identity = request.traceable().requestIdentity();
     EXPECT_TRUE(identity.context.valid());
@@ -1319,10 +1318,8 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
     CallLog a, b;
     const auto tracer = makeMockTracer(a, b, 1.0);
     const nixl::trace::CallScope call(tracer.get(), nullptr);
-    const nixlXferReqH first(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
-    const nixlXferReqH second(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH first("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
+    const nixlXferReqH second("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
     const auto first_context = first.traceable().requestIdentity().context;
 
     EXPECT_NE(first_context, second.traceable().requestIdentity().context);
@@ -1330,8 +1327,7 @@ TEST(Tracing, RequestContextsAreDistinctAndStable) {
 }
 
 TEST(Tracing, RequestDefaultContextHasInertCorrelation) {
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
 
     EXPECT_FALSE(request.traceable().requestIdentity().context.valid());
 }
@@ -1346,13 +1342,11 @@ TEST(Tracing, RequestOutsideACallScopeIsUntraced) {
     const auto tracer = makeMockTracer(a, b, 1.0);
     {
         const nixl::trace::CallScope call(tracer.get(), nullptr);
-        const nixlXferReqH inside(
-            "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+        const nixlXferReqH inside("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
         EXPECT_EQ(inside.traceable().tracer(), tracer.get());
     }
 
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
 
     EXPECT_EQ(request.traceable().tracer(), nullptr);
     EXPECT_FALSE(request.traceable().requestIdentity().context.valid());
@@ -1366,13 +1360,11 @@ TEST(Tracing, CallScopesNest) {
     {
         const nixl::trace::CallScope inner(inner_tracer.get(), nullptr);
         const nixl::trace::CallScope untraced(nullptr, nullptr);
-        const nixlXferReqH request(
-            "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+        const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
         EXPECT_EQ(request.traceable().tracer(), inner_tracer.get());
     }
 
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
     EXPECT_EQ(request.traceable().tracer(), outer_tracer.get());
 }
 
@@ -1384,8 +1376,7 @@ TEST(Tracing, RequestJoinsTheCallScopesContext) {
     options.traceContext = nixl::trace::formatTraceparent(parent);
 
     const nixl::trace::CallScope call(tracer.get(), &options);
-    const nixlXferReqH request(
-        "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+    const nixlXferReqH request("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
 
     const auto identity = request.traceable().requestIdentity();
     EXPECT_EQ(identity.context.traceId, parent.traceId);

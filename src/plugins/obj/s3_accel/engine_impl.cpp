@@ -160,7 +160,12 @@ S3AccelObjEngineImpl::registerMem(const nixlBlobDesc &mem,
     if (nixl_mem == OBJ_SEG) {
         auto obj_md = std::make_unique<accelObjMetadata>(
             nixl_mem, mem.devId, mem.metaInfo.empty() ? std::to_string(mem.devId) : mem.metaInfo);
-        devIdToObjKey_[mem.devId] = obj_md->objKey;
+        const bool inserted = devIdToObjKey_.emplace(mem.devId, obj_md->objKey).second;
+        if (!inserted) {
+            NIXL_ERROR << "OBJ requires a unique devId per object (devId=" << mem.devId
+                       << " already registered)";
+            return NIXL_ERR_INVALID_PARAM;
+        }
         out = obj_md.release();
         return NIXL_SUCCESS;
     }

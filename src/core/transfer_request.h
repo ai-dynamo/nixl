@@ -50,7 +50,7 @@ public:
                  const nixl_mem_t local_type,
                  const nixl_mem_t remote_type,
                  const size_t desc_count,
-                 const nixl_remote_section_weak_t &remote_section_ref);
+                 std::shared_ptr<nixlRemoteSection> remote_section_ref);
 
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
@@ -97,7 +97,7 @@ private:
     nixl_meta_dlist_t targetDescs;
 
     const std::string remoteAgent;
-    const nixl_remote_section_weak_t remoteSection;
+    const std::shared_ptr<nixlRemoteSection> remoteSection;
     nixl::trace::Traceable traceable_;
     nixl_blob_t notifMsg;
     bool hasNotif = false;

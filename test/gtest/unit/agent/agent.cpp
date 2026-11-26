@@ -279,8 +279,7 @@ namespace agent {
         agent_helper_->setupSelfXfer(setup);
         std::optional<bool> nested_traced;
         EXPECT_CALL(agent_helper_->getGMockEngine(), prepXfer).WillOnce([&](auto &&...) {
-            const nixlXferReqH nested(
-                "remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nixl_remote_section_weak_t{});
+            const nixlXferReqH nested("remote", NIXL_WRITE, DRAM_SEG, DRAM_SEG, 0, nullptr);
             nested_traced = nested.traceable().requestIdentity().context.valid();
             return NIXL_SUCCESS;
         });

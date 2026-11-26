@@ -31,7 +31,6 @@ class nixlBackendH;
 class nixlXferReqH;
 class nixlAgentData;
 
-
 /*** NIXL memory type, operation and status enums ***/
 
 /**
@@ -39,13 +38,13 @@ class nixlAgentData;
  * @brief  An enumeration of segment types for NIXL
  *         FILE_SEG must be last
  */
-enum nixl_mem_t {DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG};
+enum nixl_mem_t { DRAM_SEG, VRAM_SEG, BLK_SEG, OBJ_SEG, FILE_SEG };
 
 /**
  * @enum   nixl_xfer_op_t
  * @brief  An enumeration of different transfer types for NIXL
  */
-enum nixl_xfer_op_t {NIXL_READ, NIXL_WRITE};
+enum nixl_xfer_op_t { NIXL_READ, NIXL_WRITE };
 
 /**
  * @enum   nixl_status_t
@@ -85,11 +84,13 @@ enum class nixl_thread_sync_t {
  *            of different enums
  */
 namespace nixlEnumStrings {
-    std::string memTypeStr(const nixl_mem_t &mem);
-    std::string xferOpStr (const nixl_xfer_op_t &op);
-    std::string statusStr (const nixl_status_t &status);
-}
-
+std::string
+memTypeStr(const nixl_mem_t &mem);
+std::string
+xferOpStr(const nixl_xfer_op_t &op);
+std::string
+statusStr(const nixl_status_t &status);
+} // namespace nixlEnumStrings
 
 /*** NIXL typedefs and defines used in the API ***/
 
@@ -161,7 +162,6 @@ enum class nixl_cost_t {
  */
 using nixl_query_resp_t = std::optional<nixl_b_params_t>;
 
-
 /**
  * @struct nixlAgentOptionalArgs
  * @brief A structure for optional argument that can be provided to relevant agent methods.
@@ -172,7 +172,7 @@ struct nixlAgentOptionalArgs {
      *      of backends to be considered. Used in registerMem / deregisterMem
      *      makeConnection / prepXferDlist / makeXferReq / createXferReq / GetNotifs / GenNotif
      */
-    std::vector<nixlBackendH*> backends;
+    std::vector<nixlBackendH *> backends;
 
     /**
      * @var notif Optional notification message used in createXferReq / makeXferReq / postXferReq.
@@ -217,7 +217,8 @@ struct nixlAgentOptionalArgs {
 
     /**
      * @var port Used to specify the port of a remote peer, ipAddr must also be set
-     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD, sendLocalPartialMD.
+     *                      used in sendLocalMD, fetchRemoteMD, invalidateLocalMD,
+     * sendLocalPartialMD.
      */
     int port = default_comm_port;
 
@@ -227,8 +228,8 @@ struct nixlAgentOptionalArgs {
      *                    agent's key prefix, and the full key will be used to store/fetch
      *                    the metadata key-value pair from the server.
      *                    Used in fetchRemoteMD, sendLocalPartialMD.
-     *                    Note that sendLocalMD always uses default_metadata_label and ignores this parameter.
-     *                    Note that invalidateLocalMD invalidates all labels and ignores this parameter.
+     *                    Note that sendLocalMD always uses default_metadata_label and ignores this
+     * parameter. Note that invalidateLocalMD invalidates all labels and ignores this parameter.
      */
     std::string metadataLabel;
 
@@ -254,6 +255,7 @@ struct nixlAgentOptionalArgs {
      */
     nixl_blob_t traceBaggage;
 };
+
 /**
  * @brief A typedef for a nixlAgentOptionalArgs
  *        for providing extra optional arguments
