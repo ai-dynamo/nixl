@@ -55,15 +55,6 @@ public:
                  const nixl::trace::TraceContext &trace_context,
                  const std::uint64_t trace_request_id);
 
-    nixlXferReqH(const std::string &remote_agent,
-                 const nixl_xfer_op_t backend_op,
-                 const nixl_mem_t local_type,
-                 const nixl_mem_t remote_type,
-                 const size_t desc_count,
-                 const nixl_remote_section_weak_t &remote_section_ref,
-                 const nixl::trace::TraceContext &trace_context,
-                 const std::uint64_t trace_request_id);
-
     nixlXferReqH(nixlXferReqH &&) = delete;
     nixlXferReqH(const nixlXferReqH &) = delete;
 

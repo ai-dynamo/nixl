@@ -259,23 +259,6 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
     targetDescs.reserve(desc_count);
 }
 
-nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
-                           const nixl_xfer_op_t backend_op,
-                           const nixl_mem_t local_type,
-                           const nixl_mem_t remote_type,
-                           const size_t desc_count,
-                           const nixl_remote_section_weak_t &remote_section_ref,
-                           const nixl::trace::TraceContext &trace_context,
-                           const std::uint64_t trace_request_id)
-    : nixlXferReqH(remote_agent,
-                   backend_op,
-                   local_type,
-                   remote_type,
-                   desc_count,
-                   remote_section_ref.lock(),
-                   trace_context,
-                   trace_request_id) {}
-
 void
 nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
                                  nixl_telemetry_stat_status_t stat_status) {
