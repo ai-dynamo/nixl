@@ -82,6 +82,33 @@ put(const memViewElem &src,
 }
 
 /**
+ * @brief Post a single-region memory transfer from remote to local GPU.
+ *
+ * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
+ *                  time, a fixed mode must match the view.
+ *
+ * @param dst         [in]  Destination (local) memory view element
+ * @param src         [in]  Source (remote) memory view element
+ * @param size        [in]  Size in bytes to transfer
+ * @param channel_id  [in]  Channel ID to use for the transfer
+ * @param flags       [in]  Transfer flags
+ * @param xfer_status [in,out] Optional status handle
+ *                            (use @ref nixl::gpu::getXferStatus)
+ *
+ * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+get(const memViewElem &,
+    const memViewElem &,
+    size_t,
+    unsigned = 0,
+    uint64_t = 0,
+    xferStatusH * = nullptr) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+/**
  * @brief Atomic add to remote GPU memory.
  *
  * This function performs an atomic increment on a remote counter.
@@ -130,6 +157,27 @@ template<exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ inline void *
 getPtr(nixlMemViewH mvh, size_t index) {
     return impl::getPtr<mode>(mvh, index);
+}
+
+/**
+ * @brief Flush all outstanding operations posted through a channel.
+ * Block until prior operations on the remote view's channel complete.
+ *
+ * @tparam level    Level of cooperation of the flush operation.
+ * @tparam mode     Execution mode; DYNAMIC reads it from the memory view,
+ *                  a fixed mode must match the view.
+ * @param remote     [in] Remote memory view to flush.
+ * @param channel_id [in] Channel used by the preceding operations.
+ *
+ * @return NIXL_SUCCESS           All prior operations on the channel completed.
+ * @return NIXL_ERR_BACKEND       An error occurred in the backend.
+ * @return NIXL_ERR_NOT_SUPPORTED Backend or execution mode does not support flush.
+ * @return NIXL_ERR_INVALID_PARAM The view has an invalid execution mode.
+ */
+template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
+__device__ nixl_status_t
+flush(const nixlMemViewH &remote, unsigned channel_id = 0) {
+    return impl::flush<level, mode>(remote, channel_id);
 }
 
 } // namespace nixl::gpu

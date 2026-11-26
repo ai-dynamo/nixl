@@ -18,6 +18,9 @@
 #include "configuration.h"
 #include "exception.h"
 
+#include <mutex>
+#include <set>
+
 namespace nixl::config {
 
 namespace {
@@ -130,6 +133,18 @@ namespace internal {
     warnIgnoreToml(const std::string &path) {
         if (getConfig().at_path(toml::path(path))) {
             NIXL_DEBUG << "Ignoring config file entry '" << path << "' for environment variable";
+        }
+    }
+
+    void
+    warnDeprecated(const std::string &deprecated, const std::string &replacement) {
+        static std::mutex mutex;
+        static std::set<std::string> warned;
+
+        const std::lock_guard lock(mutex);
+        if (warned.insert(deprecated).second) {
+            NIXL_WARN << "Config entry '" << deprecated << "' is deprecated, use '" << replacement
+                      << "' instead";
         }
     }
 

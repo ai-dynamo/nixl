@@ -23,6 +23,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <utility>
 
 extern "C" {
 #include <ucp/api/ucp.h>
@@ -40,8 +41,8 @@ public:
         return config_.get();
     }
 
-    // Modify the config if the condition holds, by default if it is not already set via
-    // environment variable or UCX configuration file
+    // Modify the config if the condition holds, by default if neither NIXL_UCX_<key> nor
+    // UCX_<key> is set in the environment and the key is not set in a UCX configuration file
     void
     modify(std::string_view key,
            std::string_view value,
@@ -66,8 +67,8 @@ private:
     [[nodiscard]] static dumped_values_t
     dumpValues(const ucp_config_t &config);
 
-    // The value that modify() keeps under the condition, if any
-    [[nodiscard]] std::optional<std::string>
+    // The variable name and value that modify() keeps under the condition, if any
+    [[nodiscard]] std::optional<std::pair<std::string, std::string>>
     keptValue(std::string_view key, condition_t condition, std::string_view expected) const;
 
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),

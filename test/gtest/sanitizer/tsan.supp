@@ -3,10 +3,10 @@
 # ThreadSanitizer suppressions for NIXL sanitizer CI (-Dsanitizer=thread).
 #
 # The tsan build links NON-instrumented prebuilt third-party libraries (gRPC,
-# Abseil, protobuf, UCX, ...). ThreadSanitizer cannot see their internal
-# synchronization and reports false races on their own state (gRPC event engine
-# / global init churned by the etcd client, Abseil SwissTable/strings/random,
-# UCX workers).
+# Abseil, protobuf, UCX, the Mooncake Transfer Engine and its libasio.so, ...).
+# ThreadSanitizer cannot see their internal synchronization and reports false
+# races on their own state (gRPC event engine / global init churned by the etcd
+# client, Abseil SwissTable/strings/random, UCX workers).
 #
 # Use `race:` rather than `called_from_lib`: `race:` matches a racy access frame
 # by function name, source file, OR module (.so) name, as a substring, with no
@@ -31,6 +31,8 @@ race:libucs
 race:libucp
 race:libuct
 race:libucm
+race:libtransfer_engine
+race:libasio
 
 # Function/namespace backstops for the families we have actually seen racing, in
 # case module-name matching misses a frame.
@@ -41,3 +43,4 @@ race:google::protobuf::
 race:ucp_
 race:uct_
 race:ucs_
+race:mooncake::

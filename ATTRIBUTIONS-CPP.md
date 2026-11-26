@@ -1823,7 +1823,7 @@ This file contains the copying permission notices for various files in the
   72 requirements of the license of GCC.
   73
   ```
-## ucx - 1.23.x
+## ucx - 1.24.x
 
 - **Repository URL**: https://github.com/openucx/ucx/
 - **License URL**: https://github.com/openucx/ucx/blob/master/LICENSE
@@ -5475,7 +5475,7 @@ strategy to use in any particular case, based on the explanations below.
 Full license text: https://www.gnu.org/licenses/old-licenses/lgpl-2.1.html
 ```
 
-## Mooncake - v0.3.10.post1
+## Mooncake - v0.3.14
 
 - **Repository URL**: https://github.com/kvcache-ai/Mooncake
 - **License URL**: https://github.com/kvcache-ai/Mooncake/blob/main/LICENSE

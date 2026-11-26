@@ -107,6 +107,9 @@ public:
     int
     getCoveringIndex(const nixlBasicDesc &query) const;
 
+    bool
+    overlapsAny(const nixlBasicDesc &query) const noexcept;
+
     void
     resize(const size_t &count) override;
 
@@ -221,6 +224,7 @@ class nixlLocalSection : public nixlMemSection {
 class nixlRemoteSection : public nixlMemSection {
     private:
         std::string agentName;
+        bool valid_{true};
 
         nixl_status_t addDescList (
                            const nixl_reg_dlist_t &mem_elms,
@@ -236,6 +240,17 @@ class nixlRemoteSection : public nixlMemSection {
         loadLocalData(nixlSecDescList mem_elms, nixlBackendEngine *backend);
         void
         removeLocalData(const nixl_reg_dlist_t &mem_elms, nixlBackendEngine &backend);
+
+        void
+        invalidate() noexcept {
+            valid_ = false;
+        }
+
+        [[nodiscard]] bool
+        isValid() const noexcept {
+            return valid_;
+        }
+
         ~nixlRemoteSection();
 };
 

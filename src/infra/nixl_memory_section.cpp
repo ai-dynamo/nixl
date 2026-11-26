@@ -94,7 +94,6 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     }
 
     const nixlSecDescList &base = it->second;
-    const int size = base.descCount();
 
     resp.clear();
     resp.reserve(query.descCount());
@@ -108,7 +107,6 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
     resp.emplace(query[0].addr, query[0].len, query[0].devId, covering->metadataP);
     uintptr_t covering_end = rangeEnd(*covering);
 
-    // Walk forward for non-decreasing elements; logN search on temporal disorder
     for (int i = 1; i < query.descCount(); ++i) {
         if (query[i] < query[i - 1]) [[unlikely]] {
             // Disorder in the list, resolve this element using logN search
@@ -119,22 +117,19 @@ nixl_status_t nixlMemSection::populate (const nixl_xfer_dlist_t &query,
             }
             covering = &base[s_index];
             covering_end = rangeEnd(*covering);
-        } else {
-            // The current section covered the previous query. For an ordered
-            // query on the same device, its start cannot precede the section.
-            if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
-                do {
-                    ++s_index;
-                    if (s_index < size) {
-                        covering = &base[s_index];
-                        covering_end = rangeEnd(*covering);
-                    }
-                } while (s_index < size && !coversWithEnd(*covering, covering_end, query[i]));
+        } else if (!coversFollowingWithEnd(*covering, covering_end, query[i])) {
+            const int next = s_index + 1;
+            if (next < base.descCount() && base[next].covers(query[i])) {
+                s_index = next;
+            } else {
+                s_index = base.getCoveringIndex(query[i]);
+                if (s_index < 0) [[unlikely]] {
+                    resp.clear();
+                    return NIXL_ERR_UNKNOWN;
+                }
             }
-            if (s_index == size) [[unlikely]] {
-                resp.clear();
-                return NIXL_ERR_UNKNOWN;
-            }
+            covering = &base[s_index];
+            covering_end = rangeEnd(*covering);
         }
 
         resp.emplace(query[i].addr, query[i].len, query[i].devId, covering->metadataP);
@@ -158,7 +153,6 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
     }
 
     const nixlSecDescList &base = it->second;
-    const int size = base.descCount();
     const int n = query.descCount();
 
     resp.clear();
@@ -177,25 +171,17 @@ nixlMemSection::populate(const nixl_xfer_dlist_t &query,
         const nixlBasicDesc &it = query[i];
 
         if (!coversWithEnd(base[s_index], covering_end, it)) [[unlikely]] {
-            if (it < query[i - 1]) {
-                s_index = base.getCoveringIndex(it);
-                if (s_index < 0) {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
-                }
-                covering_end = rangeEnd(base[s_index]);
+            const int next = s_index + 1;
+            if (next < base.descCount() && base[next].covers(it)) {
+                s_index = next;
             } else {
-                while (s_index < size && !coversWithEnd(base[s_index], covering_end, it)) {
-                    ++s_index;
-                    if (s_index < size) {
-                        covering_end = rangeEnd(base[s_index]);
-                    }
-                }
-                if (s_index == size) {
-                    resp.clear();
-                    return NIXL_ERR_UNKNOWN;
-                }
+                s_index = base.getCoveringIndex(it);
             }
+            if (s_index < 0) {
+                resp.clear();
+                return NIXL_ERR_UNKNOWN;
+            }
+            covering_end = rangeEnd(base[s_index]);
         }
 
         nixlBackendMD *const meta = base[s_index].metadataP;
@@ -294,7 +280,7 @@ nixlMemSection::addElement(const nixlRemoteDesc &query,
         return NIXL_ERR_UNKNOWN;
     }
 
-    resp.addDesc({query.addr, query.len, query.devId, base[s_index].metadataP});
+    resp.addDesc({query.addr, query.len, query.devId, base[s_index].metadataP, query.remoteAgent});
     return NIXL_SUCCESS;
 }
 
@@ -536,21 +522,24 @@ nixl_status_t nixlRemoteSection::addDescList (
     nixlSecDescList &target = emplace(nixl_mem, backend);
 
     // Add entries to the target list.
-    nixlSectionDesc out;
-    nixlBasicDesc *p = &out;
     nixl_status_t ret;
-    for (int i=0; i<mem_elms.descCount(); ++i) {
-        // TODO: Can add overlap checks (erroneous)
+    for (int i = 0; i < mem_elms.descCount(); ++i) {
         int idx = target.getIndex(mem_elms[i]);
         if (idx < 0) {
+            if (target.overlapsAny(mem_elms[i])) {
+                NIXL_ERROR_FUNC << "remote descriptor overlaps existing descriptor for agent '"
+                                << agentName << "'";
+                return NIXL_ERR_NOT_ALLOWED;
+            }
+            nixlSectionDesc out(mem_elms[i].addr, mem_elms[i].len, mem_elms[i].devId, nullptr);
+            out.metaBlob = mem_elms[i].metaInfo;
             ret = backend->loadRemoteMD(mem_elms[i], nixl_mem, agentName, out.metadataP);
             // In case of errors, no need to remove the previous entries
             // Agent will delete the full object.
-            if (ret<0)
+            if (ret < 0) {
                 return ret;
-            *p = mem_elms[i]; // Copy the basic desc part
-            out.metaBlob = mem_elms[i].metaInfo;
-            target.addDesc(out);
+            }
+            target.addDesc(std::move(out));
         } else {
             const nixl_blob_t &prev_meta_info = target[idx].metaBlob;
             // TODO: Support metadata updates

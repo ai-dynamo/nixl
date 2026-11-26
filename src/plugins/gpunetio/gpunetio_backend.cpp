@@ -35,6 +35,38 @@
 const char info_delimiter = '-';
 
 namespace {
+doca_log_backend *
+initializeDocaLogging() {
+    static std::mutex mutex;
+    static bool standard_ready = false;
+    static doca_log_backend *sdk = nullptr;
+    static bool level_ready = false;
+    std::lock_guard lock(mutex);
+    if (!standard_ready) {
+        const auto rc = doca_log_backend_create_standard();
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA standard logger: ") +
+                                     doca_error_get_descr(rc));
+        }
+        standard_ready = true;
+    }
+    if (!sdk) {
+        const auto rc = doca_log_backend_create_with_file_sdk(stderr, &sdk);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger: ") + doca_error_get_descr(rc));
+        }
+    }
+    if (!level_ready) {
+        const auto rc = doca_log_backend_set_sdk_level(sdk, DOCA_LOG_LEVEL_ERROR);
+        if (rc != DOCA_SUCCESS) {
+            throw std::runtime_error(std::string("DOCA SDK logger level: ") +
+                                     doca_error_get_descr(rc));
+        }
+        level_ready = true;
+    }
+    return sdk;
+}
+
 template<typename unsignedType>
 inline bool
 parseUnsigned(std::string_view field, unsignedType &value) {
@@ -239,7 +271,8 @@ recvDataQps(int fd, uint32_t &data_qpn, std::vector<uint32_t> &write_qpns, uint3
  *****************************************/
 
 nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params) {
+    : nixlBackendEngine(init_params,
+                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::NOTIF) {
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
@@ -250,20 +283,7 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         reserved.store(false, std::memory_order_relaxed);
     }
 
-    result = doca_log_backend_create_standard();
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_create_with_file_sdk(stderr, &sdk_log);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
-
-    result = doca_log_backend_set_sdk_level(sdk_log, DOCA_LOG_LEVEL_ERROR);
-    if (result != DOCA_SUCCESS) {
-        throw std::invalid_argument("Can't initialize doca log");
-    }
+    sdk_log = initializeDocaLogging();
 
     NIXL_INFO << "DOCA network devices ";
     // Temporary: will extend to more GPUs in a dedicated PR
@@ -318,6 +338,18 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
     dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
+    const auto stripe = custom_params->find("write_stripe");
+    if (stripe != custom_params->end() && !stripe->second.empty()) {
+        if (stripe->second != "slots" && stripe->second != "bytes") {
+            throw std::invalid_argument("write_stripe must be slots or bytes");
+        }
+        writeStripeBytes_ = stripe->second == "bytes";
+    }
+    const auto min_bytes = custom_params->find("write_stripe_min_bytes");
+    if (min_bytes != custom_params->end() && !min_bytes->second.empty() &&
+        (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
+        throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
+    }
     if (dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
@@ -599,8 +631,8 @@ nixlDocaEngine::~nixlDocaEngine() {
         retained_closed = data_closed && notif_closed;
         qps_closed = retained_closed && qps_closed;
     }
-    if (!qps_closed) {
-        NIXL_ERROR << "GPUNETIO QP unexport failed; retaining dependent resources";
+    if (!qps_closed || qpRollbackFailed_) {
+        NIXL_ERROR << "GPUNETIO QP teardown failed; retaining dependent resources";
         if (!retained_closed) {
             retainedQp_.release();
         }
@@ -901,7 +933,7 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
     if (qpMap.find(remote_agent) != qpMap.end()) {
         return NIXL_IN_PROG;
     }
-    if (retainedQp_ != nullptr) {
+    if (retainedQp_ != nullptr || qpRollbackFailed_) {
         return NIXL_ERR_BACKEND;
     }
 
@@ -947,6 +979,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
             rdma_qp->writeProgrammed.resize(dataQpCount_, false);
         }
     }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
+    }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
         if (!rdma_qp->closeDataQps()) {
@@ -967,6 +1005,12 @@ nixlDocaEngine::addRdmaQp(const std::string &remote_agent) {
                                                     RDMA_SEND_QUEUE_SIZE,
                                                     RDMA_RECV_QUEUE_SIZE,
                                                     DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB);
+    }
+    catch (const nixl::doca::verbs::teardown_error &e) {
+        NIXL_ERROR << e.what();
+        qpRollbackFailed_ = true;
+        retainedQp_ = std::move(rdma_qp);
+        return NIXL_ERR_BACKEND;
     }
     catch (const std::exception &e) {
         NIXL_ERROR << e.what();
@@ -1655,6 +1699,8 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // the WQEs of the request even if no descriptor is merged or paired.
     constexpr uint64_t max_wqes = uint64_t{DOCA_XFER_REQ_SIZE} * DOCA_XFER_REQ_MAX;
     uint64_t wqe_count = 0;
+    const bool byte_striping = operation == NIXL_WRITE && dataQpCount_ > 1 && writeStripeBytes_;
+    size_t write_bytes = 0;
     for (uint32_t idx = 0; idx < lcnt; idx++) {
         if (local[idx].len != remote[idx].len) {
             return NIXL_ERR_INVALID_PARAM;
@@ -1663,7 +1709,20 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
         if (wqe_count > max_wqes) {
             return NIXL_ERR_INVALID_PARAM;
         }
+        if (byte_striping) {
+            write_bytes += local[idx].len;
+        }
     }
+
+    const uint32_t qps_used = byte_striping ?
+        static_cast<uint32_t>(std::max<size_t>(
+            1, std::min<size_t>(write_bytes / writeStripeMinBytes_, dataQpCount_))) :
+        1;
+    uint32_t owner = 0;
+    auto owner_budget = [&](uint32_t qp) {
+        return write_bytes / qps_used + (qp < write_bytes % qps_used);
+    };
+    size_t owner_remaining = owner_budget(0);
 
     if (operation == NIXL_WRITE && dataQpCount_ > 1 && opt_args != nullptr &&
         !opt_args->customParam.empty()) {
@@ -1724,7 +1783,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     };
 
     treq->qpData = rdma_qp->qp_data->get_qp_gpu_dev();
-    treq->positions.reserve((wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
+    treq->positions.reserve(byte_striping ?
+                                DOCA_XFER_REQ_MAX :
+                                (wqe_count + DOCA_XFER_REQ_SIZE - 1) / DOCA_XFER_REQ_SIZE);
     if (!reserve_position()) {
         abandon_request();
         return NIXL_ERR_BACKEND;
@@ -1734,13 +1795,21 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
     // Bytes of local[desc_offset] already staged in earlier WQEs, possibly in an earlier slot.
     size_t split_offset = 0;
     do {
+        if (byte_striping) {
+            treq->qpOwners.push_back(owner);
+        }
         docaSlotDesc staged_req{};
         staged_req.has_notif_msg_idx = DOCA_NOTIF_NULL;
 
         uint32_t chunk_desc_count = 0;
+        size_t chunk_bytes = 0;
         while (desc_offset < lcnt && staged_req.num < DOCA_XFER_REQ_SIZE &&
                (operation == NIXL_READ || chunk_desc_count < DOCA_XFER_REQ_SIZE)) {
             const uint32_t desc_idx = desc_offset;
+
+            if (byte_striping && staged_req.num > 0 && chunk_bytes >= owner_remaining) {
+                break;
+            }
 
             lmd = (nixlDocaPrivateMetadata *)local[desc_idx].metadataP;
             rmd = (nixlDocaPublicMetadata *)remote[desc_idx].metadataP;
@@ -1776,11 +1845,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                 continue;
             }
 
-            // A WQE carries at most the SDK transfer limit; the rest of the descriptor goes to the
-            // next WQEs. A descriptor that long is never merged or paired: both cap the total.
             const size_t remaining = local[desc_idx].len - split_offset;
-            const size_t wqe_size =
+            const size_t wqe_size = byte_striping ?
+                std::min({remaining,
+                          owner_remaining - chunk_bytes,
+                          size_t(DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE)}) :
                 std::min<size_t>(remaining, DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE);
+            const size_t piece_offset = split_offset;
             const uint32_t idx = staged_req.num;
             staged_req.lbuf[idx] = local[desc_idx].addr + split_offset;
             staged_req.lkey[idx] = lmd->mr->get_lkey();
@@ -1789,6 +1860,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.size[idx] = wqe_size;
             staged_req.num_sge[idx] = 1;
             staged_req.num++;
+            chunk_bytes += wqe_size;
             if (wqe_size < remaining) {
                 split_offset += wqe_size;
                 continue;
@@ -1796,13 +1868,14 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             split_offset = 0;
             ++desc_offset;
 
-            if (operation == NIXL_WRITE && lcnt - desc_idx > 2) {
+            if (operation == NIXL_WRITE && lcnt - desc_idx > 2 &&
+                (!byte_striping || local[desc_offset].len <= owner_remaining - chunk_bytes)) {
                 auto *next_lmd =
                     static_cast<nixlDocaPrivateMetadata *>(local[desc_offset].metadataP);
                 auto *next_rmd =
                     static_cast<nixlDocaPublicMetadata *>(remote[desc_offset].metadataP);
-                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr,
-                                                 remote[desc_idx].len,
+                if (nixl::gpunetio::canPairWrite(remote[desc_idx].addr + piece_offset,
+                                                 wqe_size,
                                                  staged_req.rkey[idx],
                                                  remote[desc_offset].addr,
                                                  remote[desc_offset].len,
@@ -1814,6 +1887,7 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                     staged_req.size2[idx] = local[desc_offset].len;
                     staged_req.num_sge[idx] = 2;
                     staged_req.has_two_sge = 1;
+                    chunk_bytes += local[desc_offset].len;
                     ++desc_offset;
                 }
             }
@@ -1826,6 +1900,13 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
             staged_req.has_two_sge ? sizeof(staged_req) : offsetof(docaSlotDesc, lbuf2);
         memcpy(&xferReqRingCpu[pos], &staged_req, publish_size);
 
+        if (byte_striping) {
+            owner_remaining -= chunk_bytes;
+            if (owner_remaining == 0 && owner + 1 < qps_used) {
+                ++owner;
+                owner_remaining = owner_budget(owner);
+            }
+        }
         if (desc_offset < lcnt && !reserve_position()) {
             abandon_request();
             return NIXL_ERR_BACKEND;
@@ -1982,9 +2063,12 @@ nixlDocaEngine::postStripedWrite(nixlDocaBckndReq *request, const std::string &r
     launch.count = static_cast<uint32_t>(request->positions.size());
     for (size_t ordinal = 0; ordinal < request->positions.size(); ++ordinal) {
         launch.positions[ordinal] = request->positions[ordinal];
+        const uint32_t owner =
+            request->qpOwners.empty() ? ordinal % dataQpCount_ : request->qpOwners[ordinal];
+        launch.owners[ordinal] = owner;
         auto &entry = xferReqRingCpu[request->positions[ordinal]];
-        entry.qp_data = peer->qp_write[ordinal % dataQpCount_]->get_qp_gpu_dev();
-        entry.qp_progress = peer->progress_gpu + 1 + ordinal % dataQpCount_;
+        entry.qp_data = peer->qp_write[owner]->get_qp_gpu_dev();
+        entry.qp_progress = peer->progress_gpu + 1 + owner;
         entry.wait_completion_mask = 0;
     }
     auto &last = xferReqRingCpu[request->positions.back()];
