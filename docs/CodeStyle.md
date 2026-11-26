@@ -438,7 +438,7 @@ NIXL is a C++20 project and follows the [C++ Core Guidelines](https://isocpp.git
 ### STL and Abseil Usage
 
 * **Prefer STL types** as the primary choice: standard containers (`std::vector`, `std::unordered_map`), modern utilities (`std::optional`, `std::variant`, `std::string_view`), and algorithms from `<algorithm>` and `<numeric>`
-* **Fall back to Abseil** when STL lacks required functionality: `absl::StrFormat`, `absl::StatusOr` for internal data-path operations returning values with errors, `absl::flat_hash_map`, and Abseil logging utilities (integrated with NIXL logging)
+* **Fall back to Abseil** when STL lacks required functionality: `absl::StrFormat`, `absl::flat_hash_map`, and Abseil logging utilities (integrated with NIXL logging)
 * **Never expose Abseil in public APIs:** keep Abseil types internal to implementation files, use only STL types in agent and plugin public APIs, and convert between Abseil and STL types at API boundaries
 
 ## Error Handling
