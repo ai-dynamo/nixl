@@ -401,7 +401,7 @@ RUN export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
 RUN uv pip install --upgrade 'setuptools>=80.9.0'
 
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.23.x"
+ARG UCX_REF="v1.24.x"
 ARG UCX_SONAME_SUFFIX=""
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src && \
      git clone "$UCX_REPO" ucx && \
