@@ -20,6 +20,7 @@
 #include <cstdint>
 #include <mutex>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "nixl_types.h"
@@ -43,6 +44,25 @@ operator|(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
                                                   static_cast<uint64_t>(b));
 }
 
+namespace nixlEnumStrings {
+[[nodiscard]] constexpr std::string_view
+backendCapabilityStr(const nixl_backend_capability_t cap) noexcept {
+    switch (cap) {
+    case nixl_backend_capability_t::NONE:
+        return "NONE";
+    case nixl_backend_capability_t::REMOTE:
+        return "REMOTE";
+    case nixl_backend_capability_t::LOCAL:
+        return "LOCAL";
+    case nixl_backend_capability_t::NOTIF:
+        return "NOTIF";
+    case nixl_backend_capability_t::TRACE_CONTEXT:
+        return "TRACE_CONTEXT";
+    }
+    return "UNKNOWN";
+}
+} // namespace nixlEnumStrings
+
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:
@@ -52,6 +72,19 @@ class nixlBackendEngine {
         std::vector<nixlTelemetryEvent> telemetryEvents_;
         std::mutex telemetryEventsMutex_;
         const nixl_backend_capability_t capabilities_;
+
+        [[nodiscard]] nixl_status_t
+        notImplemented(nixl_backend_capability_t cap, const char *func) const {
+            const auto name = nixlEnumStrings::backendCapabilityStr(cap);
+            if (supportsCapability(cap)) {
+                NIXL_ERROR << "backend '" << backendType << "' has capability " << name
+                           << " but does not implement " << func;
+                return NIXL_ERR_BACKEND;
+            }
+            NIXL_ERROR << "backend '" << backendType << "' does not have capability " << name
+                       << " needed by " << func;
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
 
     protected:
         // Members that can be accessed by the child (localAgent cannot be modified)
@@ -248,22 +281,12 @@ class nixlBackendEngine {
         // Populate an empty received notif list. Elements are released within backend then.
         virtual nixl_status_t
         getNotifs(notif_list_t &notif_list) {
-            if (supportsCapability(nixl_backend_capability_t::NOTIF)) {
-                NIXL_ERROR << "getNotifs must be overridden if NOTIF capability is supported";
-            } else {
-                NIXL_ERROR << "getNotifs: NOTIF capability is not supported";
-            }
-            return NIXL_ERR_BACKEND;
+            return notImplemented(nixl_backend_capability_t::NOTIF, __func__);
         }
 
         // Generates a standalone notification, not bound to a transfer.
         virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const {
-            if (supportsCapability(nixl_backend_capability_t::NOTIF)) {
-                NIXL_ERROR << "genNotif must be overridden if NOTIF capability is supported";
-            } else {
-                NIXL_ERROR << "genNotif: NOTIF capability is not supported";
-            }
-            return NIXL_ERR_BACKEND;
+            return notImplemented(nixl_backend_capability_t::NOTIF, __func__);
         }
 
 
