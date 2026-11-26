@@ -7,7 +7,8 @@ channels per backend. Standard GET selects `channel_id` per
 call using one prepared view pair. The backend readSession extension retains
 `hint.customParam="native_channel=N"` and requires matching selected views.
 Device-view ABI 3 requires rebuilding CUDA consumers with the matching backend.
-Channels are independently ordered; native pools support one peer per engine.
+Channels have independent submission/completion queues; native pools support
+one peer per engine.
 
 Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
 device API test below. It checks distinct lane/QP identities, batch mixed-view

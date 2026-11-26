@@ -130,10 +130,14 @@ context uses device-view ABI 3, distinct from the earlier ABI 2 context layout.
 Rebuild device consumers with the matching backend; layout IDs are checked for
 exact equality.
 
-Each pool channel has independent ownership, generations, SQ/CQ and ordering.
-There is no cross-channel ordering;
-do not overlap in-flight destination ranges across channels without external
-synchronization. The native pool remains one peer per engine. Re-preparing a
+Each pool channel has independent ownership, generations, SQ/CQ and FIFO
+submission/completion tracking. Independent GETs may be in flight concurrently,
+including on the same channel. Keep in-flight GET destination ranges disjoint.
+Before consuming or reusing a destination, or issuing a GET that depends on its
+data, wait for its status to return `NIXL_SUCCESS` or for its channel flush to
+complete. Batch owners follow the readSession polling/retirement contract below.
+
+The native pool remains one peer per engine. Re-preparing a
 bound channel does not reset its generation or credits. Views retain their MR pins while any channel is busy or failed, until safe teardown. Both peers must configure the
 same native pool size; a mismatched pool is rejected, not silently resized.
 

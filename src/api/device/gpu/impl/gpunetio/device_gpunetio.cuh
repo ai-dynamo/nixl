@@ -139,8 +139,8 @@ submitGetLocked(GpunetioDeviceLane *lane,
             DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
         ticket = doca_gpu_dev_verbs_reserve_wq_slots<>(lane->qp, 1);
         auto *wqe = doca_gpu_dev_verbs_get_wqe_ptr(lane->qp, ticket);
-        // Order preceding RDMA reads before this GET.
-        constexpr auto ctrl = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE_FENCE;
+        // Signal each READ; completion is checked in FIFO order.
+        constexpr auto ctrl = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
         doca_gpu_dev_verbs_wqe_prepare_read(lane->qp,
                                             wqe,
                                             ticket,
