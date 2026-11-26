@@ -53,6 +53,12 @@ validView(const GpunetioDeviceView *view, uint32_t role) {
 
 #if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
 
+// Every SQ/CQ access below happens while the caller owns the lane (phase SCALAR),
+// and a readSession only touches the QP while it owns the lane (phase POSTING).
+// The lane's device-scope acquire/release orders the SDK's plain index updates
+// between owners, so the SDK needs no atomics or QP lock of its own here.
+inline constexpr auto owned_qp_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
+
 __device__ inline void
 failLane(GpunetioDeviceLane *lane) {
     deviceAtomic(lane->failed).store(1, cuda::memory_order_relaxed);
@@ -71,7 +77,7 @@ unlockLane(GpunetioDeviceLane *lane) {
 __device__ inline void
 publish(GpunetioDeviceLane *lane) {
     if (lane->active_ticket != lane->next_retire) {
-        doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+        doca_gpu_dev_verbs_submit<owned_qp_mode,
                                   DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
                                   DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(lane->qp,
                                                                              lane->active_ticket);
@@ -85,7 +91,7 @@ progress(GpunetioDeviceLane *lane, uint64_t target) {
     nixl_status_t result = NIXL_SUCCESS;
     while (next < target) {
         // On success the SDK has issued its NIC acquire fence and advanced cqe_ci.
-        const int rc = compat::pollOne(lane->qp, next);
+        const int rc = compat::pollOne<owned_qp_mode>(lane->qp, next);
         if (rc == EBUSY) {
             result = NIXL_IN_PROG;
             break;
@@ -148,7 +154,7 @@ submitGetLocked(GpunetioDeviceLane *lane,
         const size_t chunk = remaining < DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE ?
             remaining :
             DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
-        ticket = doca_gpu_dev_verbs_reserve_wq_slots<>(lane->qp, 1);
+        ticket = doca_gpu_dev_verbs_reserve_wq_slots<owned_qp_mode>(lane->qp, 1);
         auto *wqe = doca_gpu_dev_verbs_get_wqe_ptr(lane->qp, ticket);
         // Signal each READ; completion is checked in FIFO order.
         constexpr auto ctrl = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
@@ -161,7 +167,7 @@ submitGetLocked(GpunetioDeviceLane *lane,
                                             local_address + offset,
                                             local_key,
                                             chunk);
-        doca_gpu_dev_verbs_mark_wqes_ready<>(lane->qp, ticket, ticket);
+        doca_gpu_dev_verbs_mark_wqes_ready<owned_qp_mode>(lane->qp, ticket, ticket);
         lane->active_ticket = ticket + 1;
         offset += chunk;
     } while (offset < bytes);

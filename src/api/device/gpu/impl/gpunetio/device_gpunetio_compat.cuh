@@ -72,11 +72,13 @@ needsDump(const doca_gpu_dev_verbs_qp *qp) {
     return qp->need_mcst;
 }
 
+template<enum doca_gpu_dev_verbs_resource_sharing_mode resource_sharing_mode =
+             DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>
 __device__ inline int
 pollOne(doca_gpu_dev_verbs_qp *qp, uint64_t ticket_bits) {
     const auto ticket = ticketFromBits(ticket_bits);
-    return doca_gpu_dev_verbs_poll_one_cq_at<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
-                                             DOCA_GPUNETIO_VERBS_QP_SQ>(qp, ticket);
+    return doca_gpu_dev_verbs_poll_one_cq_at<resource_sharing_mode, DOCA_GPUNETIO_VERBS_QP_SQ>(
+        qp, ticket);
 }
 
 #endif // NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
