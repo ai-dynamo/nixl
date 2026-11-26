@@ -139,15 +139,12 @@ class nixlOdmBackendReqH;
 
 #ifdef HAVE_CUDA
 #ifdef HAVE_ODM_IO_URING
-/** One dma-buf chunk for io_uring; CQE user_data points here (stable address in req deque). */
+/** One dma-buf chunk of an io_uring transfer; a submitted chunk's CQE user_data points here. */
 struct OdmUringChunk {
     nixlOdmBackendReqH *req{nullptr};
     uint64_t gpu_va{0};
     uint64_t iova{0};
     uint64_t len{0};
-    uint32_t gpu_id{0};
-    uint32_t uring_op{0};
-    uint32_t xfer_type{0};
 };
 #endif
 #endif
@@ -157,8 +154,8 @@ struct OdmUringChunk {
  * @brief Per-transfer request handle.
  *
  * With the worker pool or io_uring async submit, postXfer may return NIXL_IN_PROG
- * and checkXfer polls until completion. Synchronous paths include single-queue ioctl
- * (no pool) and host-VA when the pool is off.
+ * and checkXfer polls async_batch until completion. Synchronous paths include
+ * single-queue ioctl (no pool) and host-VA when the pool is off.
  */
 class nixlOdmBackendReqH : public nixlBackendReqH {
 public:
@@ -172,10 +169,18 @@ public:
 #ifdef HAVE_CUDA
     OdmBatch async_batch_;
 #ifdef HAVE_ODM_IO_URING
-    size_t uring_chunks_total_{0};
-    size_t uring_chunks_done_{0};
-    bool uring_failed_{false};
-    std::deque<OdmUringChunk> uring_chunks_;
+    /* Set by the last postXfer that took the io_uring path. Only the owning caller reads
+     * or writes it; other threads never do. */
+    bool uring_path_{false};
+    /*
+     * The ring is shared, so any thread's postXfer/checkXfer/releaseReqH may reap this
+     * request's CQEs. Every field below is therefore read and written only while holding
+     * nixlOdmEngine::uring_lock_; a reaper touches the request only under that lock.
+     */
+    std::deque<OdmUringChunk> uring_chunks_; /* deque: element addresses stay valid */
+    size_t uring_next_{0}; /* index of the next chunk to submit */
+    size_t uring_outstanding_{0}; /* submitted chunks whose CQE is not yet reaped */
+    nixl_status_t uring_status_{NIXL_SUCCESS}; /* first error, if any */
 #endif
 #endif
 
@@ -346,9 +351,6 @@ private:
     nixl_thread_sync_t sync_mode_;
     bool enable_prog_th_{false};
     mutable nixlLock thread_assign_lock_;
-#ifdef HAVE_ODM_IO_URING
-    mutable nixlLock uring_lock_;
-#endif
     mutable std::unordered_map<std::thread::id, uint16_t> thread_qid_;
     mutable std::deque<std::thread::id> thread_order_;
     mutable uint32_t next_thread_slot_{0};
@@ -378,42 +380,60 @@ private:
     postOdmHostVa(nixlOdmBackendReqH *req) const;
     nixl_status_t
     odmDoHostVaWork(nixlOdmBackendReqH *req, uint16_t req_qid) const;
-    /** @return true when the request is fully drained; false on fatal uring drain failure. */
+    /** Wait for multi-queue worker-pool work. Not used for io_uring, which never waits. */
     bool
     waitReqAsyncComplete(nixlOdmBackendReqH *req) const;
 
 #ifdef HAVE_ODM_IO_URING
+    /*
+     * io_uring threading follows the POSIX plugin's io_uring queue: each API call takes
+     * uring_lock_ (built from syncMode) once, never blocks, and polls the shared ring.
+     * Chunks that do not fit in the ring stay queued on their request and are submitted
+     * by a later postXfer/checkXfer on that request. A busy request is refused with
+     * NIXL_ERR_REPOST_ACTIVE instead of waited for.
+     */
     static constexpr unsigned k_uring_ring_entries = 32;
-    [[nodiscard]] static bool
-    isUringActive(const nixlOdmBackendReqH *req);
-    [[nodiscard]] nixl_status_t
-    uringXferStatusLocked(const nixlOdmBackendReqH *req) const;
-    void
-    resetUringReq(nixlOdmBackendReqH *req) const;
-    void
-    dropUringBacklogForReqLocked(nixlOdmBackendReqH *req) const;
     nixl_status_t
-    postOdmDmabufUringLocked(nixlOdmBackendReqH *req) const;
+    postOdmDmabufUring(nixlOdmBackendReqH *req) const;
+    nixl_status_t
+    odmUringCheckXfer(nixlOdmBackendReqH *req) const;
+    /* @return NIXL_SUCCESS if req has no io_uring work left and may be reposted or freed. */
+    nixl_status_t
+    odmUringReqIdle(nixlOdmBackendReqH *req, bool abandon_unsubmitted) const;
+
+    /* Helpers below require uring_lock_ to be held. */
     void
-    odmUringReapLocked() const;
+    odmUringProgressLocked(nixlOdmBackendReqH *req) const;
     void
-    odmUringDriveLocked() const;
+    odmUringSubmitLocked(nixlOdmBackendReqH *req) const;
+    /* @return false if the kernel did not take the queued SQEs; they stay queued. */
+    bool
+    odmUringFlushLocked() const;
+    /* @return NIXL_IN_PROG, the final status, or NIXL_ERR_BACKEND after a fatal ring error. */
+    nixl_status_t
+    odmUringStatusLocked(const nixlOdmBackendReqH *req) const;
+    unsigned
+    odmUringReapPeekableLocked() const;
     void
     odmUringCqeConsumeLocked(struct io_uring_cqe *cqe) const;
+
     void
     odmUringInit();
     void
     odmUringDestroy();
-    void
-    odmUringDropSqe(struct io_uring_sqe *sqe) const;
 
     mutable struct io_uring uring_;
     mutable bool uring_initialized_{false};
-    mutable bool use_io_uring_{false};
-    mutable bool warned_uring_host_{false};
-    mutable size_t uring_inflight_{0};
+    mutable std::atomic<bool> use_io_uring_{false};
+    mutable std::atomic<bool> warned_uring_host_{false};
+    mutable size_t uring_inflight_{0}; /* SQEs prepared (queued or submitted), CQE not reaped */
     mutable bool uring_ring_fatal_{false};
-    mutable std::deque<OdmUringChunk *> uring_backlog_;
+    /*
+     * Guards the ring, uring_inflight_, uring_ring_fatal_ and every request's shared
+     * io_uring fields. A nixlLock follows syncMode: a no-op for NIXL_THREAD_SYNC_NONE,
+     * where the caller promises not to call in concurrently.
+     */
+    mutable nixlLock uring_lock_{sync_mode_};
 #endif
 
 #ifdef HAVE_CUDA

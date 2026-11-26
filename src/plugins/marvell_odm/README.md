@@ -51,11 +51,11 @@ Host DRAM uses a non-zero userspace `addr` and empty `metaInfo`.
 
 The plugin supports an optional io_uring `uring_cmd` async submit path when the ODM
 kernel module is loaded with `odm_use_io_uring=1`. Chunk SQEs are staged in
-`postXfer` (non-blocking), driven from the shared ring backlog during
-`checkXfer`, and completions are polled via `checkXfer`. One `nixlLock`
-(`syncMode`, like the POSIX io_uring plugin) serialises ring SQ/CQ work per call;
-releasing or reposting an in-flight handle returns `NIXL_ERR_REPOST_ACTIVE`.
-Chunks beyond ring depth sit in a software backlog until slots free up.
+`postXfer` (non-blocking); chunks that do not fit in the 32-slot ring stay queued
+on the request and are submitted by later `checkXfer` calls from the owning
+thread. One `nixlLock` (`syncMode`, like the POSIX io_uring plugin) serialises
+ring SQ/CQ work per call; releasing or reposting an in-flight handle returns
+`NIXL_ERR_REPOST_ACTIVE`.
 
 ```bash
 export ODM_USE_IO_URING=1
