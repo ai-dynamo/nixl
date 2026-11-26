@@ -1,48 +1,5 @@
 # DOCA plugin unit test
 
-## Native pool qualification
-
-`native_qp_count=1` is the default. Native mode accepts 1..32 active data
-channels per backend. Standard GET selects `channel_id` per
-call using one prepared view pair. The backend readSession extension retains
-`hint.customParam="native_channel=N"` and requires matching selected views.
-Device-view ABI 3 requires rebuilding CUDA consumers with the matching backend.
-Channels have independent submission/completion queues; native pools support
-one peer per engine.
-
-Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
-device API test below. It checks distinct lane/QP identities, batch mixed-view
-rejection, standard per-call channel selection, generation preservation on
-re-preparation, copied-status safety, fixed-mode submissions and immediate GPU
-consumption. Standard GET/status/GET-flush checks include nullable status,
-defer, reverse polling, queue wrap, same-channel THREAD/WARP/BLOCK callers,
-channel isolation and Graph replay. PUT and atomicAdd are checked only for
-`NIXL_ERR_NOT_SUPPORTED`. The default remains
-the one-QP test. GRID is unsupported; RDMA getPtr returns nullptr.
-
-The following are disposable-process fault modes; failed resources stay alive
-until process exit, not normal resource reclamation or recovery:
-
-- `NIXL_GPUNETIO_TEST_PEER_QPS=N` differing from the reader count requires
-  both counts to be at least two and checks `NIXL_ERR_INVALID_PARAM` from the
-  metadata load that validates the pool header. Equal counts are invalid for this
-  mismatch mode; omit the variable for the normal matching-count path.
-- `NIXL_GPUNETIO_TEST_RETENTION=1` requires `NIXL_GPUNETIO_TEST_QPS=2` or
-  greater, poisons the last channel and checks failed-channel retention. Run
-  under memory checking.
-- Add `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to use a real invalid-rkey READ instead
-  of synthetic poisoning. It requires a CQ error, sticky refusal and continued
-  healthy-channel progress before testing retention.
-- Add `NIXL_GPUNETIO_TEST_STANDARD_CQ_ERROR=1` with the retention and CQ-error
-  flags to put a bad key in the middle of a standard deferred request sequence.
-  Polling the last request must detect the error while the checked prefix stays
-  successful. Use `NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` instead for the separate
-  readSession FIFO regression; run the two modes in separate processes.
-
-`nixl_gpunetio_native_pool_options_test` is a CPU-only parser test with no
-GPU/network dependency. It covers all supported sizes/channels and invalid
-syntax/bounds/binary blobs.
-
 Unit test application for the DOCA GPUNetIO backend plugin. It enables a GPU to GPU communications between initiator and target using the GPUDirect Async Kernel-Initiated (GDAKI) technology through the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpunetio/index.html) library.
 
 Initiator and target communicate over the network using the DOCA GPUNetIO plugin, so both processes should run on a system with a GPU. Initiator and target exchange a sequence of metadata and notifications for the setup then initiator posts twice the same transfer request with 32 buffers, with a value for the first transfer and updated value for the second transfer.
@@ -60,49 +17,6 @@ Please look at the [DOCA GPUNetIO](https://docs.nvidia.com/doca/sdk/doca+gpuneti
 ## Execute
 
 The following instructions assume DOCA libraries and NIXL libraries are set in LD_LIBRARY_PATH environment variable.
-
-The native GET test also exercises FIFO pipelining and partial retirement over
-90 rounds per channel; it skips this part when MCST consistency is required.
-An ordered graph test holds a session across kernel nodes, verifies a second
-acquisition is rejected while the lane is held, then retires and reuses the lane
-across replays without assuming concurrent block scheduling.
-With two or more QPs, two separately captured Graphs also publish independent
-READs on distinct lanes before either retires; destination bytes are checked.
-
-For the native GET test, set `NIXL_GPUNETIO_TEST_QPS=2` or greater and add
-`NIXL_GPUNETIO_TEST_FIFO_CQ_ERROR=1` together with
-`NIXL_GPUNETIO_TEST_RETENTION=1` and `NIXL_GPUNETIO_TEST_CQ_ERROR=1` to
-inject a bad key between two valid READs and check sticky FIFO error handling.
-Run this only in a disposable process; failed resources are retained until
-process exit. The public FIFO completion path is the default. Define
-`NIXL_GPUNETIO_PUBLIC_FIFO_ONLY=0` consistently across CUDA consumers only
-when testing the unsupported private parallel CQ helper.
-
-With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
-`nixl_gpunetio_device_get_test` exercises standard GPU-initiated operations and
-the CTA batch extension against registered pinned Host or VRAM memory. It
-creates two agents on the selected GPUs and checks GET payloads, guards,
-completion and Graph replay.
-Run it manually on a configured GPUNETIO system with two free consecutive OOB
-ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
-
-```
-./nixl_gpunetio_device_get_test <rdma-device> <oob-interface> <gid-index> <base-port> <owner-gpu> [DRAM|VRAM] [reader-gpu]
-```
-
-The source type defaults to `DRAM`, and the reader GPU defaults to the owner
-GPU. The OOB interface must have an active IPv4 address inside the execution
-environment; an RDMA sysfs netdev name alone does not establish that address.
-The test requires the explicitly enabled DOCA 3.5+ device API. It prints a skip
-when the hardware requires MCST consistency, which this implementation reports
-as unsupported. Its same-host result covers component correctness.
-
-Set `NIXL_GPUNETIO_TEST_LARGE=1` for one additional GET of
-`DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE + 64` bytes, with a full GPU byte check
-and 64-byte guards on each end. It allocates two additional VRAM buffers
-(about 2 GiB total on DOCA 3.5), regardless of the small test's source type.
-This mode requires matching QP counts and cannot be combined with the peer-count
-mismatch mode. No large host mirror is allocated.
 
 Target should start first. A command line example:
 

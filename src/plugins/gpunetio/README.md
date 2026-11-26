@@ -171,8 +171,8 @@ When required, `postConsistency` also needs a registered disjoint scratch byte.
 Standard operations and session acquisition return `NIXL_ERR_NOT_SUPPORTED` when the QP
 requires MCST. Such hardware remains outside the current qualification.
 An unsuccessful or abandoned operation must be failed and its resources kept
-until the engine is safely torn down. See the manual hardware test in
-`test/unit/plugins/gpunetio` for a complete small example.
+until the engine is safely torn down. For a standard GET example, see
+`benchmark/nixlbench` with `--use_device_api --backend GPUNETIO --op_type READ`.
 
 ## Example
 
