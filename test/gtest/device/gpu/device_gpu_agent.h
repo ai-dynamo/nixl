@@ -51,14 +51,14 @@ public:
     loadRemoteMD(const nixl_blob_t &);
 
     [[nodiscard]] void *
-    regAndPrepLocalMemView(const std::vector<memBuffer> &);
+    regAndPrepLocalMemView(const std::vector<memBuffer> &, size_t offset = 0);
 
     [[nodiscard]] void *
     prepRemoteMemView(const std::vector<memBuffer> &);
 
 private:
     [[nodiscard]] void *
-    prepLocalMemView(const std::vector<memBuffer> &);
+    prepLocalMemView(const std::vector<memBuffer> &, size_t offset);
 
     void
     addMemView(void *);

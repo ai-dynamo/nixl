@@ -81,9 +81,9 @@ agent::loadRemoteMD(const nixl_blob_t &md) {
 }
 
 [[nodiscard]] void *
-agent::regAndPrepLocalMemView(const std::vector<memBuffer> &mbs) {
+agent::regAndPrepLocalMemView(const std::vector<memBuffer> &mbs, size_t offset) {
     registerMem(mbs);
-    return prepLocalMemView(mbs);
+    return prepLocalMemView(mbs, offset);
 }
 
 void *
@@ -105,10 +105,13 @@ agent::prepRemoteMemView(const std::vector<memBuffer> &mbs) {
 }
 
 void *
-agent::prepLocalMemView(const std::vector<memBuffer> &mbs) {
+agent::prepLocalMemView(const std::vector<memBuffer> &mbs, size_t offset) {
     nixlDescList<nixlBasicDesc> basic_desc_list{VRAM_SEG};
     for (const auto &mb : mbs) {
-        basic_desc_list.addDesc(nixlBasicDesc{mb.ptr(), mb.size(), 0});
+        if (offset > mb.size()) {
+            throw std::invalid_argument("Memory view offset exceeds buffer size");
+        }
+        basic_desc_list.addDesc(nixlBasicDesc{mb.ptr() + offset, mb.size() - offset, 0});
     }
     nixlMemViewH mvh;
     if (agent_.prepMemView(basic_desc_list, mvh) != NIXL_SUCCESS) {

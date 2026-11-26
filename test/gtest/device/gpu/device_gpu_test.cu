@@ -191,8 +191,8 @@ protected:
     }
 
     [[nodiscard]] void *
-    prepLocalMemView(const std::vector<memBuffer> &mbs) {
-        return senderAgent_->regAndPrepLocalMemView(mbs);
+    prepLocalMemView(const std::vector<memBuffer> &mbs, size_t offset = 0) {
+        return senderAgent_->regAndPrepLocalMemView(mbs, offset);
     }
 
     [[nodiscard]] bool
@@ -240,6 +240,27 @@ TEST_P(test, putOffset) {
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
     waitForData(dst_mbs[0], src_mbs[0]);
     EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+}
+
+TEST_P(test, putLocalSubrange) {
+    const uint64_t source_values[] = {~test_value, test_value};
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(std::move(memBuffer{sizeof(source_values), source_values}));
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(std::move(memBuffer{size}));
+
+    // Register the full source, but make offsets relative to its second word.
+    void *src_mvh = prepLocalMemView(src_mbs, size);
+    void *dst_mvh = prepRemoteMemView(dst_mbs);
+
+    putOffsetKernel<<<1, 1>>>(src_mvh, dst_mvh);
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    const memBuffer expected{size, &test_value};
+    waitForData(dst_mbs[0], expected);
+    EXPECT_EQ(dst_mbs[0], expected);
 }
 
 TEST_P(test, putChannel) {
