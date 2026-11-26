@@ -85,19 +85,26 @@ enum class nixl_thread_sync_t {
  *        created backend.
  */
 enum class nixl_backend_capability_t : uint64_t {
-    NONE = 0,
-    REMOTE = 1ULL << 0, // Operations with other agents
-    LOCAL = 1ULL << 1, // Operations within the same agent
-    NOTIF = 1ULL << 2, // Notifications
-    TRACE_CONTEXT = 1ULL << 3, // Carrying a request's trace context to the peer
+    NONE = 0, ///< No capabilities
+    REMOTE = 1ULL << 0, ///< Operations with other agents
+    LOCAL = 1ULL << 1, ///< Operations within the same agent
+    NOTIF = 1ULL << 2, ///< Notifications
+    TRACE_CONTEXT = 1ULL << 3, ///< Carrying a request's trace context to the peer
 };
 
+/**
+ * @brief  Combine capability flags.
+ */
 [[nodiscard]] constexpr nixl_backend_capability_t
 operator|(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
     return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) |
                                                   static_cast<uint64_t>(b));
 }
 
+/**
+ * @brief  Keep only the capability flags set in both operands, for example to test for one:
+ *         (capabilities & nixl_backend_capability_t::NOTIF) != nixl_backend_capability_t::NONE
+ */
 [[nodiscard]] constexpr nixl_backend_capability_t
 operator&(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
     return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) &
@@ -116,7 +123,12 @@ std::string
 xferOpStr(const nixl_xfer_op_t &op);
 std::string
 statusStr(const nixl_status_t &status);
-// The name of a single capability, without the type prefix, such as "REMOTE".
+/**
+ * @brief  Get the name of a single capability flag, without the type prefix, such as "REMOTE".
+ *
+ * @param  capability  One capability flag, or NONE
+ * @return The flag's name, or "BAD_CAPABILITY" for a combination of flags or an unknown value
+ */
 std::string
 backendCapabilityStr(const nixl_backend_capability_t &capability);
 } // namespace nixlEnumStrings

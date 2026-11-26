@@ -129,8 +129,15 @@ class nixlBackendEngine {
             return (static_cast<uint64_t>(capabilities_) & static_cast<uint64_t>(cap)) != 0;
         }
 
-        // All capabilities as the agent uses them. REMOTE, LOCAL and NOTIF follow the
-        // supports*() methods above, since a backend may override them instead.
+        /**
+         * @brief  Get all capabilities of this backend, as the agent and applications see them.
+         *
+         * REMOTE, LOCAL and NOTIF come from supportsRemote(), supportsLocal() and
+         * supportsNotif(), which a backend may override. All other flags come from the
+         * capabilities passed to the constructor.
+         *
+         * @return Combination of nixl_backend_capability_t flags
+         */
         [[nodiscard]] nixl_backend_capability_t
         getCapabilities() const {
             constexpr auto queried = nixl_backend_capability_t::REMOTE |
