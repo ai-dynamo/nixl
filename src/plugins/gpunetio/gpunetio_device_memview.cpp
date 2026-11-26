@@ -54,6 +54,9 @@ nixlDocaEngine::initializeNativeState() {
     }
     state->laneCount = dataQpCount_;
     state->boundQps.resize(state->laneCount, nullptr);
+    state->atomicResults.resize(state->laneCount);
+    state->atomicMr = std::make_shared<nixl::doca::verbs::mr>(
+        nullptr, state->atomicResults.data(), state->laneCount, sizeof(uint64_t), pd, false);
     if (!allocateOnStream(
             state->stream, sizeof(GpunetioDeviceLane) * state->laneCount, state->lane) ||
         !allocateOnStream(
@@ -64,6 +67,10 @@ nixlDocaEngine::initializeNativeState() {
     std::vector<GpunetioDeviceContext> contexts(state->laneCount);
     for (uint32_t i = 0; i < state->laneCount; ++i) {
         contexts[i].lane = static_cast<GpunetioDeviceLane *>(state->lane.get()) + i;
+        contexts[i].channels = static_cast<GpunetioDeviceLane *>(state->lane.get());
+        contexts[i].channel_count = state->laneCount;
+        contexts[i].atomic_results = reinterpret_cast<uintptr_t>(state->atomicResults.data());
+        contexts[i].atomic_key = state->atomicMr->get_lkey();
     }
     if (!copyOnStream(state->stream->stream,
                       state->lane.get(),
@@ -122,10 +129,9 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
     try {
         nixlGpunetioNativeViewStorage storage;
         storage.remote = remote != nullptr;
-        storage.channel = channel;
         std::vector<GpunetioViewElem> elements(count);
         std::string peer = nativeState_->peer;
-        doca_gpu_dev_verbs_qp *qp = nullptr;
+        std::vector<doca_gpu_dev_verbs_qp *> qps(nativeState_->laneCount, nullptr);
         for (size_t i = 0; i < count; ++i) {
             if (remote && (*remote)[i].remoteAgent == nixl_null_agent &&
                 (*remote)[i].metadataP == nullptr) {
@@ -185,31 +191,34 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
                     return NIXL_ERR_NOT_FOUND;
                 }
                 if (nativeState_->laneCount == 1) {
-                    qp = it->second->qp_data->get_qp_gpu_dev();
+                    qps[0] = it->second->qp_data->get_qp_gpu_dev();
                 } else {
                     if (it->second->qp_write.size() != nativeState_->laneCount) {
                         return NIXL_ERR_BACKEND;
                     }
-                    qp = it->second->qp_write[channel]->get_qp_gpu_dev();
+                    for (uint32_t c = 0; c < nativeState_->laneCount; ++c) {
+                        qps[c] = it->second->qp_write[c]->get_qp_gpu_dev();
+                    }
                 }
             }
         }
-        if (remote && !qp) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        if (remote && nativeState_->boundQps[channel] != nullptr &&
-            nativeState_->boundQps[channel] != qp) {
-            return NIXL_ERR_NOT_SUPPORTED;
-        }
-        if (qp) {
-            doca_gpu_dev_verbs_nic_handler handler;
-            if (!copyOnStream(nativeState_->stream->stream,
-                              &handler,
-                              &qp->nic_handler,
-                              sizeof(handler),
-                              cudaMemcpyDeviceToHost) ||
-                handler != DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB) {
-                return NIXL_ERR_NOT_SUPPORTED;
+        if (remote) {
+            for (uint32_t c = 0; c < nativeState_->laneCount; ++c) {
+                if (!qps[c]) {
+                    return NIXL_ERR_INVALID_PARAM;
+                }
+                if (nativeState_->boundQps[c] && nativeState_->boundQps[c] != qps[c]) {
+                    return NIXL_ERR_NOT_SUPPORTED;
+                }
+                doca_gpu_dev_verbs_nic_handler handler;
+                if (!copyOnStream(nativeState_->stream->stream,
+                                  &handler,
+                                  &qps[c]->nic_handler,
+                                  sizeof(handler),
+                                  cudaMemcpyDeviceToHost) ||
+                    handler != DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB) {
+                    return NIXL_ERR_NOT_SUPPORTED;
+                }
             }
         }
         if (!allocateOnStream(
@@ -220,7 +229,7 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
             return NIXL_ERR_BACKEND;
         }
         GpunetioDeviceView header{};
-        header.abi_version = 1;
+        header.abi_version = gpunetio_device_view_abi_version;
         header.role = local ? 1 : 2;
         header.count = count;
         header.context_cookie = nativeState_->cookie;
@@ -238,16 +247,21 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
                 stream, storage.header.get(), &header, sizeof(header), cudaMemcpyHostToDevice)) {
             return NIXL_ERR_BACKEND;
         }
-        // Bind the shared lane only once; later views must not reset its generation/credits.
-        if (remote && nativeState_->boundQps[channel] == nullptr) {
-            GpunetioDeviceLane lane{};
-            lane.qp = qp;
-            if (!copyOnStream(stream,
-                              static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) + channel,
-                              &lane,
-                              sizeof(lane),
-                              cudaMemcpyHostToDevice)) {
-                return NIXL_ERR_BACKEND;
+        // Bind every channel once; standard calls select their channel at submission.
+        if (remote) {
+            for (uint32_t c = 0; c < nativeState_->laneCount; ++c) {
+                if (nativeState_->boundQps[c]) {
+                    continue;
+                }
+                GpunetioDeviceLane lane{};
+                lane.qp = qps[c];
+                if (!copyOnStream(stream,
+                                  static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) + c,
+                                  &lane,
+                                  sizeof(lane),
+                                  cudaMemcpyHostToDevice)) {
+                    return NIXL_ERR_BACKEND;
+                }
             }
         }
         const nixlDeviceMemViewWrapper wrapper{nixl_device_exec_mode_t::GPUNETIO_DIRECT,
@@ -263,7 +277,7 @@ nixlDocaEngine::prepareNativeView(const nixl_meta_dlist_t *local,
         }
         nativeState_->peer = std::move(peer);
         if (remote) {
-            nativeState_->boundQps[channel] = qp;
+            nativeState_->boundQps = std::move(qps);
             ++nativeState_->remoteViews;
         }
         out = handle;
@@ -290,19 +304,8 @@ nixlDocaEngine::releaseMemView(nixlMemViewH handle) const {
         return;
     }
     const auto stream = nativeState_->stream->stream;
-    GpunetioDeviceLane snapshot{};
-    if (!copyOnStream(stream,
-                      &snapshot,
-                      static_cast<GpunetioDeviceLane *>(nativeState_->lane.get()) +
-                          it->second.channel,
-                      sizeof(snapshot),
-                      cudaMemcpyDeviceToHost)) {
-        nativeState_->snapshotFailed = true;
-        return;
-    }
-    if (snapshot.phase != gpunetio_lane_phase_idle) {
-        // No cancellation is implied by release: keep the view/MR pins until
-        // engine teardown has successfully quiesced its QPs.
+    // Any standard channel can access this view's registrations.
+    if (!nativeState_->lanesIdle()) {
         return;
     }
     const bool was_remote = it->second.remote;

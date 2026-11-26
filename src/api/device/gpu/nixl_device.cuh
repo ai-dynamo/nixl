@@ -82,24 +82,6 @@ put(const memViewElem &src,
 }
 
 /**
- * Post an experimental THREAD-level GET from remote src into local dst.
- * The registered scratch byte must be disjoint from dst and retained until
- * completion. Start with a zero-initialized status and poll getXferStatus in
- * the submission mode to a terminal result. Do not reuse an active status.
- * Each lane permits one outstanding scalar GET; completion polling releases it.
- * MCST-required hardware returns NIXL_ERR_NOT_SUPPORTED.
- */
-template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
-__device__ nixl_status_t
-get(const memViewElem &dst,
-    const memViewElem &src,
-    const memViewElem &scratch,
-    size_t size,
-    xferStatusH *status) {
-    return impl::get<level, mode>(dst, src, scratch, size, status);
-}
-
-/**
  * @brief Post a single-region memory transfer from remote to local GPU.
  *
  * @tparam mode     Execution mode; DYNAMIC (default) reads it from the memory view at run
@@ -113,17 +95,18 @@ get(const memViewElem &dst,
  * @param xfer_status [in,out] Optional status handle
  *                            (use @ref nixl::gpu::getXferStatus)
  *
- * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ * @return NIXL_IN_PROG Transfer posted successfully.
+ * @return NIXL_ERR_NOT_SUPPORTED The backend does not support GET.
  */
 template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
-get(const memViewElem &,
-    const memViewElem &,
-    size_t,
-    unsigned = 0,
-    uint64_t = 0,
-    xferStatusH * = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
+get(const memViewElem &dst,
+    const memViewElem &src,
+    size_t size,
+    unsigned channel_id = 0,
+    uint64_t flags = 0,
+    xferStatusH *xfer_status = nullptr) {
+    return impl::get<level, mode>(dst, src, size, channel_id, flags, xfer_status);
 }
 
 /**

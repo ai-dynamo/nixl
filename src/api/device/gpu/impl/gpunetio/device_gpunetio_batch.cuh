@@ -406,6 +406,11 @@ public:
         if (!acquired_ || reserved_ || outstanding_ || consistency_pending_ || dump_pending_) {
             return NIXL_ERR_NOT_ALLOWED;
         }
+        const uint64_t tail =
+            doca_gpu_dev_verbs_atomic_read<uint64_t, DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU>(
+                &qp_->sq_rsvd_index);
+        deviceAtomic(lane_->next_retire).store(tail, cuda::memory_order_release);
+        lane_->active_ticket = tail;
         deviceAtomic(lane_->phase).store(gpunetio_lane_phase_idle, cuda::memory_order_release);
         acquired_ = false;
         return NIXL_SUCCESS;

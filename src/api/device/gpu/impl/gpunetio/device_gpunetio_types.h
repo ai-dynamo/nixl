@@ -17,7 +17,7 @@ struct doca_gpu_dev_verbs_qp;
 
 namespace nixl::gpu::impl::gpunetio {
 
-constexpr uint32_t gpunetio_device_view_abi_version = 1;
+constexpr uint32_t gpunetio_device_view_abi_version = 2;
 constexpr uint32_t gpunetio_device_view_role_local = 1;
 constexpr uint32_t gpunetio_device_view_role_remote = 2;
 constexpr uint32_t gpunetio_local_peer_slot = ~uint32_t{0};
@@ -27,21 +27,27 @@ constexpr uint32_t gpunetio_lane_phase_idle = 0;
 constexpr uint32_t gpunetio_lane_phase_posting = 1;
 constexpr uint32_t gpunetio_lane_phase_posted = 2;
 constexpr uint32_t gpunetio_lane_phase_failed = 3;
+constexpr uint32_t gpunetio_lane_phase_scalar = 4;
 
 struct alignas(16) GpunetioDeviceLane {
     doca_gpu_dev_verbs_qp *qp;
     alignas(8) uint64_t generation;
+    // One past the last accepted standard-operation ticket.
     alignas(8) uint64_t active_ticket;
-    // Reserved to preserve the layout used by existing native consumers.
-    alignas(8) uint64_t reserved;
+    // First ticket whose completion has not been checked successfully.
+    alignas(8) uint64_t next_retire;
     alignas(4) uint32_t phase;
     alignas(4) uint32_t failed;
 };
 
-// The host allocates one context per channel. Local and remote views share
-// a context only when they belong to the same engine and channel.
+// Each prepared context retains a selected lane for the batch extension.
+// Standard operations select from the shared channel array at call time.
 struct GpunetioDeviceContext {
     GpunetioDeviceLane *lane;
+    GpunetioDeviceLane *channels;
+    uint64_t atomic_results;
+    uint32_t atomic_key;
+    uint32_t channel_count;
 };
 
 struct GpunetioViewElem {
@@ -66,16 +72,15 @@ struct GpunetioDeviceView {
 
 struct GpunetioStatusPayload {
     GpunetioDeviceLane *lane;
-    uint64_t generation;
     uint64_t ticket;
     int32_t cached_status;
     uint32_t initialized;
-    uint32_t read_pending;
 };
 
 static_assert(sizeof(GpunetioViewElem) == 32);
-static_assert(sizeof(GpunetioStatusPayload) == 40);
+static_assert(sizeof(GpunetioStatusPayload) == 24);
 static_assert(sizeof(GpunetioStatusPayload) <= 60);
+static_assert(sizeof(GpunetioDeviceLane) == 48);
 static_assert(alignof(GpunetioDeviceLane) >= 16);
 static_assert(std::is_standard_layout_v<GpunetioDeviceLane>);
 static_assert(std::is_trivial_v<GpunetioDeviceLane>);

@@ -56,7 +56,7 @@ DOCA GPUNetIO backend takes these input parameters:
 - write_stripe_min_bytes: minimum bytes per WRITE QP in `bytes` mode (default `4194304`); must be positive.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
-### Experimental GPU-initiated GET
+### GPU-initiated Device API
 
 Native view storage uses CUDA stream-ordered allocation and requires CUDA memory-pool support.
 Uploads and lane snapshots use an engine-private nonblocking stream. Callers must
@@ -67,36 +67,73 @@ persistent kernels. Stop such kernels before destroying a backend. This SDK
 teardown constraint does not require a device-wide wait during view preparation.
 
 Build with `-Dgpunetio_device_api=enabled` and create a GPUNETIO backend with
-`native_device_api=true`. This mode supports GPU-initiated GET using local VRAM
+`native_device_api=true`. This mode supports GPU-initiated GET, PUT and 64-bit atomicAdd using local VRAM
 and registered remote VRAM or pinned Host memory. It does not support host
 transfer requests or notifications. `native_qp_count=1` keeps the existing
 single-QP default. Native mode can opt into a backend-owned pool of up to32
-active READ QPs with `native_qp_count=N` on both peers. One agent/backend and
+active data QPs with `native_qp_count=N` on both peers. One agent/backend and
 one memory registration serve the entire pool. Legacy stream-mode WRITE uses
 the separate `data_qp_count` option and remains limited to4. The default
 backend remains in stream mode.
 
-Prepare channel views once with `nixl_opt_args_t::customParam` set to
-`"native_channel=N"` in `prepMemView`; omitted/empty selects channel0. Valid
-indices are `[0,native_qp_count)`. Use matching local/remote/scratch channels.
-The scalar overload uses local destination first: `get(dst, src, scratch, bytes, &status)`.
-Each scalar lane permits one outstanding GET until completion is polled. Views are long-lived prepared resources, not per-copy requests;
-the backend owns the QPs and shares their registered buffers. For example:
+Prepare local and remote views once, then select a channel per device call with
+`channel_id` in `[0,native_qp_count)`. GET uses the standard destination-first
+signature. The backend owns its atomic result storage; callers provide no scratch.
 
 ```cpp
-auto lane_hint = hint;
-lane_hint.customParam = "native_channel=3";
-agent.prepMemView(local, local_view, &lane_hint);
-agent.prepMemView(remote, remote_view, &lane_hint);
-// GPU: same get/readSession calls using this prepared view pair.
+// Device code; views were prepared with agent.prepMemView on the host.
+nixl::gpu::xferStatusH status{};
+auto rc = nixl::gpu::get({local_view, 0, 0}, {remote_view, 0, 0},
+                          bytes, 3, nixl::gpu::flags::defer, &status);
+// Check rc == NIXL_IN_PROG before using the accepted request.
+rc = nixl::gpu::flush(remote_view, 3);
+// Check rc == NIXL_SUCCESS before consuming data or reusing buffers.
 ```
+
+GET, PUT, atomicAdd, getXferStatus and flush support THREAD, WARP and BLOCK
+cooperation. A collective call requires all participating threads, matching
+arguments, and a shared status handle when one is supplied. GRID returns
+`NIXL_ERR_NOT_SUPPORTED`. `getPtr` returns nullptr because an RDMA registration
+does not provide a local mapping of remote memory.
+
+GET and PUT validate the entire requested range before posting and split transfers
+above the SDK WQE limit into bounded chunks. A status covers the complete request.
+A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
+`flush(remote_view, channel)` blocks until preceding channel work completes or
+fails. A supplied status can be polled in any order, and must reach a terminal
+result before being reused. Every CQE is checked in FIFO order, including those
+from requests without a status. Completed requests stay complete if a later
+request fails; the failed channel rejects new work until teardown.
+
+`flags::defer` postpones doorbell publication until a nondeferred submission,
+status poll, flush, or queue-capacity pressure drives progress. Other flags are
+rejected. Multiple producers may submit on the same channel; short internal
+critical sections serialize queue reservation and completion checks. They do not
+require caller busy retries. Concurrent requests on different channels remain
+independent. A channel held by a backend readSession returns
+`NIXL_ERR_NOT_ALLOWED` to standard calls until the session finishes.
+
+atomicAdd requires an aligned 8-byte remote counter. Preceding writes on the same
+channel complete before the increment becomes visible. GPU producers must use
+the cooperation level or their own synchronization to publish source data before
+PUT; the API applies a system release before NIC submission. Completion polling
+uses the SDK NIC acquire before reporting success. Receiver-side consumers must
+follow their platform's RDMA visibility protocol.
+
+The backend-specific readSession extension retains its prepared-lane selector:
+set `nixl_opt_args_t::customParam` to `"native_channel=N"` when preparing matching
+local/remote views. Omitted/empty selects channel 0. This selector only affects
+readSession; standard operations use their explicit channel argument. Rebuild
+experimental scalar callers using `get(dst, src, bytes, channel, flags, status)`;
+the earlier extra-scratch scalar overload has been removed. The backend view ABI
+is now version 2; rebuild all device consumers against the matching backend.
+Version-1 views and consumers must remain paired with their original runtime.
 
 Each pool channel has independent ownership, generations, SQ/CQ and ordering.
 There is no cross-channel ordering;
 do not overlap in-flight destination ranges across channels without external
 synchronization. The native pool remains one peer per engine. Re-preparing a
-bound channel does not reset its generation or credits. Busy/failed channel
-views retain their MR pins until safe teardown. Both peers must configure the
+bound channel does not reset its generation or credits. Views retain their MR pins while any channel is busy or failed, until safe teardown. Both peers must configure the
 same native pool size; a mismatched pool is rejected, not silently resized.
 
 The pool reuses the versioned multi-QP connection exchange. For pools larger
@@ -121,12 +158,11 @@ CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
 `<gpu/impl/gpunetio/device_gpunetio_batch.cuh>` for the backend-specific
 `nixl::gpu::gpunetio::experimental::readSession`. Builds require DOCA 3.5 or newer;
 hardware qualification uses DOCA 3.5. Its opt-in parallel batch completion path uses an internal SDK
-helper; that path has no SDK compatibility guarantee. Scalar GET requires a
-registered scratch byte disjoint from the destination. For batch reads, one CTA owns a session;
+helper; that path has no SDK compatibility guarantee. For batch reads, one CTA owns a session;
 the caller must synchronize WQE builders, poll every completion, retire in FIFO
 order, and keep the views, registrations and buffers alive until work retires.
 When required, `postConsistency` also needs a registered disjoint scratch byte.
-Scalar GET and session acquisition return `NIXL_ERR_NOT_SUPPORTED` when the QP
+Standard operations and session acquisition return `NIXL_ERR_NOT_SUPPORTED` when the QP
 requires MCST. Such hardware remains outside the current qualification.
 An unsuccessful or abandoned operation must be failed and its resources kept
 until the engine is safely torn down. See the manual hardware test in

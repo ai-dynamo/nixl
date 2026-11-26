@@ -151,6 +151,9 @@ put(const memViewElem &src,
     unsigned channel_id,
     uint64_t flags,
     xferStatusH *xfer_status) {
+    if (!src.mvh || !dst.mvh) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *src_view = detail::asDeviceMemView(src.mvh);
     const auto *dst_view = detail::asDeviceMemView(dst.mvh);
     const memViewElem backend_src{src_view->backend_memview, src.index, src.offset};
@@ -163,6 +166,11 @@ put(const memViewElem &src,
         status = ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
+        if (src_view->execution_mode != execution_mode) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        return gpunetio::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -174,38 +182,28 @@ template<level_t level, exec_mode_t mode>
 __device__ nixl_status_t
 get(const memViewElem &dst,
     const memViewElem &src,
-    const memViewElem &scratch,
     size_t size,
+    unsigned channel_id,
+    uint64_t flags,
     xferStatusH *status) {
-    if (!src.mvh || !dst.mvh || !scratch.mvh || !status) {
+    if (!src.mvh || !dst.mvh) {
         return NIXL_ERR_INVALID_PARAM;
     }
     const auto *remote = detail::asDeviceMemView(src.mvh);
     const auto *local = detail::asDeviceMemView(dst.mvh);
-    const auto *dump = detail::asDeviceMemView(scratch.mvh);
     const auto execution_mode = detail::executionMode<mode>(*remote);
     if (execution_mode != exec_mode_t::GPUNETIO_DIRECT) {
         return NIXL_ERR_NOT_SUPPORTED;
     }
-    if (local->execution_mode != execution_mode || dump->execution_mode != execution_mode ||
-        !remote->backend_memview || !local->backend_memview || !dump->backend_memview ||
-        (status->mode != exec_mode_t{} && status->mode != execution_mode)) {
+    if (local->execution_mode != execution_mode) {
         return NIXL_ERR_INVALID_PARAM;
     }
-#if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
-    if (status->mode == execution_mode && gpunetio::isStatusInProgress(*status)) {
-        return NIXL_ERR_REPOST_ACTIVE;
-    }
-#endif
-    const auto result = gpunetio::get<level>({local->backend_memview, dst.index, dst.offset},
-                                             {remote->backend_memview, src.index, src.offset},
-                                             size,
-                                             {dump->backend_memview, scratch.index, scratch.offset},
-                                             status);
-    if (result == NIXL_IN_PROG) {
-        status->mode = execution_mode;
-    }
-    return result;
+    return gpunetio::get<level>({local->backend_memview, dst.index, dst.offset},
+                                {remote->backend_memview, src.index, src.offset},
+                                size,
+                                channel_id,
+                                flags,
+                                status);
 }
 
 template<level_t level, exec_mode_t mode>
@@ -215,6 +213,9 @@ atomicAdd(uint64_t value,
           unsigned channel_id,
           uint64_t flags,
           xferStatusH *xfer_status) {
+    if (!counter.mvh) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *view = detail::asDeviceMemView(counter.mvh);
     const memViewElem backend_counter{view->backend_memview, counter.index, counter.offset};
 
@@ -224,6 +225,8 @@ atomicAdd(uint64_t value,
         status = ucx::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+    } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
+        return gpunetio::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -240,6 +243,8 @@ getPtr(nixlMemViewH mvh, size_t index) {
         return ucx::getPtr(view->backend_memview, index);
     case exec_mode_t::PROXY:
         return proxy::getPtr(view->backend_memview, index);
+    case exec_mode_t::GPUNETIO_DIRECT:
+        return gpunetio::getPtr(view->backend_memview, index);
     default:
         return nullptr;
     }
@@ -248,12 +253,17 @@ getPtr(nixlMemViewH mvh, size_t index) {
 template<level_t level, exec_mode_t mode>
 __device__ nixl_status_t
 flush(const nixlMemViewH &remote, unsigned channel_id) {
+    if (!remote) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *view = detail::asDeviceMemView(remote);
     switch (detail::executionMode<mode>(*view)) {
     case exec_mode_t::UCX_DIRECT:
         return ucx::flush<level>(view->backend_memview, channel_id);
     case exec_mode_t::PROXY:
         return NIXL_ERR_NOT_SUPPORTED;
+    case exec_mode_t::GPUNETIO_DIRECT:
+        return gpunetio::flush<level>(view->backend_memview, channel_id);
     default:
         return NIXL_ERR_INVALID_PARAM;
     }
