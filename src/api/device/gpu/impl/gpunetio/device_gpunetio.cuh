@@ -287,7 +287,15 @@ pollStatus(xferStatusH &status) {
         return NIXL_IN_PROG;
     }
     publish(lane);
-    const auto result = progress(lane, payload->ticket + 1);
+    // Retire every completed CQE, not only this request's, so other pollers resolve
+    // on the lock-free fast path. A failure after this request keeps its success.
+    progress(lane, lane->active_ticket);
+    nixl_status_t result = NIXL_IN_PROG;
+    if (payload->ticket < lane->next_retire) {
+        result = NIXL_SUCCESS;
+    } else if (lane->failed) {
+        result = NIXL_ERR_BACKEND;
+    }
     payload->cached_status = result;
     unlockLane(lane);
     return result;
