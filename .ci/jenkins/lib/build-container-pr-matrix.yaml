@@ -34,7 +34,7 @@ matrix:
 
 env:
   NPROC: 24
-  UCX_VERSION: "v1.23.x"
+  UCX_VERSION: "v1.24.x"
   LOCAL_TAG_BASE: "nixl-ci-pr:build-"
   APT_MIRROR: "https://artifactory.nvidia.com/artifactory/ubuntu-public"
 
