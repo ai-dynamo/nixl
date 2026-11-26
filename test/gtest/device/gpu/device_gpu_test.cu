@@ -102,7 +102,8 @@ putAndComplete(const memViewElem &src,
     auto status = put(src, dst, bytes, channel_id, put_flags, &xfer_status);
     assert(status == NIXL_IN_PROG);
     if (put_flags & flags::defer) {
-        status = flush(dst.mvh, channel_id);
+        xferStatusH flush_status;
+        status = flush(dst.mvh, channel_id, &flush_status);
         assert(status == NIXL_SUCCESS);
     } else {
         waitPostedWithSystemFence(status, xfer_status);
