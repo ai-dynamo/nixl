@@ -16,6 +16,7 @@
  */
 #include "nixl_monitor_impl.h"
 
+#include <algorithm>
 #include <cerrno>
 #include <limits>
 #include <memory>
@@ -42,11 +43,11 @@ nixlCompletionMonitorImpl::~nixlCompletionMonitorImpl() {
 
 nixl_status_t
 nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
-                                int timeout_ms,
+                                std::chrono::milliseconds timeout,
                                 bool any) {
-    if (timeout_ms < 0) {
-        timeout_ms = std::numeric_limits<int>::max();
-    }
+    constexpr std::chrono::milliseconds max_timeout(std::numeric_limits<int>::max());
+    const int timeout_ms = static_cast<int>(
+        std::clamp(timeout, std::chrono::milliseconds::zero(), max_timeout).count());
 
     const nixlTime::ms_t start_ms = nixlTime::getMs();
     const size_t num_completions = completions.size();

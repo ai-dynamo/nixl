@@ -17,6 +17,7 @@
 #ifndef NIXL_SRC_CORE_NIXL_MONITOR_IMPL_H
 #define NIXL_SRC_CORE_NIXL_MONITOR_IMPL_H
 
+#include <chrono>
 #include <cstddef>
 #include <stdexcept>
 #include <vector>
@@ -48,13 +49,15 @@ public:
     }
 
     nixl_status_t
-    waitAny(std::vector<nixlXferCompletion> &completions, int timeout_ms) override {
-        return wait(completions, timeout_ms, true);
+    waitAny(std::vector<nixlXferCompletion> &completions,
+            std::chrono::milliseconds timeout) override {
+        return wait(completions, timeout, true);
     }
 
     nixl_status_t
-    waitAll(std::vector<nixlXferCompletion> &completions, int timeout_ms) override {
-        return wait(completions, timeout_ms, false);
+    waitAll(std::vector<nixlXferCompletion> &completions,
+            std::chrono::milliseconds timeout) override {
+        return wait(completions, timeout, false);
     }
 
     void
@@ -76,7 +79,7 @@ public:
 
 private:
     nixl_status_t
-    wait(std::vector<nixlXferCompletion> &completions, int timeout_ms, bool any);
+    wait(std::vector<nixlXferCompletion> &completions, std::chrono::milliseconds timeout, bool any);
 
     const nixlAgent &agent_;
     const int fd_;

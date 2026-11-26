@@ -21,6 +21,7 @@
 #ifndef NIXL_SRC_API_CPP_NIXL_MONITOR_H
 #define NIXL_SRC_API_CPP_NIXL_MONITOR_H
 
+#include <chrono>
 #include <cstddef>
 #include <memory>
 #include <vector>
@@ -69,26 +70,28 @@ public:
      *
      * @param  completions   [out] All requests completed so far are appended with their final
      *                       status and detached from the monitor
-     * @param  timeout_ms    Time limit in milliseconds: negative waits without a limit and
-     *                       0 returns what is available without blocking
+     * @param  timeout       Time limit: the default waits without a limit, and zero or less
+     *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if a request completed or no request is attached,
      *                       NIXL_IN_PROG if the time limit expired, or an error code
      */
     virtual nixl_status_t
-    waitAny(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1) = 0;
+    waitAny(std::vector<nixlXferCompletion> &completions,
+            std::chrono::milliseconds timeout = std::chrono::milliseconds::max()) = 0;
 
     /**
      * @brief  Wait until all attached requests complete, successfully or not
      *
      * @param  completions   [out] The completed requests are appended with their final status
      *                       and detached from the monitor, also when the time limit expires
-     * @param  timeout_ms    Time limit in milliseconds: negative waits without a limit and
-     *                       0 returns what is available without blocking
+     * @param  timeout       Time limit: the default waits without a limit, and zero or less
+     *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if no request remains attached, NIXL_IN_PROG if the
      *                       time limit expired, or an error code
      */
     virtual nixl_status_t
-    waitAll(std::vector<nixlXferCompletion> &completions, int timeout_ms = -1) = 0;
+    waitAll(std::vector<nixlXferCompletion> &completions,
+            std::chrono::milliseconds timeout = std::chrono::milliseconds::max()) = 0;
 };
 
 #endif // NIXL_SRC_API_CPP_NIXL_MONITOR_H
