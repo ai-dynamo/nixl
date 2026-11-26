@@ -1,0 +1,70 @@
+[
+  {
+    "id": "nixl-install-framework-package",
+    "question": "vLLM fails during startup, before any transfer. I want the supported NIXL package declared by this vLLM release, not a custom build. Use only this evidence and do not run commands: the workload environment does not have that package installed; startup says NIXL is unavailable; `import nixl` fails because the module is absent; PyTorch imports successfully; and no transfer was attempted. Give the route, first supported cause, remedy, and verification.",
+    "expected_skill": "nixl-install",
+    "should_trigger": true,
+    "ground_truth": "Select only Framework-supported NIXL. The workload environment is missing the NIXL package declared by vLLM, so import fails before initialization. Attribute this to the host environment. Restore the declared package in the workload environment without changing PyTorch. Verify that NIXL imports there and vLLM starts without the original error. Do not claim those checks ran or that a transfer was verified.",
+    "expected_behavior": [
+      "Selects only the Framework-supported NIXL route",
+      "Attributes the missing declared package and failed import to the host or workload environment, not NIXL or PyTorch",
+      "Names restoring the declared package in the workload environment as the remedy",
+      "States import and startup verification without claiming it ran or that a transfer was verified",
+      "Does not append unrelated diagnostic checks, speculative extra causes, or benchmarks"
+    ]
+  },
+  {
+    "id": "nixl-install-custom-build",
+    "question": "SGLang must load our chosen NIXL source build because the published package lacks a required backend. Use only this evidence and do not run commands: the chosen build is intentionally required; SGLang's image installs it, but a later dependency step reinstalls and loads the published package; backend creation then fails before any transfer; and there is no native-library conflict. Give the route, first supported cause, remedy, and verification.",
+    "expected_skill": "nixl-install",
+    "should_trigger": true,
+    "ground_truth": "Select only Chosen or custom NIXL build. The later dependency step replaces the intended build with the published package, so the required backend is absent. Attribute this to the integrating software's image recipe. Change the recipe so the later dependency step does not replace the chosen build. Verify that the workload loads the chosen build and initializes the required backend. Do not claim those checks ran or that a transfer was verified.",
+    "expected_behavior": [
+      "Selects only the Chosen or custom NIXL build route",
+      "Attributes the wrong loaded build to the integrating software's image recipe",
+      "Names updating the image recipe so no later step replaces the chosen build as the remedy",
+      "States chosen-build and backend-initialization verification without claiming it ran",
+      "Does not append unrelated diagnostic checks, speculative extra causes, or benchmarks"
+    ]
+  },
+  {
+    "id": "nixl-install-transfer-path",
+    "question": "vLLM has initialized NIXL, but this request finished by fallback and recomputation. Use only this evidence and do not run commands: NIXL imported and the integration initialized; the connector log says this request skipped NIXL because its NIXL setting is disabled; there is no NIXL, registration, or backend error; and the goal is for the same request to use NIXL. Give the route, first supported cause, remedy, and verification.",
+    "expected_skill": "nixl-install",
+    "should_trigger": true,
+    "ground_truth": "Select only Transfer-path diagnosis. NIXL initialized, but the integration skipped this request because its NIXL setting is disabled. Attribute this to the integrating software. Enable the connector's supported NIXL setting. Verify that the same request uses NIXL and does not fall back. Do not claim verification ran, and leave backend path and performance unverified.",
+    "expected_behavior": [
+      "Selects only the Transfer-path diagnosis route",
+      "Attributes the skipped NIXL request to the integrating software's disabled setting",
+      "Names enabling the supported connector setting as the remedy",
+      "States same-request NIXL use without fallback as unrun verification and does not claim a backend path was verified",
+      "Does not append unrelated diagnostic checks, speculative extra causes, or benchmarks"
+    ]
+  },
+  {
+    "id": "nixl-install-libfabric-efa",
+    "question": "These workers run on AWS with EFA attached, and the deployment requires NIXL LIBFABRIC on every peer. No transfer has been requested. Use only this evidence and do not run commands: each workload sees its EFA device and driver; the loaded libfabric advertises EFA; NIXL creates LIBFABRIC successfully; but the integration's effective backend on every peer is UCX, which was not requested. Give the route, first supported cause, remedy, and verification.",
+    "expected_skill": "nixl-install",
+    "should_trigger": true,
+    "ground_truth": "Select LIBFABRIC on AWS EFA. EFA, its provider, and LIBFABRIC creation are available, but the integration selects UCX. Attribute this to the integrating software. Select LIBFABRIC through the integration's supported interface on every peer. Verify that LIBFABRIC is the effective backend on every peer. Do not claim the check ran or that a transfer was verified.",
+    "expected_behavior": [
+      "Selects the LIBFABRIC on AWS EFA route",
+      "Attributes UCX selection instead of required and available LIBFABRIC to the integrating software",
+      "Names selecting LIBFABRIC through the integration on every peer as the remedy",
+      "States effective LIBFABRIC selection on every peer as unrun verification without claiming a transfer was verified",
+      "Does not append unrelated diagnostic checks, speculative extra causes, or benchmarks"
+    ]
+  },
+  {
+    "id": "nixl-install-negative-development",
+    "question": "I am adding a unit test for a helper function in the NIXL source repository. This is development of NIXL itself, and no other program will load the result. How should I structure the test?",
+    "expected_skill": null,
+    "should_trigger": false,
+    "ground_truth": "Do not use nixl-install. The request is development and testing of NIXL itself, with no software consuming the build. Answer the unit-test question directly.",
+    "expected_behavior": [
+      "Does not use the nixl-install skill",
+      "Does not apply an installation, backend, or transfer route",
+      "Answers the unit-test question directly"
+    ]
+  }
+]

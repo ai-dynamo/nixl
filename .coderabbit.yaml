@@ -43,3 +43,36 @@ reviews:
 
           For case 5, title or description edits, moving or reordering an entry without changing its target path, and edits outside index entries are allowed.
           Pass otherwise, including when no file in the set changed.
+      - name: "nixl-install guidance sync"
+        mode: "warning"
+        instructions: |
+          Review `skills/nixl-install/SKILL.md` and all Markdown files under
+          `skills/nixl-install/references/`. Only warn about drift caused by
+          this PR. A PR that touches neither these skill files nor any
+          repository file they link to passes. Linked targets may exist
+          anywhere in the repository; resolve relative links from the file
+          containing each link.
+
+          1. Broken local reference. Check local Markdown link paths. When
+             the PR adds or edits a link, moves a file containing links, or
+             modifies a target heading, also verify its anchor. Warn if the
+             PR introduces a broken path or anchor; deletes, moves, or
+             renames a linked file or heading without updating its links; or
+             moves a linking file without updating its relative links.
+
+          2. Outdated guidance. When the PR changes a repository file linked
+             from the skill, warn only if it leaves a specific skill claim or
+             instruction incorrect. Check commands, options, symbols, log
+             messages, prerequisites, environment variables, defaults, and
+             documented behavior. Also check skill edits against their linked
+             sources. Ignore unrelated changes and additions that leave the
+             guidance accurate.
+
+          3. New or edited external link. For HTTP links added or edited in
+             the skill files, warn only if the URL is malformed, verified to
+             be broken, or verified to point to the wrong resource. Do not
+             warn solely because network access is unavailable or blocked.
+
+          For each warning, cite the skill file and section or observable
+          line, quote the affected link or instruction, and identify the
+          relevant PR diff or URL problem. Pass otherwise.
