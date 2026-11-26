@@ -17,8 +17,6 @@
 #ifndef NIXL_SRC_CORE_NOTIF_DISPATCHER_H
 #define NIXL_SRC_CORE_NOTIF_DISPATCHER_H
 
-#include <atomic>
-#include <cstdint>
 #include <optional>
 #include <shared_mutex>
 #include <string>
@@ -27,52 +25,34 @@
 #include "backend/backend_aux.h"
 #include "nixl_notif.h"
 
-// Registry of an agent's notification callbacks, which its backends use as their sink.
-// Callbacks run under the shared lock and every change takes the exclusive lock, so a
-// change waits for running callbacks. Registration is expected around setup and teardown,
-// so concurrent changes are safe but not optimized.
-class nixlNotifDispatcher final : public nixlBackendNotifSink,
-                                  public std::enable_shared_from_this<nixlNotifDispatcher> {
+// Registry of an agent's notification callbacks, keyed by prefix, which its backends use
+// as their sink. Callbacks run under the shared lock and every change takes the exclusive
+// lock, so a change waits for running callbacks. Registration is expected around setup and
+// teardown, so concurrent changes are safe but not optimized.
+class nixlNotifDispatcher final : public nixlBackendNotifSink {
 public:
     [[nodiscard]] nixl_status_t
-    add(std::string_view prefix, nixl_notif_callback_t callback, nixlNotifRegistration &token);
+    add(std::string_view prefix, nixl_notif_callback_t callback);
 
     [[nodiscard]] nixl_status_t
-    remove(nixlNotifRegistration &token) noexcept;
+    remove(std::string_view prefix) noexcept;
 
+    // True when a callback matched; that callback then owns the notification.
     [[nodiscard]] bool
     dispatch(std::string_view remote_agent, std::string_view message) const noexcept override;
 
     [[nodiscard]] bool
     hasRegistrations() const noexcept;
 
-    // Release all callbacks before agent teardown, after running ones finish.
-    void
-    shutdown() noexcept;
-
 private:
-    friend class nixlNotifRegistration;
-
-    [[nodiscard]] bool
-    isShutDown() const noexcept {
-        return shutDown_.load(std::memory_order_acquire);
-    }
-
     struct Entry {
-        std::uint64_t id;
         std::string prefix;
         nixl_notif_callback_t callback;
     };
 
-    // Returns the removed callback for the caller to destroy outside the lock.
-    [[nodiscard]] nixl_notif_callback_t
-    erase(std::uint64_t id) noexcept;
-
     mutable std::shared_mutex mutex_;
     std::vector<Entry> entries_; // Nonempty, disjoint prefixes.
-    std::optional<Entry> default_; // The empty prefix.
-    std::uint64_t lastId_ = 0;
-    std::atomic<bool> shutDown_{false};
+    std::optional<nixl_notif_callback_t> default_; // The empty prefix.
 };
 
 #endif

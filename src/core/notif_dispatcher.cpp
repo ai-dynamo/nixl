@@ -17,51 +17,28 @@
 #include "notif_dispatcher.h"
 
 #include <algorithm>
+#include <exception>
 #include <mutex>
 #include <utility>
 
-nixlNotifRegistration::~nixlNotifRegistration() noexcept {
-    reset();
-}
+#include "common/nixl_log.h"
 
-nixlNotifRegistration::nixlNotifRegistration(nixlNotifRegistration &&other) noexcept
-    : dispatcher_(std::move(other.dispatcher_)),
-      id_(std::exchange(other.id_, 0)) {}
-
-nixlNotifRegistration &
-nixlNotifRegistration::operator=(nixlNotifRegistration &&other) noexcept {
-    if (this != &other) {
-        reset();
-        dispatcher_ = std::move(other.dispatcher_);
-        id_ = std::exchange(other.id_, 0);
-    }
-    return *this;
-}
-
+namespace {
+// Runs on the noexcept receive path, so a failure to log must not escape.
 void
-nixlNotifRegistration::reset() noexcept {
-    // Destroyed last, so user destructors never keep the dispatcher alive after the agent.
-    nixl_notif_callback_t removed;
-    const auto id = std::exchange(id_, 0);
-    if (const auto dispatcher = std::exchange(dispatcher_, {}).lock(); dispatcher && id != 0) {
-        removed = dispatcher->erase(id);
+logCallbackFailure(std::string_view remote_agent, const char *reason) noexcept {
+    try {
+        NIXL_ERROR << "Notification callback failed on a notification from '" << remote_agent
+                   << "', which was dropped: " << reason;
+    }
+    catch (...) {
     }
 }
-
-nixlNotifRegistration::operator bool() const noexcept {
-    if (id_ == 0) {
-        return false;
-    }
-    const auto dispatcher = dispatcher_.lock();
-    return dispatcher && !dispatcher->isShutDown();
-}
+} // namespace
 
 nixl_status_t
-nixlNotifDispatcher::add(std::string_view prefix,
-                         nixl_notif_callback_t callback,
-                         nixlNotifRegistration &token) {
-    // A token whose agent has shut down tests false and is simply overwritten.
-    if (!callback || token) {
+nixlNotifDispatcher::add(std::string_view prefix, nixl_notif_callback_t callback) {
+    if (!callback) {
         return NIXL_ERR_INVALID_PARAM;
     }
     // No delimiter is required, but at most one nonempty prefix can match.
@@ -69,34 +46,45 @@ nixlNotifDispatcher::add(std::string_view prefix,
         return prefix.starts_with(existing.prefix) || existing.prefix.starts_with(prefix);
     };
     // Declared before the lock, so a rejected or failed insertion destroys the callback, and
-    // any registration it owns, after the lock is released.
-    Entry entry{0, std::string(prefix), std::move(callback)};
+    // anything it owns, after the lock is released.
+    Entry entry{std::string(prefix), std::move(callback)};
 
     const std::unique_lock lock(mutex_);
-    if (isShutDown()) {
-        return NIXL_ERR_NOT_ALLOWED;
+    if (prefix.empty()) {
+        if (default_) {
+            return NIXL_ERR_INVALID_PARAM;
+        }
+        default_ = std::move(entry.callback);
+        return NIXL_SUCCESS;
     }
-    if (prefix.empty() ? default_.has_value() :
-                         std::any_of(entries_.begin(), entries_.end(), overlaps)) {
+    if (std::any_of(entries_.begin(), entries_.end(), overlaps)) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    const auto id = entry.id = ++lastId_;
-    if (prefix.empty()) {
-        default_ = std::move(entry);
-    } else {
-        entries_.push_back(std::move(entry));
-    }
-    token.dispatcher_ = weak_from_this();
-    token.id_ = id;
+    entries_.push_back(std::move(entry));
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlNotifDispatcher::remove(nixlNotifRegistration &token) noexcept {
-    if (token.id_ != 0 && token.dispatcher_.lock().get() != this) {
-        return NIXL_ERR_INVALID_PARAM;
+nixlNotifDispatcher::remove(std::string_view prefix) noexcept {
+    // Destroyed after the lock is released, so the callback's captures cannot deadlock on it.
+    nixl_notif_callback_t removed;
+    const std::unique_lock lock(mutex_);
+    if (prefix.empty()) {
+        if (!default_) {
+            return NIXL_ERR_NOT_FOUND;
+        }
+        removed = std::move(*default_);
+        default_.reset();
+        return NIXL_SUCCESS;
     }
-    token.reset();
+    const auto it = std::find_if(entries_.begin(), entries_.end(), [prefix](const Entry &entry) {
+        return entry.prefix == prefix;
+    });
+    if (it == entries_.end()) {
+        return NIXL_ERR_NOT_FOUND;
+    }
+    removed = std::move(it->callback);
+    entries_.erase(it);
     return NIXL_SUCCESS;
 }
 
@@ -108,51 +96,27 @@ nixlNotifDispatcher::dispatch(std::string_view remote_agent,
         return message.starts_with(entry.prefix);
     };
     const auto it = std::find_if(entries_.begin(), entries_.end(), matches);
-    const Entry *entry = it != entries_.end() ? &*it : (default_ ? &*default_ : nullptr);
-    if (!entry) {
+    const nixl_notif_callback_t *callback =
+        it != entries_.end() ? &it->callback : (default_ ? &*default_ : nullptr);
+    if (!callback) {
         return false;
     }
+    // A user exception must never unwind through the transport's receive handler. The
+    // notification matched, so it does not go to getNotifs() either.
     try {
-        return entry->callback(remote_agent, message);
+        (*callback)(remote_agent, message);
+    }
+    catch (const std::exception &e) {
+        logCallbackFailure(remote_agent, e.what());
     }
     catch (...) {
-        // A user exception must never unwind through the transport's receive handler.
-        // A false return preserves the original message for getNotifs().
-        return false;
+        logCallbackFailure(remote_agent, "unknown exception");
     }
+    return true;
 }
 
 bool
 nixlNotifDispatcher::hasRegistrations() const noexcept {
     const std::shared_lock lock(mutex_);
     return default_ || !entries_.empty();
-}
-
-nixl_notif_callback_t
-nixlNotifDispatcher::erase(std::uint64_t id) noexcept {
-    const std::unique_lock lock(mutex_);
-    if (default_ && default_->id == id) {
-        auto removed = std::move(default_->callback);
-        default_.reset();
-        return removed;
-    }
-    const auto it = std::find_if(
-        entries_.begin(), entries_.end(), [id](const Entry &entry) { return entry.id == id; });
-    if (it == entries_.end()) {
-        return {};
-    }
-    auto removed = std::move(it->callback);
-    entries_.erase(it);
-    return removed;
-}
-
-void
-nixlNotifDispatcher::shutdown() noexcept {
-    // Destroyed after the lock is released.
-    std::vector<Entry> entries;
-    std::optional<Entry> default_entry;
-    const std::unique_lock lock(mutex_);
-    entries.swap(entries_);
-    default_entry.swap(default_);
-    shutDown_.store(true, std::memory_order_release);
 }

@@ -218,28 +218,28 @@ def test_conflicting_subscription_requires_removal(ucx_peers):
         assert _legacy_notifications(target, source, 1) == [b"legacy fallback"]
 
 
-def test_agent_destruction_keeps_monitor_open_and_quiet():
+def test_monitor_keeps_subscribed_agent_alive_until_released():
     agent = nixl_agent(
         f"receiver-{uuid.uuid4()}",
         nixl_agent_config(enable_prog_thread=True, backends=["UCX"]),
     )
     if "UCX" not in agent.backends:
         pytest.skip("UCX is unavailable")
+    agent_ref = weakref.ref(agent)
 
     with nixl_notification_monitor() as monitor:
         agent.add_notif_monitor(monitor, b"watch:")
-        fd = monitor.fileno()
-        poller = select.poll()
-        poller.register(fd, select.POLLIN)
-        try:
-            agent_ref = weakref.ref(agent)
-            del agent
-            gc.collect()
-            assert agent_ref() is None
-            assert poller.poll(0) == []
-            assert monitor.wait_any(timeout_ms=20) == []
-        finally:
-            poller.unregister(fd)
+        agent.add_notif_monitor(monitor, b"other:")
+        del agent
+        gc.collect()
+        assert agent_ref() is not None
+
+        assert agent_ref().remove_notif_monitor(monitor, b"watch:") is True
+        gc.collect()
+        assert agent_ref() is not None
+
+    gc.collect()
+    assert agent_ref() is None
 
 
 @pytest.mark.parametrize("timeout_ms", [0, 20])

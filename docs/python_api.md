@@ -74,10 +74,8 @@ with nixl_notification_monitor() as incoming:
   Remove any external reader before closing the monitor. `close()`, including at
   the end of a `with` block, wakes a blocking wait with `RuntimeError`, unregisters
   all subscriptions, and releases the descriptor once no wait still uses it.
-  Destroying an agent removes its subscriptions but leaves the monitor open, so
-  it can still receive from other agents or be reused. Agent destruction does not
-  wake a wait, even when the last subscribed agent is destroyed. Use a finite
-  timeout or close the monitor from another thread to end such a wait.
+  A monitor keeps each subscribed agent alive until its subscriptions are
+  removed with `remove_notif_monitor()` or the monitor is closed.
 
 ## Backend initialization parameters
 

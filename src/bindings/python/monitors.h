@@ -20,6 +20,7 @@
 #include <sys/eventfd.h>
 #include <poll.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <chrono>
 #include <memory>
@@ -65,19 +66,17 @@ public:
         }
     }
 
-    // False only once the inbox is closed and its subscriptions are being removed.
-    [[nodiscard]] bool
+    void
     push(std::string_view local, std::string_view remote, std::string_view message) {
         const std::lock_guard lock(mutex_);
         if (closed_) {
-            return false;
+            return;
         }
         const bool was_empty = ready_.empty();
         ready_.push_back({std::string(local), std::string(remote), std::string(message)});
         if (was_empty) {
             signal();
         }
-        return true;
     }
 
     // Returns every queued notification once at least one is available, or an empty batch
@@ -158,9 +157,10 @@ private:
 };
 
 // A Python notification monitor: its queue plus the agent subscriptions that fill it.
-// The monitor, its callbacks and any running wait share the queue. close() deregisters,
-// which waits for running callbacks, and releases the monitor's share, so the eventfd
-// closes as soon as no wait still uses it.
+// The monitor, its callbacks and any running wait share the queue. The Python wrapper
+// keeps each subscribed agent alive until its subscriptions are removed. close()
+// deregisters, which waits for running callbacks, then closes the queue and releases the
+// monitor's share, so the eventfd closes as soon as no wait still uses it.
 class NotificationMonitor {
 public:
     NotificationMonitor() : inbox_(std::make_shared<NotificationInbox>()) {}
@@ -175,50 +175,45 @@ public:
         if (!inbox_) {
             throw MonitorClosed();
         }
-        pruneDestroyedAgents();
-        // Make room before publishing a callback. A failed subscription can
-        // roll back without leaving a registered callback behind.
-        registrations_.push_back({std::string(prefix), {}});
-        try {
-            const auto status = agent.registerNotifCallback(
-                prefix,
-                [inbox = inbox_, local = std::move(local)](std::string_view remote,
-                                                           std::string_view message) {
-                    return inbox->push(local, remote, message);
-                },
-                registrations_.back().token);
-            if (status != NIXL_SUCCESS) {
-                registrations_.pop_back();
-            }
-            return status;
+        // Allocate first, so recording a successful registration cannot fail.
+        std::string owned_prefix(prefix);
+        subscriptions_.reserve(subscriptions_.size() + 1);
+        auto deliver = [inbox = inbox_, local = std::move(local)](std::string_view remote,
+                                                                  std::string_view message) {
+            inbox->push(local, remote, message);
+        };
+        const auto status = agent.registerNotifCallback(prefix, std::move(deliver));
+        if (status == NIXL_SUCCESS) {
+            subscriptions_.push_back({&agent, std::move(owned_prefix)});
         }
-        catch (...) {
-            registrations_.pop_back();
-            throw;
-        }
+        return status;
     }
 
     [[nodiscard]] bool
     unsubscribe(nixlAgent &agent, std::string_view prefix) {
         const std::lock_guard lock(mutex_);
-        pruneDestroyedAgents();
-        for (auto it = registrations_.begin(); it != registrations_.end(); ++it) {
-            // Deregistration fails for another agent's token, even if a destroyed agent's
-            // address was reused.
-            if (it->prefix == prefix && agent.deregisterNotifCallback(it->token) == NIXL_SUCCESS) {
-                registrations_.erase(it);
-                return true;
-            }
+        const auto it = std::find_if(
+            subscriptions_.begin(), subscriptions_.end(), [&](const Subscription &entry) {
+                return entry.agent == &agent && entry.prefix == prefix;
+            });
+        if (it == subscriptions_.end()) {
+            return false;
         }
-        return false;
+        (void)agent.deregisterNotifCallback(prefix);
+        subscriptions_.erase(it);
+        return true;
     }
 
     void
     close() noexcept {
         const std::lock_guard lock(mutex_);
         if (inbox_) {
+            // Deregister first, so no callback can run against the closed queue.
+            for (const auto &entry : subscriptions_) {
+                (void)entry.agent->deregisterNotifCallback(entry.prefix);
+            }
+            subscriptions_.clear();
             inbox_->close(); // Wakes a waiter.
-            registrations_.clear();
             inbox_.reset();
         }
     }
@@ -240,19 +235,13 @@ public:
 
 private:
     struct Subscription {
+        nixlAgent *agent;
         std::string prefix;
-        nixlNotifRegistration token;
     };
 
-    // Called with mutex_ held. Their callbacks are already gone, and the check never blocks.
-    void
-    pruneDestroyedAgents() noexcept {
-        std::erase_if(registrations_, [](const Subscription &entry) { return !entry.token; });
-    }
-
-    mutable std::mutex mutex_; // Guards inbox_ and registrations_.
+    mutable std::mutex mutex_; // Guards inbox_ and subscriptions_.
     std::shared_ptr<NotificationInbox> inbox_;
-    std::vector<Subscription> registrations_;
+    std::vector<Subscription> subscriptions_;
 };
 
 } // namespace nixl::python

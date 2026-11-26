@@ -17,57 +17,19 @@
 #ifndef NIXL_SRC_API_CPP_NIXL_NOTIF_H
 #define NIXL_SRC_API_CPP_NIXL_NOTIF_H
 
-#include <cstdint>
 #include <functional>
-#include <memory>
 #include <string_view>
 
-class nixlNotifDispatcher;
-
 /**
- * A notification receiver invoked on the backend progress path. Message and sender views
- * are valid for the invocation. Return true to consume the notification, or false to
- * leave it available through getNotifs(). An exception is treated as a refusal.
+ * A notification receiver invoked on the backend progress path. It receives every
+ * notification that matches its prefix. Message and sender views are valid for the
+ * invocation. An exception is logged as an error, and the notification is dropped.
  *
  * Keep callbacks short and hand work off to another thread. A callback must not call
- * NIXL APIs or wait for another thread to do so, including registration token operations.
- * A callback can run concurrently on several backend threads.
+ * NIXL APIs or wait for another thread to do so. A callback can run concurrently on
+ * several backend threads.
  */
 using nixl_notif_callback_t =
-    std::function<bool(std::string_view remote_agent, std::string_view message)>;
-
-/** Move-only registration owner. A token may outlive the agent that issued it. */
-class nixlNotifRegistration {
-public:
-    nixlNotifRegistration() noexcept = default;
-    ~nixlNotifRegistration() noexcept;
-    nixlNotifRegistration(nixlNotifRegistration &&other) noexcept;
-    nixlNotifRegistration &
-    operator=(nixlNotifRegistration &&other) noexcept;
-    nixlNotifRegistration(const nixlNotifRegistration &) = delete;
-    nixlNotifRegistration &
-    operator=(const nixlNotifRegistration &) = delete;
-
-    /**
-     * Deregister after any running callbacks of the agent finish. Does nothing for an
-     * empty token or once the agent is destroyed. Synchronize access to the token itself
-     * across threads.
-     */
-    void
-    reset() noexcept;
-
-    /**
-     * Whether the token holds a registration with an active notification dispatcher.
-     * The token tests false and becomes reusable once its notification dispatcher shuts down.
-     */
-    [[nodiscard]] explicit
-    operator bool() const noexcept;
-
-private:
-    friend class nixlNotifDispatcher;
-
-    std::weak_ptr<nixlNotifDispatcher> dispatcher_;
-    std::uint64_t id_ = 0; // Zero for an empty token.
-};
+    std::function<void(std::string_view remote_agent, std::string_view message)>;
 
 #endif

@@ -413,7 +413,6 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
       // Each backend decides whether it runs a thread, and such a thread shares
       // agent state - so they also decide the effective sync mode.
       lock(effectiveSyncMode(config.syncMode, md_.usesThread())),
-      notifDispatcher_(std::make_shared<nixlNotifDispatcher>()),
       tracer_(makeAgentTracer(name)) {
     if (name.empty()) {
         throw std::invalid_argument("Agent needs a non-empty name");
@@ -441,7 +440,6 @@ nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &con
 }
 
 nixlAgentData::~nixlAgentData() {
-    notifDispatcher_->shutdown();
     // Runs before any member is destroyed, so no metadata backend thread can
     // still be in the caches below.
     md_.stop();
@@ -557,7 +555,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
-    init_params.notifSink = data->notifDispatcher_.get();
+    init_params.notifSink = &data->notifDispatcher_;
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
@@ -623,7 +621,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
 
     if (backend->supportsNotif() &&
         !backend->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK) &&
-        data->notifDispatcher_->hasRegistrations()) {
+        data->notifDispatcher_.hasRegistrations()) {
         NIXL_WARN << "Backend '" << type << "' of agent '" << data->name_
                   << "' does not support notification callbacks; its notifications are "
                      "only available through getNotifs()";
@@ -1645,10 +1643,8 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::registerNotifCallback(std::string_view prefix,
-                                 nixl_notif_callback_t callback,
-                                 nixlNotifRegistration &registration) {
-    const auto status = data->notifDispatcher_->add(prefix, std::move(callback), registration);
+nixlAgent::registerNotifCallback(std::string_view prefix, nixl_notif_callback_t callback) {
+    const auto status = data->notifDispatcher_.add(prefix, std::move(callback));
     if (status != NIXL_SUCCESS) {
         return status;
     }
@@ -1672,8 +1668,8 @@ nixlAgent::registerNotifCallback(std::string_view prefix,
 }
 
 nixl_status_t
-nixlAgent::deregisterNotifCallback(nixlNotifRegistration &registration) noexcept {
-    return data->notifDispatcher_->remove(registration);
+nixlAgent::deregisterNotifCallback(std::string_view prefix) noexcept {
+    return data->notifDispatcher_.remove(prefix);
 }
 
 nixl_status_t

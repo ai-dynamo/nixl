@@ -148,14 +148,43 @@ class nixl_notification_monitor(nixlBind._NotificationMonitor):
     """Wait on notifications that agents route to it by byte prefix.
 
     Subscribe with nixl_agent.add_notif_monitor(), then drain with wait_any().
-    The queue is unbounded, like the agent's own notification queue.
+    The queue is unbounded, like the agent's own notification queue. The
+    monitor keeps each subscribed agent alive until its subscriptions are
+    removed or the monitor is closed.
     """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # The native subscriptions refer to these agents.
+        self._subscribed: dict[tuple[int, bytes], nixl_agent] = {}
 
     def __enter__(self) -> nixl_notification_monitor:
         return self
 
     def __exit__(self, *exc_info) -> None:
         self.close()
+
+    def __del__(self) -> None:
+        # Deregister while the subscribed agents are still referenced.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Remove all subscriptions and discard queued notifications.
+
+        Wakes a blocked wait_any() with RuntimeError and releases the eventfd.
+        Closing twice is allowed.
+        """
+        super().close()
+        self._subscribed.clear()
+
+    def _track(self, agent: nixl_agent, prefix: bytes) -> None:
+        self._subscribed[(id(agent), bytes(prefix))] = agent
+
+    def _untrack(self, agent: nixl_agent, prefix: bytes) -> None:
+        self._subscribed.pop((id(agent), bytes(prefix)), None)
 
 
 class nixl_thread_sync_t(Enum):
@@ -858,9 +887,11 @@ class nixl_agent:
         messages with no matching prefix. A prefix that overlaps an existing one,
         or a second default, raises nixlInvalidParamError. Remove the existing
         subscription first to replace it.
+        The monitor keeps this agent alive until the subscription is removed.
         Closing or dropping the monitor removes all its subscriptions.
         """
         self.agent.addNotifMonitor(monitor, self.name, prefix)
+        monitor._track(self, prefix)
 
     def remove_notif_monitor(
         self, monitor: nixl_notification_monitor, prefix: bytes
@@ -870,7 +901,10 @@ class nixl_agent:
         Return False if the monitor has no such subscription. Already queued
         notifications remain available on the monitor.
         """
-        return self.agent.removeNotifMonitor(monitor, prefix)
+        removed = self.agent.removeNotifMonitor(monitor, prefix)
+        if removed:
+            monitor._untrack(self, prefix)
+        return removed
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.

@@ -478,32 +478,28 @@ class nixlAgent {
          * prefixes cannot overlap. An empty prefix registers a default handler for messages
          * with no matching prefix. Registration fails while an overlapping prefix, or another
          * default, is registered; deregister it first to replace it.
-         * Unconsumed messages remain available through getNotifs().
+         * A matching notification always goes to its callback. Messages that match no
+         * registration remain available through getNotifs().
          * Registration is allowed before a backend is created and affects future backends.
          * Registration and deregistration wait for running callbacks of this agent.
+         * The agent owns its registrations and drops any that remain when it is destroyed.
          *
-         * @param  prefix        Notification prefix, copied by the agent
-         * @param  callback      Function that returns true when it consumes the notification
-         * @param  registration  Token that receives ownership of the registration. It must
-         *                       be empty or belong to an agent whose notification dispatcher
-         *                       has shut down.
-         * @return NIXL_ERR_INVALID_PARAM for an overlapping prefix, an existing default, an
-         *         empty function, or a token already in use
+         * @param  prefix    Notification prefix, copied by the agent
+         * @param  callback  Function that receives the matching notifications
+         * @return NIXL_ERR_INVALID_PARAM for an overlapping prefix, an existing default, or
+         *         an empty function
          */
         [[nodiscard]] nixl_status_t
-        registerNotifCallback(std::string_view prefix,
-                              nixl_notif_callback_t callback,
-                              nixlNotifRegistration &registration);
+        registerNotifCallback(std::string_view prefix, nixl_notif_callback_t callback);
 
         /**
-         * @brief Remove the registration after any running callbacks of this agent finish.
+         * @brief Remove the registration with exactly this prefix after any running callbacks
+         *        of this agent finish.
          *
-         * An empty token is a no-op. A token owned by a different live or destroyed agent
-         * returns NIXL_ERR_INVALID_PARAM and is left unchanged. Use token.reset() when the
-         * agent is unavailable.
+         * @return NIXL_ERR_NOT_FOUND if no callback is registered with this prefix
          */
         [[nodiscard]] nixl_status_t
-        deregisterNotifCallback(nixlNotifRegistration &registration) noexcept;
+        deregisterNotifCallback(std::string_view prefix) noexcept;
 
         /**
          * @brief  Add entries to the input notifications list (can be non-empty), which is a map

@@ -1163,10 +1163,9 @@ namespace agent {
     };
 
     TEST_F(singleAgentSessionFixture, NotifCallbacksWarnAboutUnsupportedBackends) {
-        const auto consume = [](std::string_view, std::string_view) { return true; };
-        nixlNotifRegistration early, late;
+        const auto ignore = [](std::string_view, std::string_view) {};
         // Registration before any backend is loaded is silent.
-        ASSERT_EQ(agent_->registerNotifCallback("early:", consume, early), NIXL_SUCCESS);
+        ASSERT_EQ(agent_->registerNotifCallback("early:", ignore), NIXL_SUCCESS);
         {
             const gtest::LogMessageCounter warning("does not support notification callbacks");
             nixl_b_params_t params;
@@ -1176,7 +1175,7 @@ namespace agent {
         }
 
         const gtest::LogMessageCounter warning("no loaded backend supports it");
-        ASSERT_EQ(agent_->registerNotifCallback("late:", consume, late), NIXL_SUCCESS);
+        ASSERT_EQ(agent_->registerNotifCallback("late:", ignore), NIXL_SUCCESS);
         EXPECT_EQ(warning.count(), 1u);
     }
 
@@ -1188,10 +1187,9 @@ namespace agent {
         ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
 
         const gtest::LogMessageCounter warning("no loaded backend supports it");
-        nixlNotifRegistration token;
-        ASSERT_EQ(agent_->registerNotifCallback(
-                      "prefix:", [](std::string_view, std::string_view) { return true; }, token),
-                  NIXL_SUCCESS);
+        ASSERT_EQ(
+            agent_->registerNotifCallback("prefix:", [](std::string_view, std::string_view) {}),
+            NIXL_SUCCESS);
         EXPECT_EQ(warning.count(), 0u);
     }
 
@@ -1206,10 +1204,9 @@ namespace agent {
         // A storage-like backend cannot deliver notifications, so a callback backend
         // may still be added later.
         const gtest::LogMessageCounter warning("no loaded backend supports it");
-        nixlNotifRegistration token;
-        ASSERT_EQ(agent_->registerNotifCallback(
-                      "prefix:", [](std::string_view, std::string_view) { return true; }, token),
-                  NIXL_SUCCESS);
+        ASSERT_EQ(
+            agent_->registerNotifCallback("prefix:", [](std::string_view, std::string_view) {}),
+            NIXL_SUCCESS);
         EXPECT_EQ(warning.count(), 0u);
     }
 
