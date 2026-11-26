@@ -245,13 +245,24 @@ class nixlBackendEngine {
             return NIXL_ERR_BACKEND;
         }
 
-        // *** Needs to be implemented if the backend has the NOTIF capability *** //
-
         // Populate an empty received notif list. Elements are released within backend then.
-        virtual nixl_status_t getNotifs(notif_list_t &notif_list) { return NIXL_ERR_BACKEND; }
+        virtual nixl_status_t
+        getNotifs(notif_list_t &notif_list) {
+            if (supportsCapability(nixl_backend_capability_t::NOTIF)) {
+                NIXL_ERROR << "getNotifs must be overridden if NOTIF capability is supported";
+            } else {
+                NIXL_ERROR << "getNotifs: NOTIF capability is not supported";
+            }
+            return NIXL_ERR_BACKEND;
+        }
 
         // Generates a standalone notification, not bound to a transfer.
         virtual nixl_status_t genNotif(const std::string &remote_agent, const std::string &msg) const {
+            if (supportsCapability(nixl_backend_capability_t::NOTIF)) {
+                NIXL_ERROR << "genNotif must be overridden if NOTIF capability is supported";
+            } else {
+                NIXL_ERROR << "genNotif: NOTIF capability is not supported";
+            }
             return NIXL_ERR_BACKEND;
         }
 
