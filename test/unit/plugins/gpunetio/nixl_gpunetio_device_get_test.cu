@@ -21,6 +21,7 @@
 namespace {
 constexpr size_t kBytes = 8192, kScratch = 8000, kScalarDst = 64, kBatchDst = 1024;
 constexpr unsigned kCount = 16, kItemBytes = 128;
+constexpr size_t kWrapDst = 2048;
 
 void
 check(cudaError_t rc, const char *what) {
@@ -318,12 +319,13 @@ scalarWrap(nixlMemViewH local,
     const auto *view = static_cast<const GpunetioDeviceView *>(wrapper->backend_memview);
     const uint64_t count = 2ull * view->context->channels[0].qp->sq_wqe_num + 3;
     *count_out = count;
-    if (count > kBytes - 4096) {
+    if (count > kBytes - kWrapDst) {
         *result = 55;
         return;
     }
     for (size_t i = 0; i < count; ++i) {
-        if (get({local, 0, 4096 + i}, {remote, 0, 17 + i}, 1, 0, flags::defer) != NIXL_IN_PROG) {
+        if (get({local, 0, kWrapDst + i}, {remote, 0, 17 + i}, 1, 0, flags::defer) !=
+            NIXL_IN_PROG) {
             *result = 55;
             return;
         }
@@ -333,7 +335,7 @@ scalarWrap(nixlMemViewH local,
         return;
     }
     for (size_t i = 0; i < count; ++i) {
-        if (destination[4096 + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
+        if (destination[kWrapDst + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
             *result = 56;
         }
     }
@@ -389,7 +391,9 @@ standardInvalid(nixlMemViewH local, nixlMemViewH remote, unsigned qps, int *resu
         flush(remote, qps) != NIXL_ERR_INVALID_PARAM ||
         get<level_t::GRID>({local, 0, 4096}, {remote, 0, 17}, 64) != NIXL_ERR_NOT_SUPPORTED ||
         put({local, 0, 4096}, {remote, 0, 4096}, 64) != NIXL_ERR_NOT_SUPPORTED ||
-        atomicAdd(1, {remote, 0, 5000}) != NIXL_ERR_NOT_SUPPORTED) {
+        atomicAdd(1, {remote, 0, 5000}) != NIXL_ERR_NOT_SUPPORTED ||
+        put({nullptr, 0, 0}, {remote, 0, 4096}, 64) != NIXL_ERR_INVALID_PARAM ||
+        atomicAdd(1, {nullptr, 0, 0}) != NIXL_ERR_INVALID_PARAM) {
         *result = 48;
     }
 }
@@ -1378,7 +1382,7 @@ main(int argc, char **argv) {
             checkStandardResult();
             verifyStandard();
         }
-        check(cudaMemset(destination + 4096, 0xa5, kBytes - 4096),
+        check(cudaMemset(destination + kWrapDst, 0xa5, kBytes - kWrapDst),
               "poison scalar wrap destinations");
         check(cudaMemset(device_result, 0, sizeof(int)), "reset scalar wrap result");
         scalarWrap<<<1, 1>>>(locals[0], remotes[0], destination, device_generation, device_result);
@@ -1388,7 +1392,7 @@ main(int argc, char **argv) {
         check(cudaMemcpy(&count, device_generation, sizeof(count), cudaMemcpyDeviceToHost),
               "read scalar wrap count");
         std::vector<uint8_t> wrap_bytes(count);
-        check(cudaMemcpy(wrap_bytes.data(), destination + 4096, count, cudaMemcpyDeviceToHost),
+        check(cudaMemcpy(wrap_bytes.data(), destination + kWrapDst, count, cudaMemcpyDeviceToHost),
               "read scalar wrap bytes");
         for (size_t i = 0; i < count; ++i) {
             if (wrap_bytes[i] != expected_source[17 + i]) {

@@ -151,6 +151,9 @@ put(const memViewElem &src,
     unsigned channel_id,
     uint64_t flags,
     xferStatusH *xfer_status) {
+    if (!src.mvh || !dst.mvh) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *src_view = detail::asDeviceMemView(src.mvh);
     const auto *dst_view = detail::asDeviceMemView(dst.mvh);
     const memViewElem backend_src{src_view->backend_memview, src.index, src.offset};
@@ -207,6 +210,9 @@ atomicAdd(uint64_t value,
           unsigned channel_id,
           uint64_t flags,
           xferStatusH *xfer_status) {
+    if (!counter.mvh) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
     const auto *view = detail::asDeviceMemView(counter.mvh);
     const memViewElem backend_counter{view->backend_memview, counter.index, counter.offset};
 
