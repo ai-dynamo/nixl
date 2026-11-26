@@ -169,7 +169,7 @@ newer. The optional legacy KVCache library is not needed for this plugin:
 
 ```bash
 git clone https://github.com/expontech/wqs_mock.git
-git -C wqs_mock checkout 3dc51f00e4c2f359fbd3752fc8cd785b95f1a1e3
+git -C wqs_mock checkout 9c7b464a8e2c0ba9f333846cb57b578cad9294b8
 cmake -S wqs_mock -B wqs_mock/build \
   -DWQS_MOCK_BUILD_LEGACY=OFF \
   -DCMAKE_INSTALL_PREFIX=/path/to/wqs-mock \
