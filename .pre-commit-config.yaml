@@ -61,6 +61,7 @@ repos:
       - id: mixed-line-ending
       - id: requirements-txt-fixer
       - id: trailing-whitespace
+        exclude: \.(patch|diff)$
 
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.35.1
