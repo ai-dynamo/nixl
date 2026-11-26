@@ -73,7 +73,8 @@ public:
      * @param  timeout       Time limit: the default waits without a limit, and zero or less
      *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if a request completed or no request is attached,
-     *                       NIXL_IN_PROG if the time limit expired, or an error code
+     *                       NIXL_IN_PROG if the time limit expired or a signal interrupted the
+     *                       wait, or an error code
      */
     virtual nixl_status_t
     waitAny(std::vector<nixlXferCompletion> &completions,
@@ -83,12 +84,12 @@ public:
      * @brief  Wait until all attached requests complete, successfully or not
      *
      * @param  completions   [out] Cleared and then filled with the completed requests and
-     *                       their final status, also when the time limit expires. They are
+     *                       their final status, also when NIXL_IN_PROG is returned. They are
      *                       detached from the monitor
      * @param  timeout       Time limit: the default waits without a limit, and zero or less
      *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if no request remains attached, NIXL_IN_PROG if the
-     *                       time limit expired, or an error code
+     *                       time limit expired or a signal interrupted the wait, or an error code
      */
     virtual nixl_status_t
     waitAll(std::vector<nixlXferCompletion> &completions,

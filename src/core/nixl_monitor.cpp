@@ -56,7 +56,10 @@ nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
     do {
         pollfd pfd = {fd_, POLLIN, 0};
         const int ret = poll(&pfd, 1, remaining_ms);
-        if ((ret < 0) && (errno != EINTR)) {
+        if (ret < 0) {
+            if (errno == EINTR) {
+                return NIXL_IN_PROG;
+            }
             NIXL_PERROR << "Failed to poll monitor eventfd";
             return NIXL_ERR_UNKNOWN;
         }
