@@ -38,14 +38,14 @@ public:
           backend_(std::move(backend)),
           telemetry_(telemetry) {}
 
+    using nixlBackendTraceSink::recordPhase;
+
     void
     recordPhase(nixl_trace_phase_t phase,
-                std::string_view label,
                 nixlTime::us_t timestamp,
+                const TraceIdentity &identity,
                 std::span<const nixlBackendTraceAttr> attrs,
-                const TraceContext *context,
-                std::uint64_t request_id,
-                std::uint64_t execution) noexcept override;
+                std::string_view label) noexcept override;
 
 private:
     Tracer &tracer_;

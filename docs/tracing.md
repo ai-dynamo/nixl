@@ -58,10 +58,13 @@ execution-trace tools.
   `Metadata`.
 
 `nixl::trace` is an **internal NIXL core API**: it is compiled into `libnixl` but its
-headers (`tracing/trace.h`, `tracing/trace_macros.h`, `tracing/trace_plugin.h`, under
-`src/core/tracing/`) are not installed as public headers. Only NIXL core instruments
-it today; because internal→public is a non-breaking change, it can be promoted to a
-public header later if an external consumer appears.
+headers (under `src/core/tracing/`) are not installed as public headers. Each kind of
+module includes one of them: NIXL core includes `tracing/tracing.h` (the call-site
+macros and a request's `Traceable`), a backend plugin includes `tracing/backend_trace.h`
+(the phase sink, the post trace and the notification trace tags), and a trace backend
+includes `tracing/trace_plugin.h`. The tracer, the sink and the wire codec stay inside
+tracing. Only NIXL core instruments it today; because internal→public is a non-breaking
+change, it can be promoted to a public header later if an external consumer appears.
 
 ## Two gates: build/packaging and runtime
 
@@ -301,6 +304,15 @@ so only in-tree plugins can read it. Next to `traceContext`, `traceRequestId` an
 is 0 at prep, and both are 0 when tracing is off. They are plain integers that any
 plugin can read; a plugin that records phases later copies them with the context
 and passes them back to `recordPhase`.
+
+Next to them, `traceIdentity` points to the same three values as one internal
+`nixl::trace::TraceIdentity` (`context`, `requestId` and `execution`), valid only
+for the call and null in `prepMemView`, like `traceContext`. A plugin that records
+phases keeps a `nixlBackendPostTrace`, built at each post from its sink and these
+arguments: it records only with a sink and a sampled post, `record(phase)` stamps
+the phase with `nixlTime::getUs()` itself, and `recordAt(phase, timestamp)`
+records a time the plugin took earlier with `now()`, which reads the clock only when
+the post trace records.
 
 UCX is the first such carrier. For a sampled request it appends the 26-byte
 record as a `tctx` tag after the notification's `name` and `msg`, then, when the
