@@ -21,13 +21,20 @@
 #include <string_view>
 
 /**
- * A notification receiver invoked on the backend progress path. It receives every
- * notification that matches its prefix. Message and sender views are valid for the
- * invocation. An exception is logged as an error, and the notification is dropped.
+ * A notification receiver invoked on the receiving backend's progress path. It runs on the
+ * backend's progress thread when there is one, and otherwise on the application's thread
+ * inside a NIXL call that drives progress, such as getNotifs() or a transfer status check.
+ * It receives every notification that matches its prefix. Message and sender views are
+ * valid for the invocation. An exception is logged as an error, and the notification is
+ * dropped.
  *
- * Keep callbacks short and hand work off to another thread. A callback must not call
- * NIXL APIs or wait for another thread to do so. A callback can run concurrently on
- * several backend threads.
+ * A callback must not call any NIXL agent function, including registering or deregistering
+ * callbacks, and must not wait for another thread that does. It can run while the agent
+ * holds internal locks, so such a call can deadlock. A callback must also hand off any
+ * work that is not trivial, or that can block or take long, such as I/O, waiting on locks
+ * or heavy processing, to another thread. Otherwise it stalls the backend's progress and
+ * delays other notifications and transfers. A callback can run concurrently on several
+ * backend threads.
  */
 using nixl_notif_callback_t =
     std::function<void(std::string_view remote_agent, std::string_view message)>;

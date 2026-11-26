@@ -483,6 +483,13 @@ class nixlAgent {
          * Registration is allowed before a backend is created and affects future backends.
          * Registration and deregistration wait for running callbacks of this agent.
          * The agent owns its registrations and drops any that remain when it is destroyed.
+         * Callbacks run on the receiving backend's progress thread when it has one. Otherwise
+         * they run inside the application's NIXL calls that drive progress, such as
+         * getNotifs() or transfer status checks.
+         * A callback must not call any NIXL agent function or wait for another thread that
+         * does, because that can deadlock. It must hand off any non-trivial, blocking or slow
+         * work to another thread, so that it does not stall the backend's progress. See
+         * nixl_notif_callback_t.
          *
          * @param  prefix    Notification prefix, copied by the agent
          * @param  callback  Function that receives the matching notifications
