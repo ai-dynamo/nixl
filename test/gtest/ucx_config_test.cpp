@@ -315,11 +315,19 @@ TEST_F(UcxConfigTest, ModifyAlwaysOverridesEnvValue) {
 }
 
 TEST_F(UcxConfigTest, ModifyEqualSetsDefaultValue) {
-    if (getDumpLine(nixl::ucx::config(), "MAX_RMA_RAILS") != "# UCX_MAX_RMA_RAILS=1") {
-        GTEST_SKIP() << "UCX_MAX_RMA_RAILS is set in a UCX configuration file";
+    // Since openucx/ucx#12325 the UCX default is 1 rail, except for the GPU buffers whose NICs
+    // UCX assigns: these buffers get every lane of their NICs
+    const auto line = getDumpLine(nixl::ucx::config(), "MAX_RMA_RAILS");
+    std::string rails;
+    if (line == "# UCX_MAX_RMA_RAILS=1") {
+        rails = "2";
+    } else if (line == "# UCX_MAX_RMA_RAILS=default:1,assigned:auto") {
+        rails = "2,assigned:auto";
+    } else {
+        GTEST_SKIP() << "UCX_MAX_RMA_RAILS is set in a UCX configuration file: " << line;
     }
 
-    EXPECT_EQ(modifyMaxRmaRails(), "2");
+    EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", rails));
 }
 
 TEST_F(UcxConfigTest, ModifyEqualKeepsEnvValue) {
@@ -329,14 +337,14 @@ TEST_F(UcxConfigTest, ModifyEqualKeepsEnvValue) {
             SCOPED_TRACE(var + "=" + value);
             gtest::ScopedEnv env;
             env.addVar(var, value);
-            EXPECT_EQ(modifyMaxRmaRails(), value);
+            EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", value));
         }
     }
 }
 
 TEST_F(UcxConfigTest, ModifyEqualKeepsAliasValue) {
     env_.addVar("UCX_MAX_RMA_LANES", "4");
-    EXPECT_EQ(modifyMaxRmaRails(), "4");
+    EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", "4"));
 }
 
 TEST_F(UcxConfigDeathTest, ModifyEqualKeepsConfigFileValue) {
@@ -344,9 +352,16 @@ TEST_F(UcxConfigDeathTest, ModifyEqualKeepsConfigFileValue) {
     EXPECT_EXIT(
         {
             addConfigFileLine("UCX_MAX_RMA_RAILS=4");
-            std::cerr << "MAX_RMA_RAILS=" << modifyMaxRmaRails() << std::endl;
-            std::_Exit(0);
+            const auto rails = getPrintedValue("MAX_RMA_RAILS", "4");
+            if (getValue(nixl::ucx::config(), "MAX_RMA_RAILS") != rails) {
+                std::cerr << "The UCX configuration file is not applied" << std::endl;
+                std::_Exit(1);
+            }
+
+            const auto value = modifyMaxRmaRails();
+            std::cerr << "MAX_RMA_RAILS=" << value << ", expected " << rails << std::endl;
+            std::_Exit((value == rails) ? 0 : 1);
         },
         ::testing::ExitedWithCode(0),
-        "MAX_RMA_RAILS=4");
+        "");
 }
