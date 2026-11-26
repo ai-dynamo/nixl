@@ -267,14 +267,6 @@ def make_bias(num_bias: int, num_tokens: int, hidden: int) -> Bias:
     return (biases[0], biases[1]) if num_bias == 2 else biases[0] if num_bias else None
 
 
-def combine_recipe(buffer: runtime_ep.ElasticBuffer):
-    # Without `allow_multiple_reduction` the combine input is already reduced within the rank.
-    return (
-        True,
-        buffer.allow_multiple_reduction and buffer._get_mode() == "hybrid",
-    )
-
-
 # Bound each large float32 reference intermediate; the final BF16 rows remain allocated.
 COMBINE_SLICE_BYTES = 1 << 30
 
@@ -394,7 +386,14 @@ class Case:
     def payload(self, global_idx: torch.Tensor) -> Payload:
         x = self.pre_combine_data(global_idx.clamp_min(0), 1)[:, 0, :]
         if self.dtype == "fp8":
-            return per_token_cast_to_fp8(x)
+            data, scales = per_token_cast_to_fp8(x)
+            # Make row and column swaps visible in both scale layouts.
+            scales.mul_(
+                1
+                + global_idx[:, None].remainder(31) * scales.size(1)
+                + torch.arange(scales.size(1), device=scales.device)
+            )
+            return data, scales
         if self.dtype == "nvfp4":
             return as_nvfp4(x)
         return x
@@ -438,7 +437,12 @@ class Case:
         return y
 
     def combine_reference(
-        self, phase: List[int], topk_idx: torch.Tensor, bias: Bias = None
+        self,
+        phase: List[int],
+        topk_idx: torch.Tensor,
+        bias: Bias = None,
+        *,
+        expanded=False,
     ) -> torch.Tensor:
         """This rank's expected combine output in the phase for `topk_idx` (dropped selections hold -1 and contribute zero)"""
         active = (topk_idx >= 0) & self.active_expert_mask(phase)[topk_idx.clamp_min(0)]
@@ -462,14 +466,19 @@ class Case:
                     if isinstance(bias, tuple)
                     else bias[rows] if bias is not None else None
                 ),
-                *combine_recipe(self.buffer),
+                not expanded or self.buffer.allow_multiple_reduction,
+                self.buffer.allow_multiple_reduction
+                and self.buffer._get_mode() == "hybrid",
             )
         return ref
 
     def row_slices(self, num_rows: int) -> List[slice]:
         """Bound temporary memory without changing a token's reduction order."""
         step = max(1, COMBINE_SLICE_BYTES // (self.num_topk * self.hidden * 4))
-        return [slice(start, start + step) for start in range(0, num_rows, step)]
+        return [
+            slice(start, min(start + step, num_rows))
+            for start in range(0, num_rows, step)
+        ]
 
     def expected_receive(
         self,
@@ -527,10 +536,62 @@ def validate_plan(
             case.buffer._masks_of(phase)  # Future joiners are checked after connection.
 
 
+def check_expanded_dispatch(
+    case,
+    recv_x,
+    recv_weights,
+    meta,
+    exp_x,
+    exp_idx,
+    exp_w,
+    ends,
+    aligned,
+    *,
+    do_cpu_sync,
+    do_zero_padding,
+):
+    local = exp_idx >= 0
+    assert (meta[:, 2:][~local] == -1).all()
+    rows, picks = torch.where(local)
+    experts = exp_idx[rows, picks]
+    slots = meta[:, 2:][rows, picks].long()
+    slot_experts = torch.arange(aligned.numel(), device="cuda").repeat_interleave(
+        aligned
+    )
+    num_rows = slot_experts.numel()
+    valid = torch.arange(num_rows, device="cuda") < ends[slot_experts]
+    # The metadata is in source-token order. Deterministic dispatch preserves it within each expert.
+    order = (
+        torch.arange(slots.numel(), device="cuda")
+        if case.buffer.deterministic
+        else slots.argsort()
+    )
+    order = order[experts[order].argsort(stable=True)]
+    assert torch.equal(slots[order], torch.where(valid)[0])
+    allocated = payload_parts(recv_x)[0].shape[0]
+    assert allocated == num_rows if do_cpu_sync else allocated >= num_rows
+    if case.dtype == "fp8":
+        data, sf = recv_x
+        assert sf.stride(0) == 1 and sf.stride(1) >= allocated
+        assert sf.data_ptr() % 16 == 0 and sf.stride(1) * sf.element_size() % 16 == 0
+        recv_x = data[:num_rows], sf[:num_rows].contiguous()
+    assert recv_weights is not None and recv_weights.shape == (allocated,)
+    assert torch.equal(recv_weights[slots], exp_w[rows, picks])
+    for chunk in case.row_slices(slots.numel()):
+        assert payload_equal(
+            payload_rows(recv_x, slots[chunk]), payload_rows(exp_x, rows[chunk])
+        ), "expanded payload mismatch"
+    if do_zero_padding:
+        assert recv_weights[:num_rows][~valid].count_nonzero().item() == 0
+        for part in payload_parts(recv_x):
+            assert part[:num_rows].view(torch.uint8)[~valid].count_nonzero().item() == 0
+    return num_rows
+
+
 def check_dispatch(
     case: Case,
     phase: List[int],
-    routing_for: Callable[[int], Tuple[torch.Tensor, torch.Tensor]],
+    expected,
     recv_x,
     recv_topk_idx,
     recv_topk_weights,
@@ -538,8 +599,10 @@ def check_dispatch(
     tag: str,
     *,
     do_cpu_sync: bool,
+    do_zero_padding: bool = False,
 ):
-    exp_gidx, exp_x, exp_idx, exp_w = case.expected_receive(phase, routing_for)
+    """Return the logical output row count (including expanded padding) and per-expert token counts."""
+    exp_gidx, exp_x, exp_idx, exp_w = expected
     num_recv = exp_gidx.numel()
     assert (
         handle.num_recv_tokens_device.item() == num_recv
@@ -553,20 +616,16 @@ def check_dispatch(
         handle.psum_num_recv_tokens_per_scaleup_rank, prefix
     ), f"[{tag}] per-position receive prefix sums mismatch"
 
-    gidx = handle.recv_src_metadata[:num_recv, 0]
-    order = slice(num_recv) if case.buffer.deterministic else torch.argsort(gidx)
+    meta = handle.recv_src_metadata[:num_recv]
+    # Expanded metadata can arrive unordered even when the expert slots are sorted.
+    order = (
+        meta[:, 0].argsort()
+        if handle.do_expand or not case.buffer.deterministic
+        else slice(num_recv)
+    )
     assert torch.equal(
-        gidx[order], exp_gidx
+        meta[order, 0], exp_gidx
     ), f"[{tag}] received source tokens differ from the expectation"
-    if case.dtype == "fp8":
-        assert recv_x[1].is_contiguous(), f"[{tag}] expected row-major FP8 scales"
-    assert payload_equal(
-        payload_rows(recv_x, order), exp_x
-    ), f"[{tag}] received payload mismatch ({case.dtype})"
-    assert torch.equal(
-        recv_topk_idx[order], exp_idx
-    ), f"[{tag}] local expert indices mismatch"
-    assert torch.equal(recv_topk_weights[order], exp_w), f"[{tag}] weights mismatch"
     counts = torch.bincount(
         exp_idx[exp_idx >= 0].to(torch.int64),
         minlength=case.buffer.num_experts_per_rank,
@@ -585,10 +644,38 @@ def check_dispatch(
         assert (
             not handle.num_recv_tokens_per_expert_list
         ), f"[{tag}] unexpected CPU expert counts"
+    ends = aligned_counts.cumsum(0)
+    if handle.do_expand:
+        ends = ends - aligned_counts + counts
+        assert recv_topk_idx is None
+        num_output_rows = check_expanded_dispatch(
+            case,
+            recv_x,
+            recv_topk_weights,
+            meta[order],
+            exp_x,
+            exp_idx,
+            exp_w,
+            ends,
+            aligned_counts,
+            do_cpu_sync=do_cpu_sync,
+            do_zero_padding=do_zero_padding,
+        )
+    else:
+        num_output_rows = num_recv
+        if case.dtype == "fp8":
+            assert recv_x[1].is_contiguous(), f"[{tag}] expected row-major FP8 scales"
+        assert payload_equal(
+            payload_rows(recv_x, order), exp_x
+        ), f"[{tag}] received payload mismatch ({case.dtype})"
+        assert torch.equal(
+            recv_topk_idx[order], exp_idx
+        ), f"[{tag}] local expert indices mismatch"
+        assert torch.equal(recv_topk_weights[order], exp_w), f"[{tag}] weights mismatch"
     assert torch.equal(
-        handle.psum_num_recv_tokens_per_expert, aligned_counts.cumsum(0)
-    ), f"[{tag}] aligned expert prefix sums mismatch"
-    return num_recv, counts
+        handle.psum_num_recv_tokens_per_expert, ends
+    ), f"[{tag}] expert prefix sums mismatch"
+    return num_output_rows, counts
 
 
 def run_eager(
@@ -599,206 +686,82 @@ def run_eager(
     mode: EPMode = EPMode(),
     *,
     do_cpu_sync: bool = True,
+    check_expanded: bool = False,
+    do_zero_padding: bool = False,
 ):
     buffer = case.buffer
     me = buffer.world_rank
     topk_idx, topk_weights = case.routing(phase_idx, me, phase)
     x = case.payload(case.payload_indices(me))
-    dispatch_args = case.dispatch_kwargs(do_cpu_sync=do_cpu_sync) | dict(
-        do_handle_copy=mode.do_handle_copy, expert_alignment=mode.expert_alignment
+    bias = make_bias(mode.num_bias, topk_idx.shape[0], case.hidden)
+    expected = case.expected_receive(
+        phase, lambda src: case.routing(phase_idx, src, phase)
     )
-    recv_x, recv_topk_idx, recv_topk_weights, handle, dispatch_event = launch(
-        buffer,
-        "dispatch",
-        mode,
+    dispatch_args = case.dispatch_kwargs(do_cpu_sync=do_cpu_sync) | dict(
         x=x,
         topk_idx=topk_idx,
         topk_weights=topk_weights,
-        **dispatch_args,
-    )
-    assert (
-        handle.topk_idx.data_ptr() != topk_idx.data_ptr()
-    ) == mode.do_handle_copy, f"[{tag}] handle-copy setting was not honored"
-    assert torch.equal(handle.topk_idx, topk_idx), "handle changed external expert IDs"
-    num_recv, _ = check_dispatch(
-        case,
-        phase,
-        lambda src: case.routing(phase_idx, src, phase),
-        recv_x,
-        recv_topk_idx,
-        recv_topk_weights,
-        handle,
-        tag,
-        do_cpu_sync=do_cpu_sync,
-    )
-
-    y = case.combine_input(handle.recv_src_metadata[:, 0], recv_topk_idx, num_recv)
-    bias = make_bias(mode.num_bias, topk_idx.shape[0], case.hidden)
-    combined_x, combine_event = launch(
-        buffer, "combine", mode, x=y, handle=handle, bias=bias
-    )
-
-    ref = case.combine_reference(phase, topk_idx, bias)
-    assert torch.equal(
-        combined_x, ref
-    ), f"[{tag}] combined_x mismatch, diff={calc_diff(combined_x, ref)}"
-    return num_recv
-
-
-def run_expanded(
-    case: Case,
-    present: List[int],
-    mode: EPMode = EPMode(expert_alignment=5),
-    *,
-    do_cpu_sync: bool = True,
-    do_zero_padding: bool = False,
-) -> None:
-    """Route to the next rank and this rank, checking expanded slots, expert padding and the combined result."""
-    buffer = case.buffer
-    me = buffer.world_rank
-    epr = buffer.num_experts_per_rank
-    mapping = rank_mapping(buffer)
-    # Interleave domains so the next rank is remote on a hybrid topology.
-    ranks = sorted(
-        present, key=lambda r: (mapping[r] % case.max_su, mapping[r] // case.max_su)
-    )
-    index = ranks.index(me)
-    num_dests = min(2, len(ranks), case.num_topk)
-    num_selected = min(case.num_topk, num_dests * min(2, epr))
-    sources = [ranks[index - 1]]
-    if num_dests == 2:
-        sources.append(me)
-    sources.sort(key=mapping.__getitem__)
-    num_tokens = min(2, case.num_max_tokens_per_rank)
-    tokens = torch.arange(num_tokens, device="cuda")
-
-    def routes(src):
-        dests = [ranks[(ranks.index(src) + 1) % len(ranks)], src]
-        ids = [
-            dests[j % num_dests] * epr + (j // num_dests) * (epr - 1)
-            for j in range(num_selected)
-        ]
-        idx = torch.full(
-            (num_tokens, case.num_topk), -1, dtype=runtime_ep.topk_idx_t, device="cuda"
-        )
-        idx[:, :num_selected] = torch.tensor(ids, device="cuda")
-        return idx
-
-    topk_idx = routes(me)
-    weights = torch.zeros_like(topk_idx, dtype=torch.float32)
-    weights[:, :num_selected] = (
-        1 + (tokens[:, None] + torch.arange(num_selected, device="cuda")) % num_selected
-    )
-    weights /= weights.sum(dim=1, keepdim=True)
-    own_ids = me * case.num_max_tokens_per_rank + tokens
-    source_ids = torch.cat(
-        [src * case.num_max_tokens_per_rank + tokens for src in sources]
-    )
-    payload_ids = torch.cat((own_ids, source_ids))
-    payload = case.payload(payload_ids)
-    if case.dtype == "fp8":
-        assert isinstance(payload, tuple)
-        scales = payload[1]
-        scales.mul_(
-            1
-            + payload_ids[:, None].remainder(31) * scales.size(1)
-            + torch.arange(scales.size(1), device=scales.device)
-        )
-
-    # Five or ten expanded rows at the default alignment force padding between FP8 scale columns.
-    alignment = mode.expert_alignment
-    recv_x, recv_idx, recv_weights, handle, dispatch_event = launch(
-        buffer,
-        "dispatch",
-        mode,
-        x=payload_rows(payload, slice(num_tokens)),
-        topk_idx=topk_idx,
-        topk_weights=weights,
-        do_expand=True,
-        do_zero_padding=do_zero_padding,
-        do_cpu_sync=do_cpu_sync,
-        expert_alignment=alignment,
         do_handle_copy=mode.do_handle_copy,
-        num_max_tokens_per_rank=num_tokens,
-        use_tma_aligned_col_major_sf=case.dtype == "fp8",
+        expert_alignment=mode.expert_alignment,
     )
-    assert (
-        recv_idx is None and handle.num_recv_tokens_device.item() == source_ids.numel()
-    )
-    assert (handle.topk_idx.data_ptr() != topk_idx.data_ptr()) == mode.do_handle_copy
-    # Expanded metadata rows may arrive unordered. Each row identifies the slots for one source token.
-    meta = handle.recv_src_metadata[: source_ids.numel()]
-    meta = meta[meta[:, 0].argsort()]
-    assert torch.equal(
-        meta[:, 0],
-        torch.cat(
-            [case.flat_idx(src, present) * num_tokens + tokens for src in sources]
-        ),
-    )
-    incoming = torch.cat([routes(src) for src in sources])
-    local = incoming // epr == me
-    assert (meta[:, 2:][~local] == -1).all()
-    rows, picks = torch.where(local)
-    experts = incoming[rows, picks] % epr
-    slots = meta[:, 2:][rows, picks].long()
-    counts = torch.bincount(experts.long(), minlength=epr)
-    aligned = (counts + alignment - 1) // alignment * alignment
-    starts = aligned.cumsum(0) - aligned
-    ends = starts + counts
-    assert torch.equal(handle.num_unaligned_recv_tokens_per_expert, counts)
-    assert torch.equal(handle.psum_num_recv_tokens_per_expert, ends)
-    if do_cpu_sync:
-        assert handle.num_recv_tokens == source_ids.numel()
-        assert handle.num_recv_tokens_per_expert_list == aligned.tolist()
 
-    slot_experts = torch.arange(epr, device="cuda").repeat_interleave(aligned)
-    num_rows = slot_experts.numel()
-    valid = torch.arange(num_rows, device="cuda") < ends[slot_experts]
-    # Within an expert, deterministic dispatch must preserve the ascending source-token order above.
-    order = (
-        torch.arange(slots.numel(), device="cuda")
-        if buffer.deterministic
-        else slots.argsort()
-    )
-    order = order[experts[order].argsort(stable=True)]
-    assert torch.equal(slots[order], torch.where(valid)[0])
-    allocated = payload_parts(recv_x)[0].shape[0]
-    assert allocated == num_rows if do_cpu_sync else allocated >= num_rows
-    if case.dtype == "fp8":
-        assert isinstance(recv_x, tuple)
-        data, sf = recv_x
-        assert sf.stride(0) == 1 and sf.stride(1) >= allocated
-        assert sf.data_ptr() % 16 == 0 and sf.stride(1) * sf.element_size() % 16 == 0
-        recv_x = data[:num_rows], sf[:num_rows].contiguous()
-    assert payload_equal(
-        payload_rows(recv_x, slots), payload_rows(payload, num_tokens + rows)
-    )
-    assert recv_weights is not None and recv_weights.shape == (allocated,)
-    assert torch.equal(recv_weights[slots], weights[rows % num_tokens, picks])
-    if do_zero_padding:
-        assert recv_weights[:num_rows][~valid].count_nonzero().item() == 0
-        for part in payload_parts(recv_x):
-            assert part[:num_rows].view(torch.uint8)[~valid].count_nonzero().item() == 0
+    def run_layout(expanded):
+        layout_tag = f"{tag} {'expanded' if expanded else 'compact'}"
+        recv_x, recv_idx, weights, handle, _ = launch(
+            buffer,
+            "dispatch",
+            mode,
+            **dispatch_args,
+            do_expand=expanded,
+            do_zero_padding=expanded and do_zero_padding,
+            use_tma_aligned_col_major_sf=expanded and case.dtype == "fp8",
+        )
+        assert (
+            handle.topk_idx.data_ptr() != topk_idx.data_ptr()
+        ) == mode.do_handle_copy, f"[{layout_tag}] handle-copy setting was not honored"
+        assert torch.equal(
+            handle.topk_idx, topk_idx
+        ), "handle changed external expert IDs"
+        num_output_rows, _ = check_dispatch(
+            case,
+            phase,
+            expected,
+            recv_x,
+            recv_idx,
+            weights,
+            handle,
+            layout_tag,
+            do_cpu_sync=do_cpu_sync,
+            do_zero_padding=do_zero_padding,
+        )
+        del recv_x, weights
+        num_recv = expected[0].numel()
+        meta = handle.recv_src_metadata
+        if expanded:
+            # NaN padding exposes an incorrect read during combine.
+            y = torch.full(
+                (num_output_rows, case.hidden),
+                torch.nan,
+                dtype=torch.bfloat16,
+                device="cuda",
+            )
+            for chunk in case.row_slices(num_recv):
+                slots = meta[chunk, 2:]
+                valid = slots >= 0
+                y[slots[valid].long()] = case.pre_combine_data(meta[chunk, 0])[valid]
+        else:
+            y = case.combine_input(meta[:, 0], recv_idx, num_recv)
+        combined, _ = launch(buffer, "combine", mode, x=y, handle=handle, bias=bias)
+        del y
+        ref = case.combine_reference(phase, topk_idx, bias, expanded=expanded)
+        assert torch.equal(
+            combined, ref
+        ), f"[{layout_tag}] combined_x mismatch, diff={calc_diff(combined, ref)}"
 
-    expert_output = torch.full(
-        (num_rows, case.hidden), torch.nan, dtype=torch.bfloat16, device="cuda"
-    )
-    expert_output[slots] = case.pre_combine_data(source_ids, num_selected)[rows, picks]
-    bias = make_bias(mode.num_bias, num_tokens, case.hidden)
-    combined, combine_event = launch(
-        buffer, "combine", mode, x=expert_output, handle=handle, bias=bias
-    )
-    ref = ref_combine(
-        case.pre_combine_data(own_ids, num_selected),
-        topology_experts(buffer, topk_idx[:, :num_selected]),
-        case.max_so,
-        case.max_su,
-        case.num_experts,
-        bias,
-        buffer.allow_multiple_reduction,
-        buffer.allow_multiple_reduction and buffer._get_mode() == "hybrid",
-    )
-    assert torch.equal(combined, ref), "expanded combine mismatch"
+    run_layout(False)
+    if check_expanded:
+        run_layout(True)
+    return expected[0].numel()
 
 
 def remote_payload_rows(
@@ -1207,7 +1170,9 @@ class GraphCase:
         num_recv, counts = check_dispatch(
             case,
             phase,
-            lambda src: self._replay_routing(src, phase, routing_phase_idx),
+            case.expected_receive(
+                phase, lambda src: self._replay_routing(src, phase, routing_phase_idx)
+            ),
             self.recv_x,
             self.recv_topk_idx,
             self.recv_topk_weights,
@@ -1309,8 +1274,15 @@ def run_api_cases(case: Case, present: List[int]) -> None:
     tag = f"rank {me} {buffer._get_mode()} API {case.dtype}"
     buffer.deterministic = True
     for repeat in range(2):
-        run_eager(case, 0, present, f"{tag} deterministic {repeat + 1}")
-        run_expanded(case, present, do_zero_padding=True)
+        run_eager(
+            case,
+            0,
+            present,
+            f"{tag} deterministic {repeat + 1}",
+            EPMode(expert_alignment=5),
+            check_expanded=True,
+            do_zero_padding=True,
+        )
 
     async_mode = EPMode(
         do_handle_copy=False,
@@ -1326,12 +1298,19 @@ def run_api_cases(case: Case, present: List[int]) -> None:
     )
 
     buffer.deterministic = False
-    run_expanded(case, present, async_mode, do_cpu_sync=False)
+    run_eager(
+        small,
+        0,
+        present,
+        f"{tag} async",
+        async_mode,
+        do_cpu_sync=False,
+        check_expanded=True,
+    )
     for mode in enumerate_ep_modes():
         if me == min(present):
             print(f" > [{tag} {mode}]", flush=True)
-        run_eager(case, 0, present, f"{tag} {mode}", mode)
-        run_expanded(case, present, mode)
+        run_eager(case, 0, present, f"{tag} {mode}", mode, check_expanded=True)
 
 
 @torch.inference_mode()
