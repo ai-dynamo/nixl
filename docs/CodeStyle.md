@@ -308,7 +308,36 @@ limitations under the License.
   auto state = connection_state_t::DISCONNECTED;
   ```
 
+### Python Docstrings
+
+* Document public Python modules, classes, methods, and functions according to [PEP 257](https://peps.python.org/pep-0257/) using [Google-style docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings) for structured sections
+* Make the docstring the first statement in the documented object
+* Start with a concise summary and include `Args:`, `Returns:`, `Raises:`, `Examples:`, and `Notes:` sections when applicable
+* Keep types and defaults in the Python signature rather than duplicating them in parameter descriptions
+* Example:
+
+  ```python
+  def connect(host: str, timeout_s: float = 10.0) -> Connection:
+      """Connect to a remote agent.
+
+      Args:
+          host: Hostname or address of the remote agent.
+          timeout_s: Maximum time to wait for the connection.
+
+      Returns:
+          The established connection.
+
+      Raises:
+          ConnectionError: If the remote agent cannot be reached.
+      """
+  ```
+
 ## General Coding Practices
+
+* Follow the existing style of the file or module you modify
+* Use descriptive names for variables, functions, and classes
+* Comment complex logic, but do not add comments that only restate self-explanatory code
+* Prefer clarity over cleverness
 
 ### Prefer Functions over Macros
 
@@ -394,3 +423,36 @@ limitations under the License.
       calculate(double x) const override; // Prevents typos in signature
   };
   ```
+
+## Language and Library Usage
+
+### C++20 Guidelines
+
+NIXL is a C++20 project and follows the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate:
+
+* Use modern C++ features such as `auto`, range-based loops, structured bindings, and `std::optional`
+* Manage resources with RAII through constructors and destructors
+* Use smart pointers (`std::unique_ptr`, `std::shared_ptr`) for ownership
+* Mark methods and variables `const` when appropriate
+
+### STL and Abseil Usage
+
+* **Prefer STL types** as the primary choice: standard containers (`std::vector`, `std::unordered_map`), modern utilities (`std::optional`, `std::variant`, `std::string_view`), and algorithms from `<algorithm>` and `<numeric>`
+* **Fall back to Abseil** when STL lacks required functionality: `absl::StrFormat`, `absl::StatusOr` for internal data-path operations returning values with errors, `absl::flat_hash_map`, and Abseil logging utilities (integrated with NIXL logging)
+* **Never expose Abseil in public APIs:** keep Abseil types internal to implementation files, use only STL types in agent and plugin public APIs, and convert between Abseil and STL types at API boundaries
+
+## Error Handling
+
+* **Constructors and internal control-path helpers** may throw exceptions (`std::runtime_error`, `std::invalid_argument`, or custom exceptions)
+* **Public C++ API methods** (for example, `nixlAgent` methods) and **data-path code** return `nixl_status_t`; data-path code avoids exceptions
+
+## Logging
+
+Use the NIXL logging macros at the level that matches the event:
+
+* `NIXL_FATAL`: unrecoverable errors; logs the message and terminates the process
+* `NIXL_ERROR`: errors that fail the current operation without terminating the process (system failures, resource exhaustion, operations that cannot continue)
+* `NIXL_WARN`: warning conditions that do not prevent operation but indicate problems (deprecated API usage, performance degradation, recoverable errors, fallback behavior, suboptimal configurations)
+* `NIXL_INFO`: informational messages about normal operation (initialization complete, configuration loaded, major state changes, connections established/closed, module lifecycle events)
+* `NIXL_DEBUG`: detailed debugging information for development (function entry/exit, intermediate values, algorithm decisions, variable states, decision branches)
+* `NIXL_TRACE`: very detailed trace information for deep debugging (per-packet processing, memory allocations, lock acquisitions, low-level operations, fine-grained timing); stripped from release builds
