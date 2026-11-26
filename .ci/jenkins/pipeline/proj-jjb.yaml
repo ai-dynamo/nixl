@@ -636,7 +636,7 @@
           description: "NIXL version to use (tag like 1.6.0, branch name, or commit hash)"
       - string:
           name: "UCX_VERSION"
-          default: "v1.23.x"
+          default: "master"
           description: "UCX version to use (tag like v1.23.x, branch name, or commit hash)"
       - string:
           name: "BASE_IMAGE"
