@@ -1382,7 +1382,14 @@ main(int argc, char **argv) {
             checkStandardResult();
             verifyStandard();
         }
-        check(cudaMemset(destination + kWrapDst, 0xa5, kBytes - kWrapDst),
+        std::vector<uint8_t> wrap_bytes(kBytes - kWrapDst);
+        for (size_t i = 0; i < wrap_bytes.size(); ++i) {
+            wrap_bytes[i] = expected_source[17 + i] ^ 0xff;
+        }
+        check(cudaMemcpy(destination + kWrapDst,
+                         wrap_bytes.data(),
+                         wrap_bytes.size(),
+                         cudaMemcpyHostToDevice),
               "poison scalar wrap destinations");
         check(cudaMemset(device_result, 0, sizeof(int)), "reset scalar wrap result");
         scalarWrap<<<1, 1>>>(locals[0], remotes[0], destination, device_generation, device_result);
@@ -1391,11 +1398,15 @@ main(int argc, char **argv) {
         uint64_t count = 0;
         check(cudaMemcpy(&count, device_generation, sizeof(count), cudaMemcpyDeviceToHost),
               "read scalar wrap count");
-        std::vector<uint8_t> wrap_bytes(count);
-        check(cudaMemcpy(wrap_bytes.data(), destination + kWrapDst, count, cudaMemcpyDeviceToHost),
+        check(cudaMemcpy(wrap_bytes.data(),
+                         destination + kWrapDst,
+                         wrap_bytes.size(),
+                         cudaMemcpyDeviceToHost),
               "read scalar wrap bytes");
-        for (size_t i = 0; i < count; ++i) {
-            if (wrap_bytes[i] != expected_source[17 + i]) {
+        for (size_t i = 0; i < wrap_bytes.size(); ++i) {
+            const uint8_t expected =
+                i < count ? expected_source[17 + i] : expected_source[17 + i] ^ 0xff;
+            if (wrap_bytes[i] != expected) {
                 throw std::runtime_error("scalar FIFO wrap payload mismatch");
             }
         }
