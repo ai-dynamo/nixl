@@ -135,7 +135,8 @@ submission/completion tracking. Independent GETs may be in flight concurrently,
 including on the same channel. Keep in-flight GET destination ranges disjoint.
 Before consuming or reusing a destination, or issuing a GET that depends on its
 data, wait for its status to return `NIXL_SUCCESS` or for its channel flush to
-complete. Batch owners follow the readSession polling/retirement contract below.
+return `NIXL_SUCCESS`. Batch owners follow the readSession polling/retirement
+contract below.
 
 The native pool remains one peer per engine. Re-preparing a
 bound channel does not reset its generation or credits. Views retain their MR pins while any channel is busy or failed, until safe teardown. Both peers must configure the
