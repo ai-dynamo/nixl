@@ -290,7 +290,8 @@ nixlMemSection::addElement(const nixlRemoteDesc &query,
 nixl_status_t
 nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
                               nixlBackendEngine *backend,
-                              nixlSecDescList &remote_self) {
+                              nixlSecDescList &remote_self,
+                              bool use_local) {
 
     if (!backend) {
         return NIXL_ERR_INVALID_PARAM;
@@ -309,7 +310,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     std::vector<nixlSectionDesc> local_batch;
     std::vector<nixlSectionDesc> self_batch;
     local_batch.reserve(mem_elms.descCount());
-    if (backend->supportsLocal()) {
+    if (use_local) {
         self_batch.reserve(mem_elms.descCount());
     }
 
@@ -320,7 +321,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
         if (ret != NIXL_SUCCESS)
             break;
 
-        if (backend->supportsLocal()) {
+        if (use_local) {
             ret = backend->loadLocalMD(local_sec.metadataP, self_sec.metadataP);
             if (ret != NIXL_SUCCESS) {
                 backend->deregisterMem(local_sec.metadataP);
@@ -332,8 +333,9 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
             if (ret != NIXL_SUCCESS) {
                 // A backend might use the same object for both initiator/target
                 // side of a transfer, so no need for unloadMD in that case.
-                if (backend->supportsLocal() && self_sec.metadataP != local_sec.metadataP)
+                if (use_local && self_sec.metadataP != local_sec.metadataP) {
                     backend->unloadMD(self_sec.metadataP);
+                }
                 backend->deregisterMem(local_sec.metadataP);
                 break;
             }
@@ -343,7 +345,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
 
         local_batch.push_back(local_sec);
 
-        if (backend->supportsLocal()) {
+        if (use_local) {
             *rp = *lp;
             self_batch.push_back(self_sec);
         }
@@ -351,12 +353,12 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
 
     if (ret == NIXL_SUCCESS) {
         target.addDescs(std::move(local_batch));
-        if (backend->supportsLocal()) {
+        if (use_local) {
             remote_self.addDescs(std::move(self_batch));
         }
     } else {
         for (size_t j = 0; j < local_batch.size(); ++j) {
-            if (backend->supportsLocal()) {
+            if (use_local) {
                 if (self_batch[j].metadataP != local_batch[j].metadataP)
                     backend->unloadMD(self_batch[j].metadataP);
             }

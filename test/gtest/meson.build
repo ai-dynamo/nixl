@@ -90,6 +90,7 @@ gtest_sources = [
     'mocks/gmock_engine.cpp',
     'plugin_manager.cpp',
     'error_handling.cpp',
+    'local_connection.cpp',
     'test_transfer.cpp',
     'metadata_exchange.cpp',
     'md_manager.cpp',
