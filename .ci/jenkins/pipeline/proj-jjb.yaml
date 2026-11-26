@@ -663,9 +663,7 @@
           name: "BUILD_NIXL_EP"
           default: true
           description: >
-            Build NIXL with EP example support (pass <code>--build-nixl-ep</code>).<br/>
-            Note: <code>build-container.sh</code> enables EP by default and has no
-            off-switch, so unchecking this does not disable EP.
+            Build NIXL with EP v1 example support.
       - bool:
           name: "BUILD_UCX_SPCX_PLUGIN"
           default: true

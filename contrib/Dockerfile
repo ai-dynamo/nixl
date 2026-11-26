@@ -137,6 +137,7 @@ ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.23.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
+ARG BUILD_NIXL_EP_RUNTIME="false"
 ARG RDMA_CORE_PREFIX="/usr"
 ARG UCX_PREFIX="/usr"
 ARG UCX_PLUGIN_DIR="$UCX_PREFIX/lib/ucx"
@@ -365,7 +366,10 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /usr/local/src &&
      cd ucx && \
      echo "=== Using UCX_REF=$UCX_REF ===" && \
      git checkout $UCX_REF && \
-     if [ "$BUILD_NIXL_EP" = "true" ]; then EXPERIMENTAL_API_PARAM="--enable-experimental-api"; else EXPERIMENTAL_API_PARAM=""; fi && \
+     EXPERIMENTAL_API_PARAM="" && \
+     if [ "$BUILD_NIXL_EP" = "true" ] || [ "$BUILD_NIXL_EP_RUNTIME" = "true" ]; then \
+         EXPERIMENTAL_API_PARAM="--enable-experimental-api"; \
+     fi && \
      ./autogen.sh && \
      if [ -n "$UCX_SONAME_SUFFIX" ]; then \
          if ./configure --help | grep -q -- "--with-soname-suffix"; then \
@@ -526,13 +530,8 @@ ENV NIXL_PREFIX=$NIXL_PREFIX
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then \
-        echo "=== BUILD_NIXL_EP=true: Building NIXL with NIXL EP support ===" && \
-        NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
-    else \
-        NIXL_EP_FLAG=""; \
-    fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH -Dbuild_nixl_ep="$BUILD_NIXL_EP" \
+        -Dbuild_nixl_ep_runtime="$BUILD_NIXL_EP_RUNTIME" build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install
@@ -564,6 +563,7 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # Install the python bindings from source, built against the container's own
 # torch - works on any base, no dependency on public torch wheels.
 # Redistributable wheels are produced by the wheel CI pipelines, not here.
-RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml && \
-    uv pip install --system --no-build-isolation -Csetup-args=-Dbuild_nixl_ep="$BUILD_NIXL_EP" . && \
+RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 --build-nixl-ep-runtime "$BUILD_NIXL_EP_RUNTIME" pyproject.toml && \
+    uv pip install --system --no-build-isolation -Csetup-args=-Dbuild_nixl_ep="$BUILD_NIXL_EP" \
+        -Csetup-args=-Dbuild_nixl_ep_runtime="$BUILD_NIXL_EP_RUNTIME" . && \
     uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl

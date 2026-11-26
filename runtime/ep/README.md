@@ -23,21 +23,23 @@ completed dispatch/combine pairs, including replay of retained CUDA graphs.
   `infiniband/mlx5dv.h` from rdma-core or OFED.
 - NVLink within scale-up domains and RDMA between domains.
 - `nvidia-ml-py>=13.580.65` for NVLink domain discovery during peer connection.
+  The wheel builder adds this dependency automatically. For EP wheels built directly
+  with pip or uv, prepare the metadata with `contrib/tomlutil.py` using `--build-nixl-ep-runtime true`.
+  For a native Meson install, install the dependency separately.
 
 ### Installation
 
-Configure Meson from the NIXL repository root with `build_nixl_ep` enabled and
+Configure Meson from the NIXL repository root with `build_nixl_ep_runtime` enabled and
 `ucx_path` pointing to the UCX installation, then compile and install the build.
 Set `CUDA_HOME` to the toolkit installation directory to select which toolkit the JIT uses.
 
 `nixl_cuda_arch_list` selects extension targets (for example `100` for
 B200/GB200); communication kernels are JIT-compiled for the running GPU.
 Formatting uses NIXL's Abseil dependency.
-`build_nixl_ep` enables both EP implementations and defaults to false.
-This runtime requires CUDA 13.
-With EP disabled, its build prerequisites are not required. The wheel builder
-enables EP through `--build-nixl-ep`; `--torch-versions` selects the Torch versions
-whose extensions are merged. The container builder enables EP by default on CUDA 13.
+`build_nixl_ep` separately enables the `nixl_ep` example. Both Meson options default
+to false. The wheel and container builders accept `--build-nixl-ep-runtime` for this
+runtime. The wheel builder can include both implementations in one CUDA 13 wheel by
+also enabling `--build-nixl-ep`. Its `--torch-versions` option selects the Torch versions to include.
 
 The public import is `nixl.runtime.ep`, routed through the selected NIXL CUDA
 backend wheel. For a Meson installation, put its Python site-packages and

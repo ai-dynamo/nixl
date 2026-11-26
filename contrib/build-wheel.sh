@@ -22,6 +22,7 @@ UCX_PLUGINS_DIR="/usr/lib64/ucx"
 NIXL_PLUGINS_DIR="/usr/local/nixl/lib/$ARCH-linux-gnu/plugins"
 OUTPUT_DIR="dist"
 BUILD_NIXL_EP="false"
+BUILD_NIXL_EP_RUNTIME="false"
 TORCH_VERSIONS=""
 
 while [[ $# -gt 0 ]]; do
@@ -58,7 +59,8 @@ while [[ $# -gt 0 ]]; do
             echo "  --output-dir: Directory to output the wheel to (default: $OUTPUT_DIR)"
             echo "  --ucx-plugins-dir: Directory to find UCX plugins in (default: $UCX_PLUGINS_DIR)"
             echo "  --nixl-plugins-dir: Directory to find NIXL plugins in (default: $NIXL_PLUGINS_DIR)"
-            echo "  --build-nixl-ep: Include the NIXL EP example and experimental topology-aware runtime (sm_90 or newer; runtime requires CUDA 13)"
+            echo "  --build-nixl-ep: Include the NIXL EP example (sm_90 or newer)"
+            echo "  --build-nixl-ep-runtime: Include the experimental topology-aware EP runtime (CUDA 13, sm_90 or newer)"
             echo "  --torch-versions: Comma-separated list of torch versions to build the wheel for (default: $TORCH_VERSIONS)"
             echo "  --help: Show this help message"
             echo ""
@@ -67,6 +69,10 @@ while [[ $# -gt 0 ]]; do
             ;;
         --build-nixl-ep)
             BUILD_NIXL_EP="true"
+            shift
+            ;;
+        --build-nixl-ep-runtime)
+            BUILD_NIXL_EP_RUNTIME="true"
             shift
             ;;
         --torch-versions)
@@ -81,8 +87,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-if [ "$BUILD_NIXL_EP" = "true" ] && [ -z "$TORCH_VERSIONS" ]; then
-    echo "ERROR: --build-nixl-ep requires --torch-versions" >&2
+if [[ "$BUILD_NIXL_EP" == "true" || "$BUILD_NIXL_EP_RUNTIME" == "true" ]] && [ -z "$TORCH_VERSIONS" ]; then
+    echo "ERROR: building an EP wheel requires --torch-versions" >&2
     exit 1
 fi
 
@@ -108,7 +114,7 @@ case "$CU_TAG" in
         exit 1
         ;;
 esac
-./contrib/tomlutil.py --wheel-name $PKG_NAME pyproject.toml
+./contrib/tomlutil.py --wheel-name "$PKG_NAME" --build-nixl-ep-runtime "$BUILD_NIXL_EP_RUNTIME" pyproject.toml
 
 TORCH_STABLE_INDEX="https://download.pytorch.org/whl/${CU_TAG}"
 TORCH_NIGHTLY_INDEX="https://download.pytorch.org/whl/nightly/${CU_TAG}"
@@ -271,6 +277,9 @@ build_wheel() {
             -Csetup-args=-Dbuild_examples=true
         )
     fi
+    if [ "$BUILD_NIXL_EP_RUNTIME" = "true" ]; then
+        BUILD_ARGS+=(-Csetup-args=-Dbuild_nixl_ep_runtime=true)
+    fi
     uv build "${BUILD_ARGS[@]}"
 
     deactivate
@@ -300,7 +309,7 @@ get_wheel_path() {
     echo "${wheels[0]}"
 }
 
-if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
+if [[ "$BUILD_NIXL_EP" == "true" || "$BUILD_NIXL_EP_RUNTIME" == "true" ]]; then
     # Multi-torch: build the full wheel with the first torch, then merge
     # the per-torch .so from the others into it.
     IFS=',' read -ra TORCH_REQUESTED <<< "$TORCH_VERSIONS"
@@ -345,33 +354,19 @@ if [ "$BUILD_NIXL_EP" = "true" ] && [ -n "$TORCH_VERSIONS" ]; then
         # into $BASE_WHL.
         TORCH_MM=$(echo "$TORCH" | tr -d '.')
         EP_WHL=$(get_wheel_path "$EP_TMP/dist")
-        ./contrib/wheel_merge.py \
-            --base-wheel "$BASE_WHL" \
-            --source-wheel "$EP_WHL" \
-            --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
-            --target-dir "nixl_ep_cu13"
-
-        if python3 - "$EP_WHL" "nixl_ep_v2_cpp_torch${TORCH_MM}.*" <<'PY'
-import fnmatch
-import os
-import sys
-import zipfile
-
-with zipfile.ZipFile(sys.argv[1]) as wheel:
-    found = any(
-        fnmatch.fnmatch(os.path.basename(name), sys.argv[2])
-        for name in wheel.namelist()
-    )
-raise SystemExit(0 if found else 1)
-PY
-        then
+        if [ "$BUILD_NIXL_EP" = "true" ]; then
+            ./contrib/wheel_merge.py \
+                --base-wheel "$BASE_WHL" \
+                --source-wheel "$EP_WHL" \
+                --pattern "nixl_ep_cpp_torch${TORCH_MM}.*" \
+                --target-dir "nixl_ep_cu13"
+        fi
+        if [ "$BUILD_NIXL_EP_RUNTIME" = "true" ]; then
             ./contrib/wheel_merge.py \
                 --base-wheel "$BASE_WHL" \
                 --source-wheel "$EP_WHL" \
                 --pattern "nixl_ep_v2_cpp_torch${TORCH_MM}.*" \
                 --target-dir "nixl_cu${CUDA_MAJOR}/runtime/ep"
-        else
-            echo "=== NIXL EP runtime was not built for torch ${TORCH}; skipping merge ==="
         fi
 
         rm -rf "$EP_TMP"

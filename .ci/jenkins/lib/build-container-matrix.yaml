@@ -258,10 +258,6 @@ steps:
         echo "git clone https://github.com/openucx/ucx.git ucx-src && (cd ucx-src && git checkout ${UCX_VERSION})"
         echo "benchmark/nixlbench/contrib/build.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --no-cache --nixl \$WORKSPACE --ucx \$WORKSPACE/ucx-src"
       else
-        NIXL_EP_FLAG=""
-        if [[ "${BUILD_NIXL_EP}" == "true" ]]; then
-            NIXL_EP_FLAG="--build-nixl-ep"
-        fi
         SPCX_FLAG=""
         if [[ "${BUILD_UCX_SPCX_PLUGIN}" == "true" ]]; then
             SPCX_FLAG="--build-ucx-spcx-plugin"
@@ -273,7 +269,7 @@ steps:
             echo "# --build-infinia needs il.artifactory.nvidia.com reachable"
         fi
         echo "export UCX_REF=${UCX_VERSION}"
-        echo "contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${NIXL_EP_FLAG} ${SPCX_FLAG} ${INFINIA_FLAG}"
+        echo "BUILD_NIXL_EP=${BUILD_NIXL_EP} contrib/build-container.sh --base-image ${BASE_IMAGE} --base-image-tag ${BASE_IMAGE_TAG} --tag local-test-tag --arch ${arch} --build-type debug --no-cache ${SPCX_FLAG} ${INFINIA_FLAG}"
       fi
 
 pipeline_stop:
