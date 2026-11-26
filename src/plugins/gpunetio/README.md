@@ -91,8 +91,10 @@ rc = nixl::gpu::flush(remote_view, 3);
 ```
 
 GET, PUT, atomicAdd, getXferStatus and flush support THREAD, WARP and BLOCK
-cooperation. A collective call requires all participating threads, matching
-arguments, and a shared status handle when one is supplied. GRID returns
+cooperation with one-dimensional blocks. WARP calls require all 32 lanes of a
+full warp; BLOCK calls require every thread in the block. A collective call
+requires matching arguments and a shared status handle when one is supplied.
+GRID returns
 `NIXL_ERR_NOT_SUPPORTED`. `getPtr` returns nullptr because an RDMA registration
 does not provide a local mapping of remote memory.
 
