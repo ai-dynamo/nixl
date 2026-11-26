@@ -143,12 +143,14 @@ submitGetLocked(GpunetioDeviceLane *lane,
     size_t offset = 0;
     do {
         // Retire before reserve: the SDK availability wait does not propagate CQ errors.
-        while (lane->active_ticket - lane->next_retire >= capacity - 1) {
-            publish(lane);
-            // Retire every completed CQE, not just one, before checking capacity again.
-            if (progress(lane, lane->active_ticket) == NIXL_ERR_BACKEND) {
-                return NIXL_ERR_BACKEND;
-            }
+        if (lane->active_ticket - lane->next_retire >= capacity - 1) {
+            publish(lane); // A full queue may hold deferred WQEs; nothing is added while waiting.
+            do {
+                // Retire every completed CQE, not just one, before checking capacity again.
+                if (progress(lane, lane->active_ticket) == NIXL_ERR_BACKEND) {
+                    return NIXL_ERR_BACKEND;
+                }
+            } while (lane->active_ticket - lane->next_retire >= capacity - 1);
         }
         const size_t remaining = bytes - offset;
         const size_t chunk = remaining < DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE ?
