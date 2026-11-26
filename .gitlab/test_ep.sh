@@ -52,12 +52,45 @@ export NIXL_DEBUG_LOGGING=yes
 # Load the source dispatcher and the backend installed in the shared venv.
 export PYTHONPATH="${PWD}/src/bindings/python/nixl-meta${PYTHONPATH:+:$PYTHONPATH}"
 
+# Run the --disable-ll-nvlink (RDMA) elastic tests only when the node has ConnectX
+# ports and every one of them is active (BlueField front-end ports and smi devices
+# don't count).
+rdma_supported() {
+    local dev port total=0 down=""
+    for dev in /sys/class/infiniband/*; do
+        case "${dev##*/}" in smi*) continue ;; esac
+        # Keep only NVIDIA (PCI vendor 0x15b3) ConnectX-7/8/9/10 adapters (PCI device
+        # 0x1021/0x1023/0x1025/0x1027); all of their ports must be active.
+        [ "$(cat "$dev/device/vendor" 2>/dev/null)" = 0x15b3 ] || continue
+        case "$(cat "$dev/device/device" 2>/dev/null)" in
+            0x1021|0x1023|0x1025|0x1027) ;;
+            *) continue ;;
+        esac
+        for port in "$dev"/ports/*; do
+            total=$((total + 1))
+            [ "$(cat "$port/state" 2>/dev/null)" = "4: ACTIVE" ] || down+=" ${dev##*/}:${port##*/}"
+        done
+    done
+    echo "RDMA check on $(hostname): ${total} ConnectX port(s), not active:${down:- none}"
+    [ "$total" -gt 0 ] && [ -z "$down" ]
+}
+
 echo "==== Show system info ===="
 env
 nvidia-smi topo -m || true
 ibv_devinfo || true
 uname -a || true
 cat /sys/devices/virtual/dmi/id/product_name || true
+# NIXL_EP_REQUIRE_RDMA=true (set by jobs whose nodes must support RDMA) turns a failed
+# RDMA check into a job failure instead of skipping the RDMA tests.
+if (set +x; rdma_supported); then
+    RDMA_SUPPORTED=true
+elif [ "${NIXL_EP_REQUIRE_RDMA:-false}" = true ]; then
+    echo "ERROR: RDMA is required (NIXL_EP_REQUIRE_RDMA=true) but not supported on $(hostname)" >&2
+    exit 1
+else
+    RDMA_SUPPORTED=false
+fi
 
 echo "==== Running elastic EP tests ===="
 EP_SRC_DIR="examples/device/ep"
@@ -90,24 +123,12 @@ run_elastic_test() {
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json"
 run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json"
 
-# Only run the --disable-ll-nvlink (RDMA) elastic tests when all four CX-7
-# NICs (mlx5_0..mlx5_3) report PORT_ACTIVE.
-all_rdma_nics_active() {
-    local hca
-    for hca in mlx5_0 mlx5_1 mlx5_2 mlx5_3; do
-        if ! ibv_devinfo -d "$hca" 2>/dev/null | grep -q "state:.*PORT_ACTIVE"; then
-            return 1
-        fi
-    done
-    return 0
-}
-
-# RDMA (--disable-ll-nvlink)
-if all_rdma_nics_active; then
+# RDMA (--disable-ll-nvlink), only when the capability check above passed.
+if [ "$RDMA_SUPPORTED" = true ]; then
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/no_expansion.json" "--disable-ll-nvlink"
     run_elastic_test "${EP_SRC_DIR}/tests/elastic/expansion_fault_contraction.json" "--disable-ll-nvlink"
 else
-    echo "Skipping RDMA elastic tests: not all of mlx5_0..mlx5_3 are PORT_ACTIVE on $(hostname)"
+    echo "Skipping RDMA elastic tests on $(hostname): see the RDMA check above"
 fi
 
 echo "==== nixl_ep elastic tests done ===="

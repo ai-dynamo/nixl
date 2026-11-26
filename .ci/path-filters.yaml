@@ -8,6 +8,7 @@ components:
     - docs/**
     - fern/**
     - .ci/docs/**
+    - skills/**
     - "*.md"
   # Everything else. One entry per top-level path so a new top-level directory
   # has to be classified here explicitly.
@@ -15,12 +16,14 @@ components:
     - /README.md   # pyproject.toml embeds it in the wheel
     - .agents/**
     - .ci/**
+    - .claude/**
     - .github/**
     - .gitlab/**
     - benchmark/**
     - contrib/**
     - examples/**
     - licenses/**
+    - runtime/**
     - src/**
     - subprojects/**
     - test/**

@@ -218,8 +218,13 @@ nixlUcxEp::~nixlUcxEp() {
  * Active message handling
  * =========================================== */
 
-// Payload of an in-flight AM send and whether to release the request on completion
-using nixl_ucx_am_send_ctx_t = std::pair<std::string, bool>;
+namespace {
+// An AM send in flight: its payload, and the status that a sender may wait for
+struct amSendCtx {
+    std::string payload;
+    std::shared_ptr<nixl::ucx::amSendStatus> sendStatus;
+};
+} // namespace
 
 void
 nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
@@ -227,10 +232,15 @@ nixlUcxEp::sendAmCallback(void *request, ucs_status_t status, void *user_data) {
         NIXL_ERROR << "UCX AM send failed with status " << status << " ("
                    << ucs_status_string(status) << ")";
     }
-    const std::unique_ptr<nixl_ucx_am_send_ctx_t> ctx(
-        static_cast<nixl_ucx_am_send_ctx_t *>(user_data));
-    if (ctx->second) {
-        ucp_request_free(request);
+    std::unique_ptr<amSendCtx> ctx(static_cast<amSendCtx *>(user_data));
+    const std::shared_ptr<nixl::ucx::amSendStatus> send_status = std::move(ctx->sendStatus);
+    // Report the send last: once a sender sees it complete, its request and
+    // payload are already released
+    ucp_request_free(request);
+    ctx.reset();
+    if (send_status) {
+        const nixl_status_t result = nixl::ucx::ucsToNixlStatus(status);
+        send_status->store((result == NIXL_IN_PROG) ? NIXL_ERR_BACKEND : result);
     }
 }
 
@@ -238,7 +248,7 @@ nixl_status_t
 nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   std::string &&payload,
                   uint32_t flags,
-                  nixlUcxReq *req) const {
+                  std::shared_ptr<nixl::ucx::amSendStatus> send_status) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
@@ -246,7 +256,7 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return status;
     }
 
-    auto ctx = std::make_unique<nixl_ucx_am_send_ctx_t>(std::move(payload), req == nullptr);
+    auto ctx = std::make_unique<amSendCtx>(amSendCtx{std::move(payload), std::move(send_status)});
 
     ucp_request_param_t param;
     param.op_attr_mask = UCP_OP_ATTR_FIELD_FLAGS | UCP_OP_ATTR_FIELD_MEMORY_TYPE |
@@ -257,12 +267,10 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
     param.user_data = ctx.get();
 
     const ucs_status_ptr_t request = ucp_am_send_nbx(
-        eph_, unsigned(msg_id), nullptr, 0, ctx->first.data(), ctx->first.size(), &param);
+        eph_, unsigned(msg_id), nullptr, 0, ctx->payload.data(), ctx->payload.size(), &param);
     if (UCS_PTR_IS_PTR(request)) {
+        // The callback releases the request and the context
         ctx.release();
-        if (req != nullptr) {
-            *req = static_cast<nixlUcxReq>(request);
-        }
         return NIXL_IN_PROG;
     }
 

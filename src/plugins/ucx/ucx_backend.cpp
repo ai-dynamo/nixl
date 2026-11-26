@@ -42,15 +42,16 @@
 namespace {
 [[nodiscard]] bool
 sglEnabledFromConfig() {
-    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
-    const auto configured = nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE");
+    // TODO: Remove NIXL_PLUGIN_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    const auto configured =
+        nixl::config::getValueOptional<bool>("NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE");
 #ifdef HAVE_UCX_SGL_API
     const bool enabled = configured.value_or(true);
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
     if (configured.value_or(false)) {
-        NIXL_WARN << "NIXL_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
+        NIXL_WARN << "NIXL_PLUGIN_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
 #endif
@@ -767,10 +768,9 @@ nixlUcxEngine::buildNotif(const std::string &msg,
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
-                             const nixlUcxEp &ep,
-                             nixlUcxReq *req) const {
+                             const nixlUcxEp &ep) const {
     return ep.sendAm(
-        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER, req);
+        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER);
 }
 
 ucx_connection_ptr_t
