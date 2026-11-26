@@ -35,6 +35,7 @@ def test_prefill_delay_adds_independent_requests(tmp_path, monkeypatch):
     )
     workload = yaml.safe_load((tmp_path / "metadata.yaml").read_text())
     (pattern,) = workload["traffic_patterns"]
-    # The two individual prefill estimates are 18 and 28.5 seconds.
-    if pattern["sleep_before_launch_sec"] != 46.5:
-        pytest.fail(f"Unexpected prefill delay: {pattern['sleep_before_launch_sec']}")
+    delay = pattern["sleep_before_launch_sec"]
+    expected = pytest.approx(18.0 + 28.5)
+    if delay != expected:
+        pytest.fail(f"Expected prefill delay {expected} s, got {delay} s")
