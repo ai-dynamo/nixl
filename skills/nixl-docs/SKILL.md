@@ -178,6 +178,7 @@ CI jobs, crash debugging, GPU RDMA setup, tests, Conda builds, AWS testing, and 
 Public C++ headers and Python modules for agents, descriptors, backends, telemetry, and logging.
 - [nixlAgent (nixl.h)](../../src/api/cpp/nixl.h): Declares nixlAgent for backends, memory registration, transfers, memory views, notifications, and peer and etcd metadata.
 - [Descriptors (nixl_descriptors.h)](../../src/api/cpp/nixl_descriptors.h): Declares nixlBasicDesc, nixlStrideDesc, nixlBlobDesc, nixlRemoteDesc, nixlDescList, and descriptor-list aliases.
+- [Notification callbacks (nixl_notif.h)](../../src/api/cpp/nixl_notif.h): Declares nixl_notif_callback_t, the callback type for notifications routed by byte prefix.
 - [nixlAgentConfig (nixl_params.h)](../../src/api/cpp/nixl_params.h): Declares nixlAgentConfig for progress and listener threads, synchronization, telemetry, and etcd.
 - [Core types (nixl_types.h)](../../src/api/cpp/nixl_types.h): Declares nixl_mem_t, nixl_xfer_op_t, nixl_status_t, nixl_thread_sync_t, nixlAgentOptionalArgs, nixlMemViewH, and nixlXferTelemetry.
 - [Backend auxiliary types (backend_aux.h)](../../src/api/cpp/backend/backend_aux.h): Declares nixlBackendInitParams, nixlBackendOptionalArgs, nixlBackendReqH, nixlBackendMD, nixlMetaDesc, and nixlMetaStrideDescList.
@@ -185,6 +186,6 @@ Public C++ headers and Python modules for agents, descriptors, backends, telemet
 - [nixlBackendPlugin (backend_plugin.h)](../../src/api/cpp/backend/backend_plugin.h): Declares nixlBackendPlugin, creator template, plugin API, and dynamic loading entry points.
 - [nixlTelemetryExporter (telemetry_exporter.h)](../../src/api/cpp/telemetry/telemetry_exporter.h): Declares nixlTelemetryExporter, exporter initialization, batch hooks, and bind-failure handling.
 - [nixlTelemetryPlugin (telemetry_plugin.h)](../../src/api/cpp/telemetry/telemetry_plugin.h): Declares nixlTelemetryPlugin, exporter creator, plugin API, and dynamic loading entry points.
-- [Python package exports (__init__.py)](../../src/api/python/__init__.py): Re-exports nixl_agent, nixl_agent_config, nixl_backend_handle, nixl_prepped_dlist_handle, nixl_xfer_handle, nixl_thread_sync_t, and DEFAULT_COMM_PORT.
+- [Python package exports (__init__.py)](../../src/api/python/__init__.py): Re-exports nixl_agent, nixl_agent_config, nixl_backend_handle, nixl_notification_monitor, nixl_prepped_dlist_handle, nixl_xfer_handle, nixl_thread_sync_t, and DEFAULT_COMM_PORT.
 - [Python nixl_agent API (_api.py)](../../src/api/python/_api.py): Implements nixl_agent, configuration, descriptor helpers, memory registration, transfers, notifications, and metadata.
 - [Python logging (logging.py)](../../src/api/python/logging.py): Configures Python logging, get_logger, NIXL_LOG_LEVEL, and NIXL_DEBUG_LOGGING.
