@@ -14,6 +14,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [NIXL overview](https://github.com/ai-dynamo/nixl/blob/main/docs/nixl.md) - Core concepts/architecture overview (`docs/nixl.md`)
 
+* [NIXL EP API shell](https://github.com/ai-dynamo/nixl/blob/main/runtime/ep/README.md) - Interface review (`nixl.runtime.ep`)
+
 * [Python API](https://github.com/ai-dynamo/nixl/blob/main/docs/python_api.md) - Python API usage and examples (`docs/python_api.md`)
 
 * [Backend guide](https://github.com/ai-dynamo/nixl/blob/main/docs/BackendGuide.md) - Backend/plugin development guide (`docs/BackendGuide.md`)
@@ -168,7 +170,7 @@ Common build options:
 - `static_plugins`: Comma-separated list of plugins to build statically
 - `enable_plugins`: Comma-separated list of plugins to build (e.g. `-Denable_plugins=UCX,POSIX`). Cannot be used with `disable_plugins`.
 - `disable_plugins`: Comma-separated list of plugins to exclude (e.g. `-Ddisable_plugins=GDS`). Cannot be used with `enable_plugins`.
-- `wheel_variant`: Override the Python wheel variant suffix (e.g. `-Dwheel_variant=rocm` yields `nixl_rocm`). Empty (default) = autodetect from the CUDA major version.
+- `wheel_variant`: Override the suffix of the Python package name, `nixl_<variant>` (e.g. `-Dwheel_variant=rocm10_2` yields `nixl_rocm10_2`). Not needed for a normal build: left empty (the default), the build names the package itself, `nixl_cu13` for a CUDA build and `nixl_rocm<X>_<Y>` for a build with `rocm_path` set and no CUDA.
 
 #### Building for AMD ROCm
 NIXL itself builds vendor-neutrally; CPU-side hardware detection
@@ -183,7 +185,9 @@ are present.
 single translation unit cannot include CUDA and HIP headers together, so one
 build targets one stack. Use `-Dnixlbench_gpu=cuda|rocm` to force a stack
 (`auto`, the default, prefers CUDA); `-Duse_rocm=true` is a deprecated alias for
-`-Dnixlbench_gpu=rocm`. When packaging a ROCm wheel, pass `-Dwheel_variant=rocm` so the wheel is named `nixl_rocm`.
+`-Dnixlbench_gpu=rocm`. A build with ROCm and without CUDA names its Python package after the
+ROCm release, `nixl_rocm<X>_<Y>`, so that packages for different ROCm releases can be installed
+side by side; pass `-Dwheel_variant=<variant>` to choose another name.
 
 **Building with ROCm support:**
 ```bash
