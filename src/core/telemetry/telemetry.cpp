@@ -28,6 +28,8 @@
 #include <set>
 #include <vector>
 
+#include <asio.hpp>
+
 #include "common/configuration.h"
 #include "common/nixl_duration.h"
 #include "common/nixl_log.h"
@@ -98,6 +100,21 @@ resolveMaxBufferedEvents();
 resolveEnabledMetrics();
 } // namespace
 
+struct periodicTask {
+    asio::steady_timer timer_;
+    std::function<bool()> callback_;
+    std::chrono::milliseconds interval_;
+    std::atomic<bool> enabled_;
+
+    periodicTask(const asio::any_io_executor &executor,
+                 std::chrono::milliseconds interval,
+                 bool enabled = false)
+        : timer_(executor),
+          callback_(nullptr),
+          interval_(interval),
+          enabled_(enabled) {}
+};
+
 [[nodiscard]] std::unique_ptr<nixlTelemetry>
 nixlTelemetry::create(const std::string &agent_name) {
     try {
@@ -115,8 +132,10 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
       exporter_(makeExporter(exporter_name)),
       metricEnabled_(resolveEnabledMetrics()),
       stagingQueue_(maxBufferedEvents_),
-      pool_(1),
-      writeTask_(pool_.get_executor(), DEFAULT_TELEMETRY_RUN_INTERVAL, false) {
+      pool_(std::make_unique<asio::thread_pool>(1)),
+      writeTask_(std::make_unique<periodicTask>(pool_->get_executor(),
+                                                DEFAULT_TELEMETRY_RUN_INTERVAL,
+                                                false)) {
     // A constructed nixlTelemetry always has an exporter (makeExporter throws
     // otherwise), so start the periodic export task.
     startExportTask();
@@ -131,15 +150,15 @@ nixlTelemetry::nixlTelemetry(const std::string &agent_name, const std::string &e
 }
 
 nixlTelemetry::~nixlTelemetry() {
-    writeTask_.enabled_ = false;
+    writeTask_->enabled_ = false;
     try {
         // The pool thread re-arms writeTask_.timer_ from its own callback
         // (registerPeriodicTask -> async_wait), so cancelling the timer here on
         // the main thread races that re-arm. Stop and join the pool first; once
         // join() returns no other thread touches the timer, so cancel() is safe.
-        pool_.stop();
-        pool_.join();
-        writeTask_.timer_.cancel();
+        pool_->stop();
+        pool_->join();
+        writeTask_->timer_.cancel();
     }
     catch (const asio::system_error &e) {
         NIXL_DEBUG << "Failed to cancel telemetry write timer: " << e.what();
@@ -269,10 +288,10 @@ nixlTelemetry::startExportTask() {
     const auto run_interval =
         nixl::config::getValueDefaulted(TELEMETRY_RUN_INTERVAL_VAR, DEFAULT_TELEMETRY_RUN_INTERVAL);
 
-    writeTask_.callback_ = [this]() { return flushPendingEvents(); };
-    writeTask_.interval_ = run_interval;
-    writeTask_.enabled_ = true;
-    registerPeriodicTask(writeTask_);
+    writeTask_->callback_ = [this]() { return flushPendingEvents(); };
+    writeTask_->interval_ = run_interval;
+    writeTask_->enabled_ = true;
+    registerPeriodicTask(*writeTask_);
 }
 
 bool
