@@ -81,20 +81,30 @@ publish(GpunetioDeviceLane *lane) {
 // The scalar owner checks every CQE. Polling only the target would skip earlier errors.
 __device__ inline nixl_status_t
 progress(GpunetioDeviceLane *lane, uint64_t target) {
-    while (lane->next_retire < target) {
-        const int result = compat::pollOne(lane->qp, lane->next_retire);
-        if (result == EBUSY) {
-            return NIXL_IN_PROG;
+    uint64_t next = lane->next_retire;
+    nixl_status_t result = NIXL_SUCCESS;
+    while (next < target) {
+        // On success the SDK has issued its NIC acquire fence and advanced cqe_ci.
+        const int rc = compat::pollOne(lane->qp, next);
+        if (rc == EBUSY) {
+            result = NIXL_IN_PROG;
+            break;
         }
-        if (result != 0) {
-            failLane(lane);
-            return NIXL_ERR_BACKEND;
+        if (rc != 0) {
+            result = NIXL_ERR_BACKEND;
+            break;
         }
-        // Publish completion to pollers in other CTAs after acquiring NIC writes.
-        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-        deviceAtomic(lane->next_retire).store(lane->next_retire + 1, cuda::memory_order_release);
+        ++next;
     }
-    return NIXL_SUCCESS;
+    if (next != lane->next_retire) {
+        // Publish the checked prefix to pollers in other CTAs once per call.
+        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+        deviceAtomic(lane->next_retire).store(next, cuda::memory_order_release);
+    }
+    if (result == NIXL_ERR_BACKEND) {
+        failLane(lane); // After the successful prefix is visible.
+    }
+    return result;
 }
 
 __device__ inline nixl_status_t
@@ -129,7 +139,8 @@ submitGetLocked(GpunetioDeviceLane *lane,
         // Retire before reserve: the SDK availability wait does not propagate CQ errors.
         while (lane->active_ticket - lane->next_retire >= capacity - 1) {
             publish(lane);
-            if (progress(lane, lane->next_retire + 1) == NIXL_ERR_BACKEND) {
+            // Retire every completed CQE, not just one, before checking capacity again.
+            if (progress(lane, lane->active_ticket) == NIXL_ERR_BACKEND) {
                 return NIXL_ERR_BACKEND;
             }
         }
