@@ -198,8 +198,14 @@ submitGet(const memViewElem &local,
         if (status->mode != exec_mode_t{} && status->mode != exec_mode_t::GPUNETIO_DIRECT) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        if (status->mode == exec_mode_t::GPUNETIO_DIRECT && statusPayload(status)->initialized &&
-            statusPayload(status)->cached_status == NIXL_IN_PROG) {
+        // A request completed by a flush, or on a failed channel, is final even if its
+        // handle was never polled; only a still-outstanding request blocks reuse.
+        const auto *old = statusPayload(status);
+        if (status->mode == exec_mode_t::GPUNETIO_DIRECT && old->initialized &&
+            old->cached_status == NIXL_IN_PROG && old->lane &&
+            old->ticket >= deviceAtomic(old->lane->next_retire).load(cuda::memory_order_acquire) &&
+            deviceAtomic(old->lane->phase).load(cuda::memory_order_acquire) !=
+                gpunetio_lane_phase_failed) {
             return NIXL_ERR_REPOST_ACTIVE;
         }
     }

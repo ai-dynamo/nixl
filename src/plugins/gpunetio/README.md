@@ -103,8 +103,9 @@ GET validates the entire requested range before posting and splits transfers
 above the SDK WQE limit into bounded chunks. A status covers the complete request.
 A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
 `flush(remote_view, channel)` blocks until preceding channel work completes or
-fails. A supplied status can be polled in any order, and must reach a terminal
-result before being reused. Every CQE is checked in FIFO order, including those
+fails. A supplied status can be polled in any order. It can be reused once its
+request is final: polled to a terminal result, completed by a flush, or on a
+failed channel; reusing it earlier returns `NIXL_ERR_REPOST_ACTIVE`. Every CQE is checked in FIFO order, including those
 from requests without a status. Completed requests stay complete if a later
 request fails; the failed channel rejects new work until teardown.
 
