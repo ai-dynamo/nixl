@@ -356,7 +356,7 @@ private:
         device_topology.num_slots = num_slots;
         for (const auto role : {AFDRole::Attention, AFDRole::FFN}) {
             const auto& ranks = role == AFDRole::Attention ? attention_ranks : ffn_ranks;
-            const auto extent = calculate_buffer_size(max_num_scaleout_ranks, max_num_scaleup_ranks, token_capacity, hidden,
+            const auto extent = calculate_buffer_slot_size(max_num_scaleout_ranks, max_num_scaleup_ranks, token_capacity, hidden,
                                                       num_topk, fp8_dispatch, allow_multiple_reduction, role,
                                                       attention_ranks.size(), ffn_ranks.size());
             EP_HOST_ASSERT(extent <= (INT64_MAX - workspace_extent) / num_slots);
@@ -747,7 +747,7 @@ public:
     }
 
     // Buffer size for a declared maximum world (the live sub-layouts are prefixes of the maximum ones)
-    static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
+    static int64_t calculate_buffer_slot_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
                                          const int& num_max_tokens_per_rank, const int& hidden,
                                          int num_topk, const bool& use_fp8_dispatch,
                                          const bool& allow_multiple_reduction, std::optional<AFDRole> role = std::nullopt,
@@ -1232,7 +1232,7 @@ private:
             num_dispatch_send_bytes = dispatch_bytes;
             num_combine_send_bytes = combine_bytes;
             EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
-                           "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
+                           "The buffer is smaller than its carving: size it with `calculate_buffer_slot_size`");
             const auto [num_wire_recv_bytes, num_wire_send_bytes] = get_dispatch_buffer_size(
                            wire_token_capacity, num_hidden_bytes, num_sf_packs, num_topk,
                            max_num_scaleout_ranks, max_num_scaleup_ranks);
@@ -1611,7 +1611,7 @@ private:
                 wire_token_capacity, hidden, num_topk, allow_multiple_reduction, max_num_scaleout_ranks, max_num_scaleup_ranks);
             num_combine_send_bytes = combine_bytes;
             EP_HOST_ASSERT(num_shared_bytes + num_dispatch_send_bytes + num_combine_send_bytes <= num_buffer_bytes and
-                           "The buffer is smaller than its carving: size it with `calculate_buffer_size`");
+                           "The buffer is smaller than its carving: size it with `calculate_buffer_slot_size`");
         }
 
         EP_HOST_ASSERT(adaptive_num_channels_per_sm.has_value() and "Combine before any dispatch");
@@ -1750,11 +1750,11 @@ static void register_apis(pybind11::module_& m) {
         .def("combine", &ElasticBuffer::combine)
         .def("combine_send", &ElasticBuffer::combine_send)
         .def("combine_recv", &ElasticBuffer::combine_recv);
-    m.def("calculate_elastic_buffer_size", [](int domains, int positions, int capacity, int hidden,
+    m.def("calculate_elastic_buffer_slot_size", [](int domains, int positions, int capacity, int hidden,
                                               int topk, bool fp8, bool multiple_reduction) {
-        return ElasticBuffer::calculate_buffer_size(domains, positions, capacity, hidden, topk, fp8, multiple_reduction);
+        return ElasticBuffer::calculate_buffer_slot_size(domains, positions, capacity, hidden, topk, fp8, multiple_reduction);
     });
-    m.def("calculate_elastic_buffer_size", &ElasticBuffer::calculate_buffer_size);
+    m.def("calculate_elastic_buffer_slot_size", &ElasticBuffer::calculate_buffer_slot_size);
     m.def("calculate_zero_copy_arena_size", &ElasticBuffer::calculate_zero_copy_arena_size);
     m.def("get_elastic_buffer_alignment", [=]() {
         return ElasticBuffer::kNumAlignmentBytes;

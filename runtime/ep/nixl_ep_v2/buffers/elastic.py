@@ -632,7 +632,7 @@ class ElasticBuffer:
                 )
 
         def arena_size(role):
-            return num_slots * _C.calculate_elastic_buffer_size(
+            return num_slots * _C.calculate_elastic_buffer_slot_size(
                 max_num_scaleout_ranks,
                 max_num_scaleup_ranks,
                 num_max_tokens_per_rank,
@@ -927,8 +927,8 @@ class ElasticBuffer:
             # Without explicit role counts the remaining positions can all be peers.
             max_attention_ranks = max_attention_ranks or max_num_scaleup_ranks - 1
             max_ffn_ranks = max_ffn_ranks or max_num_scaleup_ranks - 1
-        # NOTES: calculate_elastic_buffer_size already returns 2 MB-aligned values
-        return num_slots * _C.calculate_elastic_buffer_size(
+        # NOTES: calculate_elastic_buffer_slot_size already returns 2 MB-aligned values
+        return num_slots * _C.calculate_elastic_buffer_slot_size(
             max_num_scaleout_ranks,
             max_num_scaleup_ranks,
             num_max_tokens_per_rank,
