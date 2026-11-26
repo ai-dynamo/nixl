@@ -48,10 +48,13 @@ ticketFromBits(uint64_t bits) {
     return ticket;
 }
 
+// Same constant-field load as the SDK's own handler dispatch in doca_gpu_dev_verbs_submit,
+// so it follows DOCA_GPUNETIO_VERBS_USE_LDG.
 __device__ inline bool
 usesGpuSmDoorbell(const doca_gpu_dev_verbs_qp *qp) {
-    return static_cast<enum doca_gpu_dev_verbs_nic_handler>(__ldg(reinterpret_cast<const int *>(
-               &qp->nic_handler))) == DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
+    return static_cast<enum doca_gpu_dev_verbs_nic_handler>(
+               doca_gpu_dev_verbs_load_const(reinterpret_cast<const int *>(&qp->nic_handler))) ==
+        DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB;
 }
 
 #if !defined(NIXL_GPUNETIO_PUBLIC_FIFO_ONLY) || !NIXL_GPUNETIO_PUBLIC_FIFO_ONLY
