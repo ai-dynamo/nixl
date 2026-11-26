@@ -34,7 +34,7 @@ Set `CUDA_HOME` to the toolkit installation directory to select which toolkit th
 B200/GB200); communication kernels are JIT-compiled for the running GPU.
 Formatting uses NIXL's Abseil dependency.
 `build_nixl_ep` enables both EP implementations and defaults to false.
-This runtime requires CUDA 13; manylinux wheel builds default EP off on CUDA 12.
+This runtime requires CUDA 13.
 With EP disabled, its build prerequisites are not required. The wheel builder
 enables EP through `--build-nixl-ep`; `--torch-versions` selects the Torch versions
 whose extensions are merged. The container builder enables EP by default on CUDA 13.
@@ -262,14 +262,14 @@ validated.
 Run `tests/elastic/test_elastic_ep.py` from `runtime/ep` after installing the
 package. Launch one invocation per node with node-level `WORLD_SIZE` and `RANK`;
 `--num-processes` selects the GPUs per node. Run with `--help` for workload,
-format and timing options. `MASTER_ADDR` and `MASTER_PORT` select the test's
+format and timing options. `SERVER_ADDR` and `SERVER_PORT` select the test's
 Store, defaulting to loopback and port 8361; multi-node runs need a rank-0 node
 address reachable from every node.
 
 `tests/elastic/test_elastic_ep.py` accepts an inline JSON plan or a
-plan file through `--plan`. `--benchmark`, `--kineto` and `--feed-pairs`
-enable call, kernel and transition timing; `--save-output` selects a path for saving
-per-rank results. Payload byte counts exclude transport overhead and are
+plan file through `--plan`. `--benchmark` times dispatch, combine and the pair.
+`--kineto` times individual kernels. `--save-output` saves per-rank results
+to the selected path. Payload byte counts exclude transport overhead and are
 not per-NIC bandwidth measurements. `--dtype` selects BF16, FP8 or NVFP4
 dispatch for checked and timed pairs, with matching buffer capacity.
 Payload values and scales are checked byte for byte; combine stays BF16.
@@ -283,8 +283,6 @@ Custom reconnect plans must form a product of domains and positions after each
 reconnection. Ranks in a fully retired domain may receive positions incompatible
 with those retained in another domain. The default plan avoids this by restoring
 the full cohort between shrinks; custom plans can do the same or keep connections.
-With `--feed-pairs`, warm-up retains connections while visiting phases with new
-participants; those phases must also form products under the initial mapping.
 Unsupported plans fail the normal activation check; the test neither rewrites
 them nor treats rejection as a passing result.
 

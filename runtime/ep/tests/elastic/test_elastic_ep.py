@@ -19,9 +19,7 @@ import argparse
 import json
 import os
 import tempfile
-import time
 from datetime import timedelta
-from statistics import median_high as median
 from typing import (
     Callable,
     Dict,
@@ -30,7 +28,6 @@ from typing import (
     Optional,
     Sequence,
     Tuple,
-    TypedDict,
     Union,
     cast,
 )
@@ -177,31 +174,6 @@ def default_plan(max_su: int, present: List[int], mapping=None) -> List[List[int
     return phases
 
 
-def sample_routing(
-    generator: torch.Generator,
-    num_tokens: int,
-    num_experts: int,
-    active_mask: torch.Tensor,
-    num_topk: int,
-) -> Tuple[torch.Tensor, torch.Tensor]:
-    """`(topk_idx, topk_weights)` of `num_tokens` tokens drawn from `generator`: `num_topk` distinct experts among the
-    `active_mask` ones (the inactive scores are set to -1 before the top-k), positive weights normalised per token
-    """
-    scores = torch.rand(num_tokens, num_experts, generator=generator, device="cuda")
-    scores[:, ~active_mask] = -1.0
-    weights, idx = torch.topk(
-        scores, min(num_topk, num_experts), dim=-1, largest=True, sorted=False
-    )
-    idx = torch.where(weights >= 0, idx, -1)
-    weights = weights.clamp_min(0)
-    weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-20)
-    if idx.shape[1] < num_topk:
-        padding = num_topk - idx.shape[1]
-        idx = torch.nn.functional.pad(idx, (0, padding), value=-1)
-        weights = torch.nn.functional.pad(weights, (0, padding))
-    return idx.to(runtime_ep.topk_idx_t), weights.float().contiguous()
-
-
 # A dispatch payload: BF16 rows, or `(data, scales)` for FP8 and NVFP4
 Payload = Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]
 Bias = Optional[Union[torch.Tensor, Tuple[torch.Tensor, torch.Tensor]]]
@@ -287,6 +259,14 @@ def payload_equal(a: Payload, b: Payload) -> bool:
     )
 
 
+def make_bias(num_bias: int, num_tokens: int, hidden: int) -> Bias:
+    biases = [
+        torch.randn(num_tokens, hidden, dtype=torch.bfloat16, device="cuda")
+        for _ in range(num_bias)
+    ]
+    return (biases[0], biases[1]) if num_bias == 2 else biases[0] if num_bias else None
+
+
 def combine_recipe(buffer: runtime_ep.ElasticBuffer):
     # Without `allow_multiple_reduction` the combine input is already reduced within the rank.
     return (
@@ -304,7 +284,13 @@ class Case:
     `payload(global idx)`, so every rank can rebuild what it should have received from whom.
     """
 
-    def __init__(self, buffer: runtime_ep.ElasticBuffer, args: argparse.Namespace):
+    def __init__(
+        self,
+        buffer: runtime_ep.ElasticBuffer,
+        args: argparse.Namespace,
+        *,
+        token_limit: Optional[int] = None,
+    ):
         self.buffer = buffer
         self.args = args
         self.dtype = getattr(args, "dtype", "bf16")
@@ -312,7 +298,11 @@ class Case:
             buffer.max_num_scaleout_ranks,
             buffer.max_num_scaleup_ranks,
         )
-        self.num_max_tokens_per_rank = args.num_tokens
+        self.num_max_tokens_per_rank = (
+            args.num_tokens
+            if token_limit is None
+            else min(args.num_tokens, token_limit)
+        )
         self.hidden, self.num_topk, self.num_experts = (
             args.hidden,
             args.num_topk,
@@ -344,19 +334,50 @@ class Case:
         # Every world rank sends a different number of tokens (the lower the rank, the more), at least one
         return max(1, self.num_max_tokens_per_rank - world_rank)
 
+    def sample_routing(
+        self, generator: torch.Generator, num_tokens: int, phase: List[int]
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
+        """Sample distinct active experts and normalized weights for each token."""
+        scores = torch.rand(
+            num_tokens, self.num_experts, generator=generator, device="cuda"
+        )
+        if self.args.hot_rank_fraction and len(phase) > 1:
+            epr = self.buffer.num_experts_per_rank
+            start = min(phase) * epr
+            prefer_hot = (
+                torch.rand(
+                    (num_tokens, 1),
+                    generator=generator,
+                    device=scores.device,
+                    dtype=torch.float32,
+                )
+                < self.args.hot_rank_fraction
+            )
+            scores[:, start : start + epr] += prefer_hot
+        scores[:, ~self.active_expert_mask(phase)] = -1.0
+        weights, idx = torch.topk(
+            scores,
+            min(self.num_topk, self.num_experts),
+            dim=-1,
+            largest=True,
+            sorted=False,
+        )
+        idx = torch.where(weights >= 0, idx, -1)
+        weights = weights.clamp_min(0)
+        weights = weights / weights.sum(dim=-1, keepdim=True).clamp_min(1e-20)
+        if idx.shape[1] < self.num_topk:
+            padding = self.num_topk - idx.shape[1]
+            idx = torch.nn.functional.pad(idx, (0, padding), value=-1)
+            weights = torch.nn.functional.pad(weights, (0, padding))
+        return idx.to(runtime_ep.topk_idx_t), weights.float().contiguous()
+
     def routing(
         self, phase_idx: int, world_rank: int, phase: List[int]
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """`(topk_idx, topk_weights)` of world rank `world_rank` in phase `phase_idx`: distinct active experts, positive weights"""
         g = torch.Generator(device="cuda")
         g.manual_seed(self.args.seed * 1000003 + phase_idx * 4099 + world_rank + 1)
-        return sample_routing(
-            g,
-            self.num_tokens_of(world_rank),
-            self.num_experts,
-            self.active_expert_mask(phase),
-            self.num_topk,
-        )
+        return self.sample_routing(g, self.num_tokens_of(world_rank), phase)
 
     def global_idx(self, world_rank: int, phase: List[int]) -> torch.Tensor:
         return self.flat_idx(
@@ -401,15 +422,16 @@ class Case:
         )
 
     def combine_input(
-        self, src_global_idx: torch.Tensor, recv_topk_idx: torch.Tensor
+        self,
+        src_global_idx: torch.Tensor,
+        recv_topk_idx: torch.Tensor,
+        num_recv: Optional[int] = None,
     ) -> torch.Tensor:
-        """The combine input from the dispatch output: the pre-combine data of every received row (rows past the real
-        count, when present, carry -1 and are never read), zeroed where the selection is not this rank's, reduced within the rank
-        """
+        """Construct rank-local contributions, keeping the full allocation when only a prefix contains received rows."""
         y = torch.empty(
             (src_global_idx.numel(), self.hidden), dtype=torch.bfloat16, device="cuda"
         )
-        for rows in self.row_slices(y.shape[0]):
+        for rows in self.row_slices(y.shape[0] if num_recv is None else num_recv):
             local_y = self.pre_combine_data(src_global_idx[rows].clamp_min(0))
             local_y[recv_topk_idx[rows] == -1] = 0
             y[rows] = ordered_accumulate(local_y)
@@ -450,22 +472,21 @@ class Case:
         return [slice(start, start + step) for start in range(0, num_rows, step)]
 
     def expected_receive(
-        self, phase_idx: int, phase: List[int]
+        self,
+        phase: List[int],
+        routing_for: Callable[[int], Tuple[torch.Tensor, torch.Tensor]],
     ) -> Tuple[torch.Tensor, Payload, torch.Tensor, torch.Tensor]:
         """What this rank receives in the phase, sorted by source global index: `(global_idx, x, local_topk_idx, weights)`"""
         me = self.buffer.world_rank
         epr = self.buffer.num_experts_per_rank
         chunks = []
-        for src in phase:
-            topk_idx, topk_weights = self.routing(phase_idx, src, phase)
-            owner = topk_idx // epr
+        # Internal slot order is also the order of source IDs in the current extent.
+        for src in sorted(phase, key=rank_mapping(self.buffer).__getitem__):
+            topk_idx, topk_weights = routing_for(src)
             mine = self.reaches_me(topk_idx, phase)
             gidx = self.global_idx(src, phase)[mine]
-            local_idx = torch.where(
-                owner[mine] == me,
-                topk_idx[mine] - me * epr,
-                torch.full_like(topk_idx[mine], -1),
-            )
+            selected = topk_idx[mine]
+            local_idx = torch.where(selected // epr == me, selected - me * epr, -1)
             chunks.append(
                 (
                     gidx,
@@ -474,13 +495,11 @@ class Case:
                     topk_weights[mine],
                 )
             )
-        gidx = torch.cat([c[0] for c in chunks])
-        order = torch.argsort(gidx)
         return (
-            gidx[order],
-            payload_rows(cat_payloads([c[1] for c in chunks]), order),
-            torch.cat([c[2] for c in chunks])[order],
-            torch.cat([c[3] for c in chunks])[order],
+            torch.cat([c[0] for c in chunks]),
+            cat_payloads([c[1] for c in chunks]),
+            torch.cat([c[2] for c in chunks]),
+            torch.cat([c[3] for c in chunks]),
         )
 
 
@@ -510,37 +529,44 @@ def validate_plan(
 
 def check_dispatch(
     case: Case,
-    phase_idx: int,
     phase: List[int],
+    routing_for: Callable[[int], Tuple[torch.Tensor, torch.Tensor]],
     recv_x,
     recv_topk_idx,
     recv_topk_weights,
     handle,
     tag: str,
+    *,
+    do_cpu_sync: bool,
 ):
-    num_recv = handle.num_recv_tokens
-    assert handle.num_recv_tokens_device.item() == num_recv, (
-        handle.num_recv_tokens_device.item(),
-        num_recv,
-    )
-    gidx = handle.recv_src_metadata[:num_recv, 0]
-    order = torch.argsort(gidx)
-    exp_gidx, exp_x, exp_idx, exp_w = case.expected_receive(phase_idx, phase)
+    exp_gidx, exp_x, exp_idx, exp_w = case.expected_receive(phase, routing_for)
+    num_recv = exp_gidx.numel()
     assert (
-        gidx.numel() == exp_gidx.numel()
-    ), f"[{tag}] received {gidx.numel()} tokens, expected {exp_gidx.numel()}"
+        handle.num_recv_tokens_device.item() == num_recv
+    ), f"[{tag}] receive count mismatch"
+    _, su_extent = case.extent(phase)
+    source_positions = (exp_gidx // case.num_max_tokens_per_rank) % su_extent
+    prefix = exp_gidx.new_zeros(case.max_su + 1)
+    prefix[:su_extent] = torch.bincount(source_positions, minlength=su_extent).cumsum(0)
+    prefix[-1] = num_recv
+    assert torch.equal(
+        handle.psum_num_recv_tokens_per_scaleup_rank, prefix
+    ), f"[{tag}] per-position receive prefix sums mismatch"
+
+    gidx = handle.recv_src_metadata[:num_recv, 0]
+    order = slice(num_recv) if case.buffer.deterministic else torch.argsort(gidx)
     assert torch.equal(
         gidx[order], exp_gidx
     ), f"[{tag}] received source tokens differ from the expectation"
+    if case.dtype == "fp8":
+        assert recv_x[1].is_contiguous(), f"[{tag}] expected row-major FP8 scales"
     assert payload_equal(
-        payload_rows(payload_rows(recv_x, slice(num_recv)), order), exp_x
+        payload_rows(recv_x, order), exp_x
     ), f"[{tag}] received payload mismatch ({case.dtype})"
     assert torch.equal(
-        recv_topk_idx[:num_recv][order].to(torch.int64), exp_idx.to(torch.int64)
+        recv_topk_idx[order], exp_idx
     ), f"[{tag}] local expert indices mismatch"
-    assert torch.equal(
-        recv_topk_weights[:num_recv][order], exp_w
-    ), f"[{tag}] weights mismatch"
+    assert torch.equal(recv_topk_weights[order], exp_w), f"[{tag}] weights mismatch"
     counts = torch.bincount(
         exp_idx[exp_idx >= 0].to(torch.int64),
         minlength=case.buffer.num_experts_per_rank,
@@ -550,23 +576,35 @@ def check_dispatch(
     assert torch.equal(
         handle.num_unaligned_recv_tokens_per_expert, counts
     ), f"[{tag}] per-expert receive counts mismatch"
-    assert (
-        handle.num_recv_tokens_per_expert_list == aligned_counts.tolist()
-    ), f"[{tag}] aligned CPU expert counts mismatch"
+    if do_cpu_sync:
+        assert handle.num_recv_tokens == num_recv, f"[{tag}] CPU receive count mismatch"
+        assert (
+            handle.num_recv_tokens_per_expert_list == aligned_counts.tolist()
+        ), f"[{tag}] aligned CPU expert counts mismatch"
+    else:
+        assert (
+            not handle.num_recv_tokens_per_expert_list
+        ), f"[{tag}] unexpected CPU expert counts"
     assert torch.equal(
         handle.psum_num_recv_tokens_per_expert, aligned_counts.cumsum(0)
     ), f"[{tag}] aligned expert prefix sums mismatch"
-    return num_recv
+    return num_recv, counts
 
 
 def run_eager(
-    case: Case, phase_idx: int, phase: List[int], tag: str, mode: EPMode = EPMode()
+    case: Case,
+    phase_idx: int,
+    phase: List[int],
+    tag: str,
+    mode: EPMode = EPMode(),
+    *,
+    do_cpu_sync: bool = True,
 ):
     buffer = case.buffer
     me = buffer.world_rank
     topk_idx, topk_weights = case.routing(phase_idx, me, phase)
     x = case.payload(case.payload_indices(me))
-    dispatch_args = case.dispatch_kwargs(do_cpu_sync=True) | dict(
+    dispatch_args = case.dispatch_kwargs(do_cpu_sync=do_cpu_sync) | dict(
         do_handle_copy=mode.do_handle_copy, expert_alignment=mode.expert_alignment
     )
     recv_x, recv_topk_idx, recv_topk_weights, handle, dispatch_event = launch(
@@ -582,22 +620,20 @@ def run_eager(
         handle.topk_idx.data_ptr() != topk_idx.data_ptr()
     ) == mode.do_handle_copy, f"[{tag}] handle-copy setting was not honored"
     assert torch.equal(handle.topk_idx, topk_idx), "handle changed external expert IDs"
-    num_recv = check_dispatch(
-        case, phase_idx, phase, recv_x, recv_topk_idx, recv_topk_weights, handle, tag
+    num_recv, _ = check_dispatch(
+        case,
+        phase,
+        lambda src: case.routing(phase_idx, src, phase),
+        recv_x,
+        recv_topk_idx,
+        recv_topk_weights,
+        handle,
+        tag,
+        do_cpu_sync=do_cpu_sync,
     )
 
-    # Combine: the pre-combine data is a function of the source token, reduced within the rank first (the CPU sync
-    # made the count exact: every row is a received one)
-    y = case.combine_input(
-        handle.recv_src_metadata[:num_recv, 0], recv_topk_idx[:num_recv]
-    )
-    biases = tuple(
-        torch.randn(
-            (topk_idx.shape[0], case.hidden), dtype=torch.bfloat16, device="cuda"
-        )
-        for _ in range(mode.num_bias)
-    )
-    bias = (biases[0], biases[1]) if len(biases) == 2 else biases[0] if biases else None
+    y = case.combine_input(handle.recv_src_metadata[:, 0], recv_topk_idx, num_recv)
+    bias = make_bias(mode.num_bias, topk_idx.shape[0], case.hidden)
     combined_x, combine_event = launch(
         buffer, "combine", mode, x=y, handle=handle, bias=bias
     )
@@ -607,6 +643,162 @@ def run_eager(
         combined_x, ref
     ), f"[{tag}] combined_x mismatch, diff={calc_diff(combined_x, ref)}"
     return num_recv
+
+
+def run_expanded(
+    case: Case,
+    present: List[int],
+    mode: EPMode = EPMode(expert_alignment=5),
+    *,
+    do_cpu_sync: bool = True,
+    do_zero_padding: bool = False,
+) -> None:
+    """Route to the next rank and this rank, checking expanded slots, expert padding and the combined result."""
+    buffer = case.buffer
+    me = buffer.world_rank
+    epr = buffer.num_experts_per_rank
+    mapping = rank_mapping(buffer)
+    # Interleave domains so the next rank is remote on a hybrid topology.
+    ranks = sorted(
+        present, key=lambda r: (mapping[r] % case.max_su, mapping[r] // case.max_su)
+    )
+    index = ranks.index(me)
+    num_dests = min(2, len(ranks), case.num_topk)
+    num_selected = min(case.num_topk, num_dests * min(2, epr))
+    sources = [ranks[index - 1]]
+    if num_dests == 2:
+        sources.append(me)
+    sources.sort(key=mapping.__getitem__)
+    num_tokens = min(2, case.num_max_tokens_per_rank)
+    tokens = torch.arange(num_tokens, device="cuda")
+
+    def routes(src):
+        dests = [ranks[(ranks.index(src) + 1) % len(ranks)], src]
+        ids = [
+            dests[j % num_dests] * epr + (j // num_dests) * (epr - 1)
+            for j in range(num_selected)
+        ]
+        idx = torch.full(
+            (num_tokens, case.num_topk), -1, dtype=runtime_ep.topk_idx_t, device="cuda"
+        )
+        idx[:, :num_selected] = torch.tensor(ids, device="cuda")
+        return idx
+
+    topk_idx = routes(me)
+    weights = torch.zeros_like(topk_idx, dtype=torch.float32)
+    weights[:, :num_selected] = (
+        1 + (tokens[:, None] + torch.arange(num_selected, device="cuda")) % num_selected
+    )
+    weights /= weights.sum(dim=1, keepdim=True)
+    own_ids = me * case.num_max_tokens_per_rank + tokens
+    source_ids = torch.cat(
+        [src * case.num_max_tokens_per_rank + tokens for src in sources]
+    )
+    payload_ids = torch.cat((own_ids, source_ids))
+    payload = case.payload(payload_ids)
+    if case.dtype == "fp8":
+        assert isinstance(payload, tuple)
+        scales = payload[1]
+        scales.mul_(
+            1
+            + payload_ids[:, None].remainder(31) * scales.size(1)
+            + torch.arange(scales.size(1), device=scales.device)
+        )
+
+    # Five or ten expanded rows at the default alignment force padding between FP8 scale columns.
+    alignment = mode.expert_alignment
+    recv_x, recv_idx, recv_weights, handle, dispatch_event = launch(
+        buffer,
+        "dispatch",
+        mode,
+        x=payload_rows(payload, slice(num_tokens)),
+        topk_idx=topk_idx,
+        topk_weights=weights,
+        do_expand=True,
+        do_zero_padding=do_zero_padding,
+        do_cpu_sync=do_cpu_sync,
+        expert_alignment=alignment,
+        do_handle_copy=mode.do_handle_copy,
+        num_max_tokens_per_rank=num_tokens,
+        use_tma_aligned_col_major_sf=case.dtype == "fp8",
+    )
+    assert (
+        recv_idx is None and handle.num_recv_tokens_device.item() == source_ids.numel()
+    )
+    assert (handle.topk_idx.data_ptr() != topk_idx.data_ptr()) == mode.do_handle_copy
+    # Expanded metadata rows may arrive unordered. Each row identifies the slots for one source token.
+    meta = handle.recv_src_metadata[: source_ids.numel()]
+    meta = meta[meta[:, 0].argsort()]
+    assert torch.equal(
+        meta[:, 0],
+        torch.cat(
+            [case.flat_idx(src, present) * num_tokens + tokens for src in sources]
+        ),
+    )
+    incoming = torch.cat([routes(src) for src in sources])
+    local = incoming // epr == me
+    assert (meta[:, 2:][~local] == -1).all()
+    rows, picks = torch.where(local)
+    experts = incoming[rows, picks] % epr
+    slots = meta[:, 2:][rows, picks].long()
+    counts = torch.bincount(experts.long(), minlength=epr)
+    aligned = (counts + alignment - 1) // alignment * alignment
+    starts = aligned.cumsum(0) - aligned
+    ends = starts + counts
+    assert torch.equal(handle.num_unaligned_recv_tokens_per_expert, counts)
+    assert torch.equal(handle.psum_num_recv_tokens_per_expert, ends)
+    if do_cpu_sync:
+        assert handle.num_recv_tokens == source_ids.numel()
+        assert handle.num_recv_tokens_per_expert_list == aligned.tolist()
+
+    slot_experts = torch.arange(epr, device="cuda").repeat_interleave(aligned)
+    num_rows = slot_experts.numel()
+    valid = torch.arange(num_rows, device="cuda") < ends[slot_experts]
+    # Within an expert, deterministic dispatch must preserve the ascending source-token order above.
+    order = (
+        torch.arange(slots.numel(), device="cuda")
+        if buffer.deterministic
+        else slots.argsort()
+    )
+    order = order[experts[order].argsort(stable=True)]
+    assert torch.equal(slots[order], torch.where(valid)[0])
+    allocated = payload_parts(recv_x)[0].shape[0]
+    assert allocated == num_rows if do_cpu_sync else allocated >= num_rows
+    if case.dtype == "fp8":
+        assert isinstance(recv_x, tuple)
+        data, sf = recv_x
+        assert sf.stride(0) == 1 and sf.stride(1) >= allocated
+        assert sf.data_ptr() % 16 == 0 and sf.stride(1) * sf.element_size() % 16 == 0
+        recv_x = data[:num_rows], sf[:num_rows].contiguous()
+    assert payload_equal(
+        payload_rows(recv_x, slots), payload_rows(payload, num_tokens + rows)
+    )
+    assert recv_weights is not None and recv_weights.shape == (allocated,)
+    assert torch.equal(recv_weights[slots], weights[rows % num_tokens, picks])
+    if do_zero_padding:
+        assert recv_weights[:num_rows][~valid].count_nonzero().item() == 0
+        for part in payload_parts(recv_x):
+            assert part[:num_rows].view(torch.uint8)[~valid].count_nonzero().item() == 0
+
+    expert_output = torch.full(
+        (num_rows, case.hidden), torch.nan, dtype=torch.bfloat16, device="cuda"
+    )
+    expert_output[slots] = case.pre_combine_data(source_ids, num_selected)[rows, picks]
+    bias = make_bias(mode.num_bias, num_tokens, case.hidden)
+    combined, combine_event = launch(
+        buffer, "combine", mode, x=expert_output, handle=handle, bias=bias
+    )
+    ref = ref_combine(
+        case.pre_combine_data(own_ids, num_selected),
+        topology_experts(buffer, topk_idx[:, :num_selected]),
+        case.max_so,
+        case.max_su,
+        case.num_experts,
+        bias,
+        buffer.allow_multiple_reduction,
+        buffer.allow_multiple_reduction and buffer._get_mode() == "hybrid",
+    )
+    assert torch.equal(combined, ref), "expanded combine mismatch"
 
 
 def remote_payload_rows(
@@ -776,7 +968,7 @@ def save_results(
                 temporary_path = os.path.join(directory, "results.json")
                 with open(temporary_path, "w") as output:
                     json.dump(
-                        dict(schema_version=1, config=config, plan=plan, ranks=ranks),
+                        dict(schema_version=2, config=config, plan=plan, ranks=ranks),
                         output,
                         indent=2,
                         allow_nan=False,
@@ -813,9 +1005,7 @@ class PairCase:
         self.case, self.num_tokens = case, n
         g = torch.Generator(device="cuda")
         g.manual_seed(args.seed * 7919 + phase_idx * 104729 + me + 12345)
-        topk_idx, topk_weights = sample_routing(
-            g, n, case.num_experts, case.active_expert_mask(phase), case.num_topk
-        )
+        topk_idx, topk_weights = case.sample_routing(g, n, phase)
         x = torch.randn(
             n, case.hidden, dtype=torch.bfloat16, device="cuda", generator=g
         )
@@ -833,7 +1023,7 @@ class PairCase:
         self.dispatch_bytes_per_token = (
             sum(t.numel() * t.element_size() for t in payload) // n
         )
-        # Each active source can contribute at most n deduplicated rows; allocate before the measured transition.
+        # Each active source can contribute at most n deduplicated rows.
         self.y = torch.randn(
             n * len(phase),
             case.hidden,
@@ -848,20 +1038,6 @@ class PairCase:
         self.num_recv = handle.num_recv_tokens
         self.combine_args = dict(x=self.y[: self.num_recv], handle=handle)
         self.case.buffer.combine(**self.combine_args)
-
-
-def run_feed(
-    pc: PairCase, num_pairs: int
-) -> Tuple[torch.cuda.Event, List[torch.cuda.Event], List[float]]:
-    """Time every pair; return the first start event, all end events and per-pair microseconds."""
-    starts = [torch.cuda.Event(enable_timing=True) for _ in range(num_pairs)]
-    ends = [torch.cuda.Event(enable_timing=True) for _ in range(num_pairs)]
-    for s, e in zip(starts, ends):
-        s.record()
-        pc.pair()
-        e.record()
-    torch.cuda.synchronize()
-    return starts[0], ends, [s.elapsed_time(e) * 1e3 for s, e in zip(starts, ends)]
 
 
 # The barriers `capture` runs (before the warm-ups, before the capture, after it), for idle ranks that mirror them
@@ -1016,7 +1192,6 @@ class GraphCase:
     ):
         """Check outputs for the replay's routing; num_replays counts executions since statistics reset."""
         case = self.case
-        me = case.buffer.world_rank
         assert self.handle is not None and self.recv_x is not None
         combined_x = self.outputs
         assert torch.equal(
@@ -1028,61 +1203,21 @@ class GraphCase:
         assert torch.equal(
             combined_x, ref
         ), f"[{tag}] graph combined_x mismatch, diff={calc_diff(combined_x, ref)}"
-        # Source metadata follows the current extent; payloads and expert owners use stable world IDs.
-        expected_src_parts, expected_x_parts = [], []
-        expected_idx_parts, expected_w_parts = [], []
-        epr = case.buffer.num_experts_per_rank
-        expected_stats = torch.zeros(epr, dtype=torch.int64, device="cuda")
-        for src in phase:
-            src_idx, src_w = self._replay_routing(src, phase, routing_phase_idx)
-            mine = case.reaches_me(src_idx, phase)
-            expected_src_parts.append(case.global_idx(src, phase)[mine])
-            expected_x_parts.append(
-                payload_rows(case.payload(case.payload_indices(src)), mine)
-            )
-            expected_idx_parts.append(
-                torch.where(src_idx[mine] // epr == me, src_idx[mine] - me * epr, -1)
-            )
-            expected_w_parts.append(src_w[mine])
-            local_idx = src_idx[src_idx // epr == me].to(torch.int64) - me * epr
-            expected_stats += torch.bincount(local_idx, minlength=epr)
-        expected_src = torch.cat(expected_src_parts)
-        expected_x = cat_payloads(expected_x_parts)
-        expected = expected_src.numel()
-        num_recv = self.handle.num_recv_tokens_device.item()
-        assert num_recv == expected, (
-            f"[{tag}] graph receive count {num_recv}, expected {expected}; "
-            f"psum per position {self.handle.psum_num_recv_tokens_per_scaleup_rank.tolist()}, "
-            f"captured at {self.capture_phase_of[me]}"
-        )
-        received_src = self.handle.recv_src_metadata[:num_recv, 0]
-        order, expected_order = torch.argsort(received_src), torch.argsort(expected_src)
-        assert torch.equal(
-            received_src[order], expected_src[expected_order]
-        ), f"[{tag}] graph received source tokens mismatch"
-        assert payload_equal(
-            payload_rows(payload_rows(self.recv_x, slice(num_recv)), order),
-            payload_rows(expected_x, expected_order),
-        ), f"[{tag}] graph received payload mismatch ({case.dtype})"
         assert self.recv_topk_idx is not None and self.recv_topk_weights is not None
+        num_recv, counts = check_dispatch(
+            case,
+            phase,
+            lambda src: self._replay_routing(src, phase, routing_phase_idx),
+            self.recv_x,
+            self.recv_topk_idx,
+            self.recv_topk_weights,
+            self.handle,
+            tag,
+            do_cpu_sync=False,
+        )
         assert torch.equal(
-            self.recv_topk_idx[:num_recv][order].to(torch.int64),
-            torch.cat(expected_idx_parts)[expected_order].to(torch.int64),
-        ), f"[{tag}] graph local expert indices mismatch"
-        assert torch.equal(
-            self.recv_topk_weights[:num_recv][order],
-            torch.cat(expected_w_parts)[expected_order],
-        ), f"[{tag}] graph weights mismatch"
-        assert torch.equal(
-            self.stats[:epr].to(torch.int64), expected_stats * num_replays
+            self.stats, counts * num_replays
         ), f"[{tag}] graph expert statistics mismatch"
-        assert self.stats.shape == (epr,)
-        assert torch.equal(
-            self.handle.num_unaligned_recv_tokens_per_expert, expected_stats
-        ), f"[{tag}] graph per-expert receive counts mismatch"
-        assert torch.equal(
-            self.handle.psum_num_recv_tokens_per_expert, expected_stats.cumsum(0)
-        ), f"[{tag}] graph per-expert receive prefix sums mismatch"
         assert (
             self.stats_storage[-1].item() == self.STATS_GUARD
         ), f"[{tag}] graph wrote past statistics capacity"
@@ -1108,38 +1243,21 @@ def expected_mode(
     return "direct" if one_domain else "hybrid"
 
 
-class TransitionTimings(TypedDict, total=False):
-    num_connect: int
-    num_disconnect: int
-    ev_activate_start: torch.cuda.Event
-    ev_activate_end: torch.cuda.Event
-    connect: float
-    activate: float
-    disconnect: float
-    barrier: float
-    total: float
-
-
 def switch_world(
     buffer: runtime_ep.ElasticBuffer,
     phase: List[int],
     barrier_fn: Callable[[], None],
     store_timeout_secs: float,
     reconnect_on_leave: bool = False,
-    timings: Optional[TransitionTimings] = None,
 ) -> None:
     """
     Drain the old world, activate participants and optionally retire peers; `barrier_fn` spans all processes.
     With reconnection, departing buffers return to a singleton and participation follows `phase`.
     Otherwise departing ranks adopt `phase` to become inactive while retaining connections.
-    `timings`: host ms per step, peer counts and two CUDA events around activation.
     `store_timeout_secs` bounds the Store wait of `connect_ranks`.
     """
-    t: TransitionTimings = timings if timings is not None else {}
-    t0 = time.perf_counter()
     buffer.barrier(with_cpu_sync=True)
     barrier_fn()
-    t_drained = time.perf_counter()
     me = buffer.world_rank
     active = me in phase
     update_membership = active or (
@@ -1151,28 +1269,18 @@ def switch_world(
     else:
         needed = connected | ((set(phase) - {me}) if active else set())
     joining = sorted(needed - connected)
-    t["num_connect"] = len(joining)
-    t1 = time.perf_counter()
     if joining:
         buffer.connect_ranks(
             joining,
             key_prefix="adaptive-elastic/EP_NIXL",
             timeout_secs=store_timeout_secs,
         )
-    t2 = time.perf_counter()
     torch.cuda.synchronize()
     barrier_fn()
-    t3 = time.perf_counter()
-    t["ev_activate_start"] = torch.cuda.Event(enable_timing=True)
-    t["ev_activate_start"].record()
     if update_membership:
         buffer.set_active_ranks(phase)
-    t["ev_activate_end"] = torch.cuda.Event(enable_timing=True)
-    t["ev_activate_end"].record()
-    t4 = time.perf_counter()
     torch.cuda.synchronize()
     barrier_fn()
-    t5 = time.perf_counter()
     if not reconnect_on_leave:
         assert (me in buffer.get_active_ranks()) == active
     if update_membership:
@@ -1186,26 +1294,44 @@ def switch_world(
 
     # Participants retire excluded peers; departing buffers retire all peers and remain singletons.
     leaving = sorted(connected - needed) if reconnect_on_leave else []
-    t["num_disconnect"] = len(leaving)
-    t6 = time.perf_counter()
     if leaving:
         buffer.disconnect_ranks(leaving)
-    t7 = time.perf_counter()
     torch.cuda.synchronize()
     barrier_fn()
-    t8 = time.perf_counter()
     if reconnect_on_leave and not active:
         assert buffer.get_active_ranks() == [me]
         assert not buffer.get_connected_ranks()
-    t.update(
-        {
-            "connect": (t2 - t1) * 1e3,
-            "activate": (t4 - t3) * 1e3,
-            "disconnect": (t7 - t6) * 1e3,
-            "barrier": ((t_drained - t0) + (t3 - t2) + (t5 - t4) + (t8 - t7)) * 1e3,
-            "total": (t8 - t0) * 1e3,
-        }
+
+
+def run_api_cases(case: Case, present: List[int]) -> None:
+    buffer = case.buffer
+    me = buffer.world_rank
+    tag = f"rank {me} {buffer._get_mode()} API {case.dtype}"
+    buffer.deterministic = True
+    for repeat in range(2):
+        run_eager(case, 0, present, f"{tag} deterministic {repeat + 1}")
+        run_expanded(case, present, do_zero_padding=True)
+
+    async_mode = EPMode(
+        do_handle_copy=False,
+        num_bias=2,
+        with_previous_event=True,
+        async_with_compute_stream=True,
+        allocate_on_comm_stream=True,
     )
+    # Without CPU synchronization the receive buffer is sized for the declared world.
+    small = Case(buffer, case.args, token_limit=4)
+    run_eager(
+        small, 0, present, f"{tag} deterministic async", async_mode, do_cpu_sync=False
+    )
+
+    buffer.deterministic = False
+    run_expanded(case, present, async_mode, do_cpu_sync=False)
+    for mode in enumerate_ep_modes():
+        if me == min(present):
+            print(f" > [{tag} {mode}]", flush=True)
+        run_eager(case, 0, present, f"{tag} {mode}", mode)
+        run_expanded(case, present, mode)
 
 
 @torch.inference_mode()
@@ -1249,6 +1375,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                 for rank in range(num_ranks)
             ]
         )
+
     buffer = make_buffer(
         args,
         rank_idx,
@@ -1256,6 +1383,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
         store,
         num_group_scaleup_ranks=cohort.num_scaleup_ranks,
         max_num_scaleup_ranks=args.max_scaleup_ranks,
+        deterministic=True,
         **placement,
     )
     max_so, max_su = buffer.max_num_scaleout_ranks, buffer.max_num_scaleup_ranks
@@ -1287,104 +1415,27 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     assert all(
         0 <= p < len(plan) for p in perf_phases
     ), f"--perf-phases {sorted(perf_phases)} outside the plan of {len(plan)} phases"
-    phase_records, transition_records = [], []
+    phase_records = []
 
-    for ep_mode in enumerate_ep_modes():
-        tag = f"rank {me} {mode} API {case.dtype} {ep_mode}"
-        if me == min(present):
-            print(f" > [{tag}]", flush=True)
-        run_eager(case, 0, present, tag, ep_mode)
+    assert buffer.deterministic
+    run_api_cases(case, present)
     cohort_print(f"API combinations passed ({case.dtype})")
 
     # The phase each rank captures its graph at: the first phase of the plan it takes part in (reversed: the first wins)
     capture_phase_of = {r: list(phase) for phase in reversed(plan) for r in phase}
 
-    feed = (
-        args.feed_pairs
-    )  # > 0: time every switch under a synthetic feed of dispatch + combine pairs
-    if feed > 0:
-        # Warm each participating rank while retaining connections and their mappings.
-        warmed: set[int] = set()
-        for phase_idx, phase in enumerate(plan):
-            if set(phase) <= warmed:
-                continue
-            switch_world(buffer, phase, barrier, args.store_timeout_secs)
-            if me in phase:
-                PairCase(case, phase_idx, phase, args).pair()
-            barrier()
-            warmed.update(phase)
-        # Restore initial membership without allocating full-world token buffers.
-        switch_world(buffer, present, barrier, args.store_timeout_secs)
-    pc = PairCase(case, 0, plan[0], args) if feed > 0 and me in plan[0] else None
     graph: Optional[GraphCase] = None
     captured: set[int] = set()
-    # End events and times of the pairs this rank ran at the end of the previous phase.
-    pre: Optional[Tuple[List[torch.cuda.Event], List[float]]] = None
     for phase_idx, phase in enumerate(plan):
-        tim: TransitionTimings = {}
         switch_world(
             buffer,
             phase,
             barrier,
             args.store_timeout_secs,
             args.reconnect_on_leave,
-            timings=tim,
         )
         active = me in phase
         active_mode = buffer._get_mode() if active else None
-        if feed > 0 and phase_idx > 0:
-            # The switch as an engine sees it: the last pair of the old world, the switch, the first pairs of the new
-            prev = plan[phase_idx - 1]
-            role = (
-                ("stay" if me in prev else "join")
-                if active
-                else ("leave" if me in prev else "idle")
-            )
-            gpu_gap = after = float("nan")
-            first_list = ""
-            times: List[float] = []
-            if active:
-                assert pc is not None
-                first_event, _, times = run_feed(pc, feed)
-                first_list = ",".join(f"{v:.0f}" for v in times[:3])
-                after = median(times[3:]) if len(times) > 3 else median(times)
-                if pre is not None:
-                    gpu_gap = pre[0][-1].elapsed_time(
-                        first_event
-                    )  # ms, same stream and device
-            before = median(pre[1]) if pre is not None else float("nan")
-            dev_ms = tim["ev_activate_start"].elapsed_time(tim["ev_activate_end"])
-            print(
-                f"TRANS tag={args.perf_tag} mode={active_mode or 'inactive'} from={phase_idx - 1} to={phase_idx} rank={me} role={role} "
-                f'live_before={len(prev)} live_after={len(phase)} num_connect={tim["num_connect"]} num_disconnect={tim["num_disconnect"]} '
-                f'connect_ms={tim["connect"]:.2f} activate_ms={tim["activate"]:.3f} '
-                f'disconnect_ms={tim["disconnect"]:.2f} barrier_ms={tim["barrier"]:.2f} switch_ms={tim["total"]:.2f} '
-                f"activate_dev_ms={dev_ms:.3f} gpu_gap_ms={gpu_gap:.2f} before_us={before:.0f} first_us={first_list} after_us={after:.0f}",
-                flush=True,
-            )
-            if args.save_output:
-                transition_records.append(
-                    dict(
-                        from_phase=phase_idx - 1,
-                        to_phase=phase_idx,
-                        mode=active_mode,
-                        role=role,
-                        live_before=len(prev),
-                        live_after=len(phase),
-                        num_connect=tim["num_connect"],
-                        num_disconnect=tim["num_disconnect"],
-                        connect_ms=tim["connect"],
-                        activate_ms=tim["activate"],
-                        disconnect_ms=tim["disconnect"],
-                        barrier_ms=tim["barrier"],
-                        total_ms=tim["total"],
-                        activate_dev_ms=dev_ms,
-                        gpu_gap_ms=gpu_gap if pre is not None and active else None,
-                        before_us=before if pre is not None else None,
-                        first_us=times[:3],
-                        after_us=after if times else None,
-                    )
-                )
 
         # Ranks active for the first time capture now; the other active ranks run the warm-ups with them, idle ranks mirror the barriers
         new_capturers = sorted(set(phase) - captured)
@@ -1455,19 +1506,7 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                         performance=performance,
                     )
                 )
-        # Prepare the next phase before the final old-world feed, keeping setup out of the transition gap.
-        next_pc = None
-        if feed > 0 and phase_idx + 1 < len(plan) and me in plan[phase_idx + 1]:
-            next_pc = PairCase(case, phase_idx + 1, plan[phase_idx + 1], args)
         barrier()
-        # The feed's last pairs of this phase, for the next switch (active ranks only)
-        pre = None
-        if feed > 0 and active and phase_idx + 1 < len(plan):
-            assert pc is not None
-            _, ends, times = run_feed(pc, feed)
-            pre = (ends, times)
-        barrier()
-        pc = next_pc
     if graph is not None:
         graph.release()
 
@@ -1475,7 +1514,6 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
     switch_world(
         buffer, present, barrier, args.store_timeout_secs, args.reconnect_on_leave
     )
-    cohort_print("Adaptive elastic test passed")
     save_error = None
     if args.save_output:
         save_error = save_results(
@@ -1487,8 +1525,10 @@ def test_loop(local_rank: int, num_local_ranks: int, args: argparse.Namespace):
                 torch_version=str(torch.__version__),
             ),
             plan,
-            dict(world_rank=me, phases=phase_records, transitions=transition_records),
+            dict(world_rank=me, phases=phase_records),
         )
+    if save_error is None:
+        cohort_print("Adaptive elastic test passed")
     buffer.destroy()
     # Rank 0 owns the TCPStore server; keep it alive until all peers finish teardown.
     barrier()
@@ -1525,6 +1565,12 @@ def add_common_arguments(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--allow-multiple-reduction", type=int, default=1)
     parser.add_argument("--prefer-overlap-with-compute", type=int, default=0)
+    parser.add_argument(
+        "--hot-rank-fraction",
+        type=float,
+        default=0.0,
+        help="probability that a token preferentially selects experts on the lowest active world rank (0 to 1)",
+    )
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument(
         "--position-offset",
@@ -1558,14 +1604,14 @@ def make_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--skip-perf-test",
         action="store_true",
-        help="skip event benchmarks, including those selected by --perf-phases; Kineto and feed timings are independent",
+        help="skip event benchmarks, including those selected by --perf-phases, while keeping Kineto available",
     )
     parser.add_argument(
         "--save-output",
         nargs="?",
         const="adaptive_elastic_results.json",
         default="",
-        help="save configuration, correctness counts, optional PERF and TRANS records as JSON",
+        help="save configuration, correctness counts and optional performance measurements as JSON",
     )
     parser.add_argument(
         "--perf-phases",
@@ -1586,19 +1632,13 @@ def make_parser() -> argparse.ArgumentParser:
         help="dispatch format for checked and timed pairs; combine stays BF16",
     )
     parser.add_argument(
-        "--perf-tag", type=str, default="run", help="label of the PERF and TRANS lines"
+        "--perf-tag", type=str, default="run", help="label of the PERF lines"
     )
     parser.add_argument(
         "--profile",
         action="store_true",
         help="print phase boundaries for each eager pair and graph replay; "
         "requires NIXL_EP_ADAPTIVE_PROFILE set to 1",
-    )
-    parser.add_argument(
-        "--feed-pairs",
-        type=int,
-        default=0,
-        help="> 0: time every world switch under this many dispatch + combine pairs before and after it (TRANS lines)",
     )
     parser.add_argument(
         "--reconnect-on-leave",
@@ -1620,6 +1660,8 @@ def make_parser() -> argparse.ArgumentParser:
 if __name__ == "__main__":
     parser = make_parser()
     args = parser.parse_args()
+    if not 0 <= args.hot_rank_fraction <= 1:
+        parser.error("--hot-rank-fraction must be between 0 and 1")
     assert (
         not args.profile or os.environ.get("NIXL_EP_ADAPTIVE_PROFILE") == "1"
     ), "--profile requires NIXL_EP_ADAPTIVE_PROFILE=1 before launch"
