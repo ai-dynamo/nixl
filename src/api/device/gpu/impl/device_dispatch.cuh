@@ -151,9 +151,6 @@ put(const memViewElem &src,
     unsigned channel_id,
     uint64_t flags,
     xferStatusH *xfer_status) {
-    if (!src.mvh || !dst.mvh) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
     const auto *src_view = detail::asDeviceMemView(src.mvh);
     const auto *dst_view = detail::asDeviceMemView(dst.mvh);
     const memViewElem backend_src{src_view->backend_memview, src.index, src.offset};
@@ -167,10 +164,7 @@ put(const memViewElem &src,
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
-        if (src_view->execution_mode != execution_mode) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        return gpunetio::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+        return NIXL_ERR_NOT_SUPPORTED;
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -213,9 +207,6 @@ atomicAdd(uint64_t value,
           unsigned channel_id,
           uint64_t flags,
           xferStatusH *xfer_status) {
-    if (!counter.mvh) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
     const auto *view = detail::asDeviceMemView(counter.mvh);
     const memViewElem backend_counter{view->backend_memview, counter.index, counter.offset};
 
@@ -226,7 +217,7 @@ atomicAdd(uint64_t value,
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::GPUNETIO_DIRECT) {
-        return gpunetio::atomicAdd<level>(value, backend_counter, channel_id, flags, xfer_status);
+        return NIXL_ERR_NOT_SUPPORTED;
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }
@@ -243,8 +234,6 @@ getPtr(nixlMemViewH mvh, size_t index) {
         return ucx::getPtr(view->backend_memview, index);
     case exec_mode_t::PROXY:
         return proxy::getPtr(view->backend_memview, index);
-    case exec_mode_t::GPUNETIO_DIRECT:
-        return gpunetio::getPtr(view->backend_memview, index);
     default:
         return nullptr;
     }

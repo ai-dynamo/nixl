@@ -8,10 +8,8 @@
 #include <nixl.h>
 
 #include <algorithm>
-#include <chrono>
 #include <cstdint>
 #include <cstdlib>
-#include <cstring>
 #include <iostream>
 #include <new>
 #include <stdexcept>
@@ -196,7 +194,7 @@ scalarGet(nixlMemViewH local,
 
 // Exercise multiple standard requests on the same channel without a caller scratch buffer.
 __global__ void
-standardOps(nixlMemViewH local, nixlMemViewH remote, unsigned channel, int *result) {
+standardGets(nixlMemViewH local, nixlMemViewH remote, unsigned channel, int *result) {
     using namespace nixl::gpu;
     xferStatusH a{}, b{}, c{};
     const memViewElem r{remote, 0, 17};
@@ -218,22 +216,9 @@ standardOps(nixlMemViewH local, nixlMemViewH remote, unsigned channel, int *resu
     };
     if (poll(c) != NIXL_SUCCESS || poll(b) != NIXL_SUCCESS || poll(a) != NIXL_SUCCESS ||
         flush(remote, channel) != NIXL_SUCCESS ||
-        get({local, 0, 4096}, r, 64, channel, 2, nullptr) != NIXL_ERR_INVALID_PARAM ||
-        atomicAdd(1, {remote, 0, 5001}, channel) != NIXL_ERR_INVALID_PARAM ||
-        getPtr(remote, 0) != nullptr) {
+        get({local, 0, 4096}, r, 64, channel, 2, nullptr) != NIXL_ERR_INVALID_PARAM) {
         *result = 41;
         return;
-    }
-    // The payload is already registered locally. The remote region and counter are disjoint.
-    xferStatusH put_status{}, atomic_status{};
-    if (put({local, 0, 4096}, {remote, 0, 4096}, 64, channel, flags::defer) != NIXL_IN_PROG ||
-        atomicAdd(1, {remote, 0, 5000}, channel, 0) != NIXL_IN_PROG ||
-        put({local, 0, 4096}, {remote, 0, 4160}, 64, channel, flags::defer, &put_status) !=
-            NIXL_IN_PROG ||
-        atomicAdd(2, {remote, 0, 5000}, channel, 0, &atomic_status) != NIXL_IN_PROG ||
-        poll(atomic_status) != NIXL_SUCCESS || poll(put_status) != NIXL_SUCCESS ||
-        flush(remote, channel) != NIXL_SUCCESS) {
-        *result = 42;
     }
 }
 
@@ -304,36 +289,6 @@ collectiveStandardGet(nixlMemViewH local,
     }
 }
 
-// Every producer thread publishes its own stores before the collective PUT.
-template<nixl::gpu::level_t level>
-__global__ void
-collectiveStandardWrites(nixlMemViewH local, nixlMemViewH remote, uint8_t *buffer, int *result) {
-    using namespace nixl::gpu;
-    constexpr unsigned groups_per_block = level == level_t::WARP ? 4 : 1;
-    constexpr unsigned group_size = level == level_t::WARP ? 32 : 128;
-    const unsigned group = level == level_t::WARP ? threadIdx.x / 32 : 0;
-    const unsigned member = level == level_t::WARP ? threadIdx.x % 32 : threadIdx.x;
-    const unsigned index = blockIdx.x * groups_per_block + group;
-    const size_t offset = 6000 + index * 64;
-    for (unsigned i = member; i < 64; i += group_size) {
-        buffer[offset + i] = uint8_t(32 + (index * 7 + i) % 200);
-    }
-    auto rc = put<level>({local, 0, offset}, {remote, 0, offset}, 64, 0, flags::defer);
-    if (rc != NIXL_IN_PROG) {
-        atomicExch(result, 61);
-        return;
-    }
-    rc = atomicAdd<level>(1, {remote, 0, 7000}, 0, 0);
-    if (rc != NIXL_IN_PROG) {
-        atomicExch(result, 62);
-        return;
-    }
-    rc = flush<level>(remote, 0);
-    if (rc != NIXL_SUCCESS) {
-        atomicExch(result, 63);
-    }
-}
-
 // Neither deferred GET has a status handle: flush is the only completion path.
 __global__ void
 nullDeferredGet(nixlMemViewH local, nixlMemViewH remote, const uint8_t *destination, int *result) {
@@ -363,18 +318,24 @@ scalarWrap(nixlMemViewH local,
     const auto *view = static_cast<const GpunetioDeviceView *>(wrapper->backend_memview);
     const uint64_t count = 2ull * view->context->channels[0].qp->sq_wqe_num + 3;
     *count_out = count;
-    for (uint64_t i = 0; i < count; ++i) {
-        if (atomicAdd(1, {remote, 0, 7000}, 0, flags::defer) != NIXL_IN_PROG) {
+    if (count > kBytes - 4096) {
+        *result = 55;
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (get({local, 0, 4096 + i}, {remote, 0, 17 + i}, 1, 0, flags::defer) != NIXL_IN_PROG) {
             *result = 55;
             return;
         }
     }
-    if (flush(remote, 0) != NIXL_SUCCESS ||
-        get({local, 0, 7000}, {remote, 0, 7000}, sizeof(uint64_t), 0, flags::defer) !=
-            NIXL_IN_PROG ||
-        flush(remote, 0) != NIXL_SUCCESS ||
-        *reinterpret_cast<const uint64_t *>(destination + 7000) != count) {
+    if (flush(remote, 0) != NIXL_SUCCESS) {
         *result = 56;
+        return;
+    }
+    for (size_t i = 0; i < count; ++i) {
+        if (destination[4096 + i] != uint8_t(((17 + i) * 13 + 7) % 251)) {
+            *result = 56;
+        }
     }
 }
 
@@ -416,7 +377,7 @@ standardInvalid(nixlMemViewH local, nixlMemViewH remote, unsigned qps, int *resu
     using namespace nixl::gpu::impl::gpunetio;
     const auto *wrapper = static_cast<const memViewWrapper *>(remote);
     auto old_view = *static_cast<const GpunetioDeviceView *>(wrapper->backend_memview);
-    old_view.abi_version = 1;
+    old_view.abi_version = 2;
     // Reject the old ABI before inspecting its differently sized context.
     old_view.context = reinterpret_cast<GpunetioDeviceContext *>(uintptr_t{1});
     memViewWrapper old_wrapper{exec_mode_t::GPUNETIO_DIRECT, &old_view};
@@ -426,12 +387,14 @@ standardInvalid(nixlMemViewH local, nixlMemViewH remote, unsigned qps, int *resu
     }
     if (get({local, 0, 4096}, {remote, 0, 17}, 64, qps) != NIXL_ERR_INVALID_PARAM ||
         flush(remote, qps) != NIXL_ERR_INVALID_PARAM ||
-        get<level_t::GRID>({local, 0, 4096}, {remote, 0, 17}, 64) != NIXL_ERR_NOT_SUPPORTED) {
+        get<level_t::GRID>({local, 0, 4096}, {remote, 0, 17}, 64) != NIXL_ERR_NOT_SUPPORTED ||
+        put({local, 0, 4096}, {remote, 0, 4096}, 64) != NIXL_ERR_NOT_SUPPORTED ||
+        atomicAdd(1, {remote, 0, 5000}) != NIXL_ERR_NOT_SUPPORTED) {
         *result = 48;
     }
 }
 
-// Exercise the standard API beyond one SDK WQE without allocating host-sized mirrors.
+// Exercise the standard GET beyond one SDK WQE without allocating host-sized mirrors.
 __global__ void
 largeFill(uint8_t *buffer, size_t bytes, uint8_t salt, uint8_t guard) {
     const size_t total = bytes + 128;
@@ -455,11 +418,10 @@ largeVerify(const uint8_t *buffer, size_t bytes, uint8_t salt, uint8_t guard, in
 }
 
 __global__ void
-largeTransfer(nixlMemViewH local, nixlMemViewH remote, size_t bytes, bool is_get, int *result) {
+largeTransfer(nixlMemViewH local, nixlMemViewH remote, size_t bytes, int *result) {
     using namespace nixl::gpu;
     xferStatusH status{};
-    auto rc = is_get ? get({local, 0, 64}, {remote, 0, 64}, bytes, 0, 0, &status) :
-                       put({local, 0, 64}, {remote, 0, 64}, bytes, 0, 0, &status);
+    auto rc = get({local, 0, 64}, {remote, 0, 64}, bytes, 0, 0, &status);
     if (rc != NIXL_IN_PROG) {
         *result = 65;
         return;
@@ -915,7 +877,6 @@ main(int argc, char **argv) {
         constexpr size_t large_bytes = DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE + 64;
         constexpr size_t large_allocation = large_bytes + 128;
         uint8_t *large_owner = nullptr, *large_reader = nullptr;
-        int *owner_large_result = nullptr;
         const nixl_mem_t source_mem = source_is_host ? DRAM_SEG : VRAM_SEG;
         check(cudaSetDevice(owner_gpu), "select owner GPU");
         uint8_t *source = nullptr, *destination = nullptr;
@@ -934,7 +895,6 @@ main(int argc, char **argv) {
         }
         if (large_test) {
             check(cudaMalloc(&large_owner, large_allocation), "allocate large owner VRAM");
-            check(cudaMalloc(&owner_large_result, sizeof(int)), "allocate owner large result");
         }
         check(cudaSetDevice(reader_gpu), "select reader GPU");
         if (large_test) {
@@ -1336,14 +1296,14 @@ main(int argc, char **argv) {
                 check(cudaFree(parallel[i]), "free parallel session");
             }
         }
-        // Run the standard API checks after the legacy GET and Graph data oracles.
+        // Run the standard GET checks after the legacy GET and Graph data oracles.
         auto checkStandardResult = [&]() {
-            check(cudaDeviceSynchronize(), "complete standard API test");
+            check(cudaDeviceSynchronize(), "complete standard GET test");
             int result = 0;
             check(cudaMemcpy(&result, device_result, sizeof(result), cudaMemcpyDeviceToHost),
-                  "read standard API result");
+                  "read standard GET result");
             if (result) {
-                throw std::runtime_error("standard API test failed: " + std::to_string(result));
+                throw std::runtime_error("standard GET test failed: " + std::to_string(result));
             }
         };
         for (unsigned channel = 0; channel < qps; ++channel) {
@@ -1364,7 +1324,7 @@ main(int argc, char **argv) {
         }
         check(cudaMemset(device_result, 0, sizeof(int)), "reset invalid result");
         standardInvalid<<<1, 1>>>(locals[0], remotes[0], qps, device_result);
-        check(cudaGetLastError(), "launch invalid standard operations");
+        check(cudaGetLastError(), "launch invalid standard GETs");
         checkStandardResult();
         check(cudaMemset(device_result, 0, sizeof(int)), "reset collective result");
         check(cudaMemset(destination + 4096, 0xa5, 8 * 64), "poison warp destinations");
@@ -1399,20 +1359,6 @@ main(int argc, char **argv) {
             checkStandardResult();
         }
 
-        auto resetOwner = [&]() {
-            check(cudaSetDevice(owner_gpu), "select owner for standard test");
-            uint8_t reset[kBytes];
-            std::copy(expected_source, expected_source + kBytes, reset);
-            std::fill(reset + 5000, reset + 5008, 0);
-            std::fill(reset + 7000, reset + 7008, 0);
-            if (source_is_host) {
-                std::copy(reset, reset + kBytes, source);
-            } else {
-                check(cudaMemcpy(source, reset, kBytes, cudaMemcpyHostToDevice),
-                      "reset owner buffer");
-            }
-            check(cudaSetDevice(reader_gpu), "select reader for standard test");
-        };
         auto verifyStandard = [&]() {
             uint8_t readback[4 * 64];
             check(
@@ -1423,137 +1369,45 @@ main(int argc, char **argv) {
                     throw std::runtime_error("standard GET payload mismatch");
                 }
             }
-            uint8_t owner_data[kBytes];
-            check(cudaSetDevice(owner_gpu), "select owner for verification");
-            if (source_is_host) {
-                std::copy(source, source + kBytes, owner_data);
-            } else {
-                check(cudaMemcpy(owner_data, source, kBytes, cudaMemcpyDeviceToHost),
-                      "read owner buffer");
-            }
-            for (size_t i = 0; i < kBytes; ++i) {
-                uint8_t expected = expected_source[i];
-                if (i >= 4096 && i < 4224) {
-                    expected = expected_source[17 + (i - 4096) % 64];
-                }
-                if (i >= 5000 && i < 5008) {
-                    expected = i == 5000 ? 3 : 0;
-                }
-                if (i >= 7000 && i < 7008) {
-                    expected = 0;
-                }
-                if (owner_data[i] != expected) {
-                    throw std::runtime_error("standard PUT/atomic/guard mismatch");
-                }
-            }
-            check(cudaSetDevice(reader_gpu), "restore reader after verification");
         };
         for (unsigned channel = 0; channel < qps; ++channel) {
-            resetOwner();
             check(cudaMemset(destination + 4096, 0xa5, 256), "poison standard GET destinations");
             check(cudaMemset(device_result, 0, sizeof(int)), "reset standard result");
-            standardOps<<<1, 1>>>(locals[0], remotes[0], channel, device_result);
-            check(cudaGetLastError(), "launch standard API operations");
-            if (source_is_host) {
-                // The receiver checks the first payload as soon as it observes the signal.
-                auto *counter = reinterpret_cast<uint64_t *>(source + 5000);
-                const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(5);
-                uint64_t observed = 0;
-                do {
-                    observed = __atomic_load_n(counter, __ATOMIC_ACQUIRE);
-                } while (!observed && std::chrono::steady_clock::now() < deadline);
-                if (!observed) {
-                    throw std::runtime_error("receiver did not observe atomic signal");
-                }
-                const volatile uint8_t *payload = source + 4096;
-                for (size_t i = 0; i < 64; ++i) {
-                    if (payload[i] != expected_source[17 + i]) {
-                        throw std::runtime_error("receiver observed signal before PUT payload");
-                    }
-                }
-            }
+            standardGets<<<1, 1>>>(locals[0], remotes[0], channel, device_result);
+            check(cudaGetLastError(), "launch standard GET operations");
             checkStandardResult();
             verifyStandard();
         }
-        resetOwner();
-        check(cudaMemset(destination + 7000, 0xa5, sizeof(uint64_t)), "poison wrap result");
+        check(cudaMemset(destination + 4096, 0xa5, kBytes - 4096),
+              "poison scalar wrap destinations");
         check(cudaMemset(device_result, 0, sizeof(int)), "reset scalar wrap result");
         scalarWrap<<<1, 1>>>(locals[0], remotes[0], destination, device_generation, device_result);
         check(cudaGetLastError(), "launch scalar FIFO wrap");
         checkStandardResult();
-        uint64_t expected_count = 0, local_count = 0, remote_count = 0;
-        check(
-            cudaMemcpy(
-                &expected_count, device_generation, sizeof(expected_count), cudaMemcpyDeviceToHost),
-            "read expected wrap count");
-        check(cudaMemcpy(
-                  &local_count, destination + 7000, sizeof(local_count), cudaMemcpyDeviceToHost),
-              "read local wrap count");
-        check(cudaSetDevice(owner_gpu), "select owner for wrap verification");
-        if (source_is_host) {
-            std::memcpy(&remote_count, source + 7000, sizeof(remote_count));
-        } else {
-            check(cudaMemcpy(
-                      &remote_count, source + 7000, sizeof(remote_count), cudaMemcpyDeviceToHost),
-                  "read remote wrap count");
+        uint64_t count = 0;
+        check(cudaMemcpy(&count, device_generation, sizeof(count), cudaMemcpyDeviceToHost),
+              "read scalar wrap count");
+        std::vector<uint8_t> wrap_bytes(count);
+        check(cudaMemcpy(wrap_bytes.data(), destination + 4096, count, cudaMemcpyDeviceToHost),
+              "read scalar wrap bytes");
+        for (size_t i = 0; i < count; ++i) {
+            if (wrap_bytes[i] != expected_source[17 + i]) {
+                throw std::runtime_error("scalar FIFO wrap payload mismatch");
+            }
         }
-        if (!expected_count || local_count != expected_count || remote_count != expected_count) {
-            throw std::runtime_error("scalar FIFO wrap counter mismatch");
-        }
-        check(cudaSetDevice(reader_gpu), "restore reader after wrap");
-        auto verifyCollectiveWrites = [&](unsigned groups) {
-            uint8_t owner_payload[8 * 64];
-            uint64_t counter = 0;
-            check(cudaSetDevice(owner_gpu), "select owner for collective writes");
-            if (source_is_host) {
-                std::memcpy(owner_payload, source + 6000, groups * 64);
-                std::memcpy(&counter, source + 7000, sizeof(counter));
-            } else {
-                check(cudaMemcpy(owner_payload, source + 6000, groups * 64, cudaMemcpyDeviceToHost),
-                      "read collective payloads");
-                check(cudaMemcpy(&counter, source + 7000, sizeof(counter), cudaMemcpyDeviceToHost),
-                      "read collective counter");
-            }
-            for (unsigned group = 0; group < groups; ++group) {
-                for (unsigned i = 0; i < 64; ++i) {
-                    if (owner_payload[group * 64 + i] != uint8_t(32 + (group * 7 + i) % 200)) {
-                        throw std::runtime_error("collective PUT payload mismatch");
-                    }
-                }
-            }
-            if (counter != groups) {
-                throw std::runtime_error("collective atomic counter mismatch");
-            }
-            check(cudaSetDevice(reader_gpu), "restore reader after collective writes");
-        };
-        resetOwner();
-        check(cudaMemset(device_result, 0, sizeof(int)), "reset warp write result");
-        collectiveStandardWrites<nixl::gpu::level_t::WARP>
-            <<<2, 128>>>(locals[0], remotes[0], destination, device_result);
-        check(cudaGetLastError(), "launch warp collective writes");
-        checkStandardResult();
-        verifyCollectiveWrites(8);
-        resetOwner();
-        check(cudaMemset(device_result, 0, sizeof(int)), "reset block write result");
-        collectiveStandardWrites<nixl::gpu::level_t::BLOCK>
-            <<<2, 128>>>(locals[0], remotes[0], destination, device_result);
-        check(cudaGetLastError(), "launch block collective writes");
-        checkStandardResult();
-        verifyCollectiveWrites(2);
         cudaStream_t standard_stream;
         cudaGraph_t standard_graph;
         cudaGraphExec_t standard_exec;
         check(cudaStreamCreateWithFlags(&standard_stream, cudaStreamNonBlocking),
               "create standard stream");
         check(cudaStreamBeginCapture(standard_stream, cudaStreamCaptureModeGlobal),
-              "capture standard API");
-        standardOps<<<1, 1, 0, standard_stream>>>(locals[0], remotes[0], 0, device_result);
-        check(cudaGetLastError(), "capture standard operations");
+              "capture standard GET");
+        standardGets<<<1, 1, 0, standard_stream>>>(locals[0], remotes[0], 0, device_result);
+        check(cudaGetLastError(), "capture standard GETs");
         check(cudaStreamEndCapture(standard_stream, &standard_graph), "end standard capture");
         check(cudaGraphInstantiate(&standard_exec, standard_graph, 0),
               "instantiate standard graph");
         for (unsigned replay = 0; replay < 10; ++replay) {
-            resetOwner();
             check(cudaMemset(destination + 4096, 0xa5, 256), "poison standard graph destinations");
             check(cudaMemset(device_result, 0, sizeof(int)), "reset standard graph result");
             check(cudaGraphLaunch(standard_exec, standard_stream), "launch standard graph");
@@ -1575,55 +1429,22 @@ main(int argc, char **argv) {
             check(cudaDeviceSynchronize(), "complete large reader fill");
             check(cudaMemset(device_result, 0, sizeof(int)), "reset large GET result");
             largeTransfer<<<1, 1>>>(
-                large_local_view, large_remote_view, large_bytes, true, device_result);
+                large_local_view, large_remote_view, large_bytes, device_result);
             check(cudaGetLastError(), "launch large GET");
             checkStandardResult();
             largeVerify<<<256, 256>>>(large_reader, large_bytes, 7, 0xd7, device_result);
             check(cudaGetLastError(), "verify large GET");
             checkStandardResult();
-            largeFill<<<256, 256>>>(large_reader, large_bytes, 19, 0xd7);
-            check(cudaGetLastError(), "refill large reader");
-            check(cudaDeviceSynchronize(), "complete large reader refill");
-            check(cudaMemset(device_result, 0, sizeof(int)), "reset large PUT result");
-            largeTransfer<<<1, 1>>>(
-                large_local_view, large_remote_view, large_bytes, false, device_result);
-            check(cudaGetLastError(), "launch large PUT");
-            checkStandardResult();
-            check(cudaSetDevice(owner_gpu), "select large owner verification GPU");
-            check(cudaMemset(owner_large_result, 0, sizeof(int)), "reset large owner result");
-            largeVerify<<<256, 256>>>(large_owner, large_bytes, 19, 0xc3, owner_large_result);
-            check(cudaGetLastError(), "verify large PUT");
-            check(cudaDeviceSynchronize(), "complete large PUT verification");
-            int large_result = 0;
-            check(cudaMemcpy(&large_result,
-                             owner_large_result,
-                             sizeof(large_result),
-                             cudaMemcpyDeviceToHost),
-                  "read large owner result");
-            if (large_result) {
-                throw std::runtime_error("large PUT payload or guard mismatch");
-            }
-            check(cudaSetDevice(reader_gpu), "restore reader after large test");
-            std::cout << "PASS large GET and PUT bytes=" << large_bytes << " with guards\n";
+            std::cout << "PASS large GET bytes=" << large_bytes << " with guards\n";
             reader.releaseMemView(large_remote_view);
             reader.releaseMemView(large_local_view);
             check(reader.deregisterMem(large_reader_reg, &reader_hint), "deregister large reader");
             check(cudaFree(large_reader), "free large reader");
             check(cudaSetDevice(owner_gpu), "select owner to free large buffers");
             check(owner.deregisterMem(large_owner_reg, &owner_hint), "deregister large owner");
-            check(cudaFree(owner_large_result), "free large owner result");
             check(cudaFree(large_owner), "free large owner");
             check(cudaSetDevice(reader_gpu), "restore reader after large cleanup");
         }
-        // Fault and retention checks below still expect the original GET source pattern.
-        check(cudaSetDevice(owner_gpu), "select owner to restore source");
-        if (source_is_host) {
-            std::copy(expected_source, expected_source + kBytes, source);
-        } else {
-            check(cudaMemcpy(source, expected_source, kBytes, cudaMemcpyHostToDevice),
-                  "restore source");
-        }
-        check(cudaSetDevice(reader_gpu), "restore reader device");
         if (std::getenv("NIXL_GPUNETIO_TEST_RETENTION")) {
             if (qps < 2) {
                 throw std::runtime_error("retention test needs multiple channels");

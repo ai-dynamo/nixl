@@ -17,7 +17,7 @@ struct doca_gpu_dev_verbs_qp;
 
 namespace nixl::gpu::impl::gpunetio {
 
-constexpr uint32_t gpunetio_device_view_abi_version = 2;
+constexpr uint32_t gpunetio_device_view_abi_version = 3;
 constexpr uint32_t gpunetio_device_view_role_local = 1;
 constexpr uint32_t gpunetio_device_view_role_remote = 2;
 constexpr uint32_t gpunetio_local_peer_slot = ~uint32_t{0};
@@ -45,8 +45,6 @@ struct alignas(16) GpunetioDeviceLane {
 struct GpunetioDeviceContext {
     GpunetioDeviceLane *lane;
     GpunetioDeviceLane *channels;
-    uint64_t atomic_results;
-    uint32_t atomic_key;
     uint32_t channel_count;
 };
 

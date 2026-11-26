@@ -56,7 +56,7 @@ DOCA GPUNetIO backend takes these input parameters:
 - write_stripe_min_bytes: minimum bytes per WRITE QP in `bytes` mode (default `4194304`); must be positive.
 - cuda_streams: how many CUDA streams the backend should create at setup time in the internal pool. Relevant only if the application wants to use the "stream pool" mode. It must be an integer in the inclusive range [1, 4]; if this parameter is not specified, default value is `DOCA_POST_STREAM_NUM` (4).
 
-### GPU-initiated Device API
+### GPU-initiated GET
 
 Native view storage uses CUDA stream-ordered allocation and requires CUDA memory-pool support.
 Uploads and lane snapshots use an engine-private nonblocking stream. Callers must
@@ -67,7 +67,7 @@ persistent kernels. Stop such kernels before destroying a backend. This SDK
 teardown constraint does not require a device-wide wait during view preparation.
 
 Build with `-Dgpunetio_device_api=enabled` and create a GPUNETIO backend with
-`native_device_api=true`. This mode supports GPU-initiated GET, PUT and 64-bit atomicAdd using local VRAM
+`native_device_api=true`. This mode supports GPU-initiated GET using local VRAM
 and registered remote VRAM or pinned Host memory. It does not support host
 transfer requests or notifications. `native_qp_count=1` keeps the existing
 single-QP default. Native mode can opt into a backend-owned pool of up to32
@@ -76,9 +76,9 @@ one memory registration serve the entire pool. Legacy stream-mode WRITE uses
 the separate `data_qp_count` option and remains limited to4. The default
 backend remains in stream mode.
 
-Prepare local and remote views once, then select a channel per device call with
+Prepare local and remote views once, then select a channel per GET call with
 `channel_id` in `[0,native_qp_count)`. GET uses the standard destination-first
-signature. The backend owns its atomic result storage; callers provide no scratch.
+signature and requires no caller scratch.
 
 ```cpp
 // Device code; views were prepared with agent.prepMemView on the host.
@@ -90,15 +90,16 @@ rc = nixl::gpu::flush(remote_view, 3);
 // Check rc == NIXL_SUCCESS before consuming data or reusing buffers.
 ```
 
-GET, PUT, atomicAdd, getXferStatus and flush support THREAD, WARP and BLOCK
+GET, getXferStatus and GET-channel flush support THREAD, WARP and BLOCK
 cooperation with one-dimensional blocks. WARP calls require all 32 lanes of a
 full warp; BLOCK calls require every thread in the block. A collective call
 requires matching arguments and a shared status handle when one is supplied.
 GRID returns
 `NIXL_ERR_NOT_SUPPORTED`. `getPtr` returns nullptr because an RDMA registration
-does not provide a local mapping of remote memory.
+does not provide a local mapping of remote memory. GPUNETIO PUT and atomicAdd
+return `NIXL_ERR_NOT_SUPPORTED` in this GET-only implementation.
 
-GET and PUT validate the entire requested range before posting and split transfers
+GET validates the entire requested range before posting and splits transfers
 above the SDK WQE limit into bounded chunks. A status covers the complete request.
 A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
 `flush(remote_view, channel)` blocks until preceding channel work completes or
@@ -115,21 +116,19 @@ require caller busy retries. Concurrent requests on different channels remain
 independent. A channel held by a backend readSession returns
 `NIXL_ERR_NOT_ALLOWED` to standard calls until the session finishes.
 
-atomicAdd requires an aligned 8-byte remote counter. Preceding writes on the same
-channel complete before the increment becomes visible. GPU producers must use
-the cooperation level or their own synchronization to publish source data before
-PUT; the API applies a system release before NIC submission. Completion polling
-uses the SDK NIC acquire before reporting success. Receiver-side consumers must
-follow their platform's RDMA visibility protocol.
+getXferStatus and flush acquire completed RDMA reads before reporting success.
+The GET completion path checks every CQE, including requests without a status;
+flush supplies the completion boundary for those requests.
 
 The backend-specific readSession extension retains its prepared-lane selector:
 set `nixl_opt_args_t::customParam` to `"native_channel=N"` when preparing matching
 local/remote views. Omitted/empty selects channel 0. This selector only affects
 readSession; standard operations use their explicit channel argument. Rebuild
 experimental scalar callers using `get(dst, src, bytes, channel, flags, status)`;
-the earlier extra-scratch scalar overload has been removed. The backend view ABI
-is now version 2; rebuild all device consumers against the matching backend.
-Version-1 views and consumers must remain paired with their original runtime.
+the earlier extra-scratch scalar overload has been removed. This GET-only
+context uses device-view ABI 3, distinct from the earlier ABI 2 context layout.
+Rebuild device consumers with the matching backend; layout IDs are checked for
+exact equality.
 
 Each pool channel has independent ownership, generations, SQ/CQ and ordering.
 There is no cross-channel ordering;

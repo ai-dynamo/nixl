@@ -54,9 +54,6 @@ nixlDocaEngine::initializeNativeState() {
     }
     state->laneCount = dataQpCount_;
     state->boundQps.resize(state->laneCount, nullptr);
-    state->atomicResults.resize(state->laneCount);
-    state->atomicMr = std::make_shared<nixl::doca::verbs::mr>(
-        nullptr, state->atomicResults.data(), state->laneCount, sizeof(uint64_t), pd, false);
     if (!allocateOnStream(
             state->stream, sizeof(GpunetioDeviceLane) * state->laneCount, state->lane) ||
         !allocateOnStream(
@@ -69,8 +66,6 @@ nixlDocaEngine::initializeNativeState() {
         contexts[i].lane = static_cast<GpunetioDeviceLane *>(state->lane.get()) + i;
         contexts[i].channels = static_cast<GpunetioDeviceLane *>(state->lane.get());
         contexts[i].channel_count = state->laneCount;
-        contexts[i].atomic_results = reinterpret_cast<uintptr_t>(state->atomicResults.data());
-        contexts[i].atomic_key = state->atomicMr->get_lkey();
     }
     if (!copyOnStream(state->stream->stream,
                       state->lane.get(),

@@ -97,21 +97,15 @@ progress(GpunetioDeviceLane *lane, uint64_t target) {
     return NIXL_SUCCESS;
 }
 
-enum class operation { get, put, atomic_add };
-
-template<operation op>
-__device__ nixl_status_t
-submitLocked(GpunetioDeviceLane *lane,
-             const GpunetioDeviceContext *context,
-             uint64_t local_address,
-             uint32_t local_key,
-             uint64_t remote_address,
-             uint32_t remote_key,
-             size_t bytes,
-             uint64_t value,
-             unsigned channel,
-             uint64_t flags,
-             xferStatusH *status) {
+__device__ inline nixl_status_t
+submitGetLocked(GpunetioDeviceLane *lane,
+                uint64_t local_address,
+                uint32_t local_key,
+                uint64_t remote_address,
+                uint32_t remote_key,
+                size_t bytes,
+                uint64_t flags,
+                xferStatusH *status) {
     if (lane->failed || !lane->qp || !compat::usesGpuSmDoorbell(lane->qp)) {
         failLane(lane);
         return NIXL_ERR_BACKEND;
@@ -145,45 +139,17 @@ submitLocked(GpunetioDeviceLane *lane,
             DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
         ticket = doca_gpu_dev_verbs_reserve_wq_slots<>(lane->qp, 1);
         auto *wqe = doca_gpu_dev_verbs_get_wqe_ptr(lane->qp, ticket);
-        // A fence also orders a preceding READ/atomic before this channel operation.
+        // Order preceding RDMA reads before this GET.
         constexpr auto ctrl = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE_FENCE;
-        if constexpr (op == operation::get) {
-            doca_gpu_dev_verbs_wqe_prepare_read(lane->qp,
-                                                wqe,
-                                                ticket,
-                                                ctrl,
-                                                remote_address + offset,
-                                                remote_key,
-                                                local_address + offset,
-                                                local_key,
-                                                chunk);
-        } else if constexpr (op == operation::put) {
-            doca_gpu_dev_verbs_wqe_prepare_write(lane->qp,
-                                                 wqe,
-                                                 ticket,
-                                                 DOCA_GPUNETIO_MLX5_OPCODE_RDMA_WRITE,
-                                                 ctrl,
-                                                 0,
-                                                 remote_address + offset,
-                                                 remote_key,
-                                                 local_address + offset,
-                                                 local_key,
-                                                 chunk);
-        } else {
-            doca_gpu_dev_verbs_wqe_prepare_atomic(lane->qp,
-                                                  wqe,
-                                                  ticket,
-                                                  DOCA_GPUNETIO_MLX5_OPCODE_ATOMIC_FA,
-                                                  ctrl,
-                                                  remote_address,
-                                                  remote_key,
-                                                  context->atomic_results +
-                                                      channel * sizeof(uint64_t),
-                                                  context->atomic_key,
-                                                  sizeof(uint64_t),
-                                                  value,
-                                                  0);
-        }
+        doca_gpu_dev_verbs_wqe_prepare_read(lane->qp,
+                                            wqe,
+                                            ticket,
+                                            ctrl,
+                                            remote_address + offset,
+                                            remote_key,
+                                            local_address + offset,
+                                            local_key,
+                                            chunk);
         doca_gpu_dev_verbs_mark_wqes_ready<>(lane->qp, ticket, ticket);
         lane->active_ticket = ticket + 1;
         offset += chunk;
@@ -199,15 +165,13 @@ submitLocked(GpunetioDeviceLane *lane,
     return NIXL_IN_PROG;
 }
 
-template<operation op>
-__device__ nixl_status_t
-submit(const memViewElem *local,
-       const memViewElem &remote,
-       size_t bytes,
-       uint64_t value,
-       unsigned channel,
-       uint64_t flags,
-       xferStatusH *status) {
+__device__ inline nixl_status_t
+submitGet(const memViewElem &local,
+          const memViewElem &remote,
+          size_t bytes,
+          unsigned channel,
+          uint64_t flags,
+          xferStatusH *status) {
     if (flags & ~nixl::gpu::flags::defer) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -226,29 +190,21 @@ submit(const memViewElem *local,
         return NIXL_ERR_INVALID_PARAM;
     }
     const auto &re = r->elems[remote.index];
-    uint64_t ra, la = 0;
-    uint32_t lk = 0;
+    uint64_t ra, la;
     if (!re.valid || re.peer_slot != gpunetio_remote_peer_slot ||
         !rangeIsValid(re.base, re.length, remote.offset, bytes, &ra)) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    if constexpr (op == operation::atomic_add) {
-        if (ra % sizeof(uint64_t) || !r->context->atomic_results) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-    } else {
-        const auto *l = static_cast<const GpunetioDeviceView *>(local->mvh);
-        if (!validView(l, gpunetio_device_view_role_local) || local->index >= l->count ||
-            l->context_cookie != r->context_cookie || l->execution_gpu != r->execution_gpu ||
-            l->context->channels != r->context->channels) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        const auto &le = l->elems[local->index];
-        if (!le.valid || le.peer_slot != gpunetio_local_peer_slot ||
-            !rangeIsValid(le.base, le.length, local->offset, bytes, &la)) {
-            return NIXL_ERR_INVALID_PARAM;
-        }
-        lk = le.key;
+    const auto *l = static_cast<const GpunetioDeviceView *>(local.mvh);
+    if (!validView(l, gpunetio_device_view_role_local) || local.index >= l->count ||
+        l->context_cookie != r->context_cookie || l->execution_gpu != r->execution_gpu ||
+        l->context->channels != r->context->channels) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    const auto &le = l->elems[local.index];
+    if (!le.valid || le.peer_slot != gpunetio_local_peer_slot ||
+        !rangeIsValid(le.base, le.length, local.offset, bytes, &la)) {
+        return NIXL_ERR_INVALID_PARAM;
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
@@ -266,8 +222,7 @@ submit(const memViewElem *local,
                                         cuda::memory_order_acq_rel,
                                         cuda::memory_order_acquire)) {
             // Unlock inside this branch before leaving the loop: same-warp callers may contend.
-            const auto result = submitLocked<op>(
-                lane, r->context, la, lk, ra, re.key, bytes, value, channel, flags, status);
+            const auto result = submitGetLocked(lane, la, le.key, ra, re.key, bytes, flags, status);
             unlockLane(lane);
             return result;
         }
@@ -378,58 +333,7 @@ get(const memViewElem &dst,
         sync<level>();
         nixl_status_t result = NIXL_IN_PROG;
         if (isLeader<level>()) {
-            result = submit<operation::get>(&dst, src, bytes, 0, channel, flags, status);
-        }
-        result = broadcastStatus<level>(result);
-        if constexpr (level == level_t::WARP) {
-            sync<level>();
-        }
-        return result;
-    }
-#endif
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<level_t level>
-__device__ nixl_status_t
-put(const memViewElem &src,
-    const memViewElem &dst,
-    size_t bytes,
-    unsigned channel,
-    uint64_t flags,
-    xferStatusH *status) {
-#if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
-    if constexpr (level != level_t::GRID) {
-        __threadfence_system();
-        sync<level>();
-        nixl_status_t result = NIXL_IN_PROG;
-        if (isLeader<level>()) {
-            result = submit<operation::put>(&src, dst, bytes, 0, channel, flags, status);
-        }
-        result = broadcastStatus<level>(result);
-        if constexpr (level == level_t::WARP) {
-            sync<level>();
-        }
-        return result;
-    }
-#endif
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<level_t level>
-__device__ nixl_status_t
-atomicAdd(uint64_t value,
-          const memViewElem &counter,
-          unsigned channel,
-          uint64_t flags,
-          xferStatusH *status) {
-#if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
-    if constexpr (level != level_t::GRID) {
-        sync<level>();
-        nixl_status_t result = NIXL_IN_PROG;
-        if (isLeader<level>()) {
-            result = submit<operation::atomic_add>(
-                nullptr, counter, sizeof(uint64_t), value, channel, flags, status);
+            result = submitGet(dst, src, bytes, channel, flags, status);
         }
         result = broadcastStatus<level>(result);
         if constexpr (level == level_t::WARP) {

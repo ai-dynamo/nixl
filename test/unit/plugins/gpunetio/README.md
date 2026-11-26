@@ -3,19 +3,20 @@
 ## Native pool qualification
 
 `native_qp_count=1` is the default. Native mode accepts 1..32 active data
-channels per backend. Standard GET, PUT and atomicAdd select `channel_id` per
+channels per backend. Standard GET selects `channel_id` per
 call using one prepared view pair. The backend readSession extension retains
 `hint.customParam="native_channel=N"` and requires matching selected views.
-Device-view ABI 2 requires rebuilding CUDA consumers with the matching backend.
+Device-view ABI 3 requires rebuilding CUDA consumers with the matching backend.
 Channels are independently ordered; native pools support one peer per engine.
 
 Set `NIXL_GPUNETIO_TEST_QPS=4` or32 to exercise the owned pool in the hardware
 device API test below. It checks distinct lane/QP identities, batch mixed-view
 rejection, standard per-call channel selection, generation preservation on
 re-preparation, copied-status safety, fixed-mode submissions and immediate GPU
-consumption. Standard GET/PUT/atomic/status/flush checks include nullable status,
-defer, reverse polling, queue wrap, same-channel THREAD/WARP/BLOCK producers,
-GPU-produced PUT data, channel isolation and Graph replay. The default remains
+consumption. Standard GET/status/GET-flush checks include nullable status,
+defer, reverse polling, queue wrap, same-channel THREAD/WARP/BLOCK callers,
+channel isolation and Graph replay. PUT and atomicAdd are checked only for
+`NIXL_ERR_NOT_SUPPORTED`. The default remains
 the one-QP test. GRID is unsupported; RDMA getPtr returns nullptr.
 
 The following are disposable-process fault modes; failed resources stay alive
@@ -79,9 +80,8 @@ when testing the unsupported private parallel CQ helper.
 With `build_tests=true`, a non-release build, and `gpunetio_device_api=enabled`,
 `nixl_gpunetio_device_get_test` exercises standard GPU-initiated operations and
 the CTA batch extension against registered pinned Host or VRAM memory. It
-creates two agents on the selected GPUs and checks payloads, guards, completion,
-ordering and Graph replay. The DRAM case also samples the receiver counter and
-checks the preceding PUT payload immediately after observing the increment.
+creates two agents on the selected GPUs and checks GET payloads, guards,
+completion and Graph replay.
 Run it manually on a configured GPUNETIO system with two free consecutive OOB
 ports; the GPU index is relative to `CUDA_VISIBLE_DEVICES`:
 
@@ -96,7 +96,7 @@ The test requires the explicitly enabled DOCA 3.5+ device API. It prints a skip
 when the hardware requires MCST consistency, which this implementation reports
 as unsupported. Its same-host result covers component correctness.
 
-Set `NIXL_GPUNETIO_TEST_LARGE=1` for one additional GET and PUT of
+Set `NIXL_GPUNETIO_TEST_LARGE=1` for one additional GET of
 `DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE + 64` bytes, with a full GPU byte check
 and 64-byte guards on each end. It allocates two additional VRAM buffers
 (about 2 GiB total on DOCA 3.5), regardless of the small test's source type.

@@ -56,9 +56,6 @@ struct nixlGpunetioNativeState {
     size_t remoteViews = 0;
     uint32_t laneCount = 1;
     std::vector<doca_gpu_dev_verbs_qp *> boundQps;
-    // NIC-only fetch-add results; deregister before releasing the host storage.
-    std::vector<uint64_t> atomicResults;
-    std::shared_ptr<nixl::doca::verbs::mr> atomicMr;
     std::shared_ptr<nixlGpunetioNativeStream> stream;
     bool snapshotFailed = false;
     bool
