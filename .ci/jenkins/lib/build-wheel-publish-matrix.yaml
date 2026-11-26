@@ -83,8 +83,9 @@ env:
   WHEEL_BASE_IMAGE_NAME: "nixl-wheel-base-nightly-manylinux_2_28"
   WHEEL_BASE_TAG: "NIGHTLY_MANAGED_WHEEL_BASE_TAG"
   # UCX spcx plugin: compiled by nixl-ci-compile-ucx-plugin against the
-  # wheel_base images above and staged per-arch on the shared PVC. Which plugin
-  # ref gets built is that job's own default, owned by the plugin developers.
+  # wheel_base images above and staged per-arch on the shared PVC. Keep the ref
+  # compatible with wheel_base and the default in contrib/build-container.sh.
+  UCX_SPCX_PLUGIN_REF: "v0.4.x"
   SPCX_STAGING_ROOT: "/mnt/pvc/${JOB_BASE_NAME}-spcx"
   # Per-cell provenance fragments, merged by pipeline_stop into the build
   # manifest and removed again on every run.
@@ -189,6 +190,7 @@ pipeline_start:
     def staging = "${env.SPCX_STAGING_ROOT}/${env.BUILD_NUMBER}/cu13"
     def res = build job: 'nixl-ci-compile-ucx-plugin',
       parameters: [
+        string(name: 'sha1',            value: env.UCX_SPCX_PLUGIN_REF),
         string(name: 'WHEEL_BASE_NAME', value: "${env.WHEEL_BASE_IMAGE_NAME}-cu13"),
         string(name: 'WHEEL_BASE_TAG',  value: env.WHEEL_BASE_TAG),
         string(name: 'STAGING_DIR',     value: staging),
