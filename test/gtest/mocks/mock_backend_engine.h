@@ -72,8 +72,6 @@ public:
   nixl_status_t checkXfer(nixlBackendReqH *handle) const override;
   nixl_status_t
   releaseReqH(nixlBackendReqH *handle) const override;
-  [[nodiscard]] std::optional<nixlBackendNativeStatus>
-  getNativeStatus(const nixlBackendReqH *handle) const override;
 
   nixl_status_t
   prepMemView(const nixl_remote_meta_dlist_t &dlist,

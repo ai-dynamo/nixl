@@ -296,14 +296,13 @@ public:
         return true;
     }
 
-    [[nodiscard]] ucs_status_t
-    failure() const noexcept override {
-        return sharedState_ ? sharedState_->failure.native() : UCS_OK;
-    }
-
     [[nodiscard]] nixl_status_t
-    submissionStatus(nixl_status_t fanout) const noexcept {
-        return sharedState_->failure.submissionStatus(fanout);
+    submissionStatus(nixl_status_t fanout) noexcept {
+        const nixl_status_t ret = sharedState_->failure.submissionStatus(fanout);
+        if (ret != NIXL_SUCCESS) {
+            noteFailure(sharedState_->failure.native());
+        }
+        return ret;
     }
 
     void
@@ -332,7 +331,11 @@ public:
             return NIXL_IN_PROG;
         }
 
-        return sharedState_->status.load();
+        const nixl_status_t ret = sharedState_->status.load();
+        if (ret != NIXL_SUCCESS) {
+            noteFailure(sharedState_->failure.native());
+        }
+        return ret;
     }
 
     friend std::ostream &

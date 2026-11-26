@@ -19,6 +19,7 @@
 
 #include <cstdint>
 #include <mutex>
+#include <optional>
 #include <string>
 #include "common/nixl_log.h"
 #include "nixl_types.h"
@@ -39,9 +40,9 @@ struct nixlBackendOptionalArgs {
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
 
-struct nixlBackendNativeStatus {
+struct nixlBackendStatus {
     std::int64_t code = 0;
-    std::string name;
+    const char *name = nullptr;
 };
 
 class nixlBackendTraceSink;
@@ -69,6 +70,8 @@ class nixlBackendReqH {
 public:
     nixlBackendReqH() { }
     virtual ~nixlBackendReqH() { }
+
+    std::optional<nixlBackendStatus> backendStatus;
 };
 
 // Pure virtual class to have a common pointer type for different backendMD.

@@ -490,8 +490,9 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->init(conn, *ep);
 
     nixlUcxReq req;
-    const nixl_status_t post_ret = sgl.post(*ep, req);
-    if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
+    ucs_status_t failure = UCS_OK;
+    const nixl_status_t post_ret = sgl.post(*ep, req, &failure);
+    if (int_handle->append(post_ret, req, failure) != NIXL_SUCCESS) {
         return post_ret;
     }
 
@@ -530,6 +531,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     nixl_status_t status = NIXL_SUCCESS;
     nixlUcxReq pending_req = nullptr;
+    ucs_status_t failure = UCS_OK;
 
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
@@ -543,8 +545,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
         nixlUcxReq req;
         const nixl_status_t ret = operation == NIXL_READ ?
-            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req, &failure) :
+            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req, &failure);
 
         if (ret == NIXL_IN_PROG) {
             if (pending_req != nullptr) [[likely]] {
@@ -565,7 +567,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         status = NIXL_IN_PROG;
     }
 
-    if (int_handle->append(status, pending_req) != NIXL_SUCCESS) {
+    if (int_handle->append(status, pending_req, failure) != NIXL_SUCCESS) {
         return status;
     }
 
@@ -634,15 +636,6 @@ nixl_status_t nixlUcxEngine::releaseReqH(nixlBackendReqH* handle) const
     delete int_handle;
 
     return NIXL_SUCCESS;
-}
-
-std::optional<nixlBackendNativeStatus>
-nixlUcxEngine::getNativeStatus(const nixlBackendReqH *handle) const {
-    const ucs_status_t status = static_cast<const nixlUcxBackendReqH *>(handle)->failure();
-    if (status == UCS_OK) {
-        return std::nullopt;
-    }
-    return nixlBackendNativeStatus{status, ucs_status_string(status)};
 }
 
 unsigned

@@ -285,10 +285,9 @@ nixlXferReqH::updateRequestStats(nixlTelemetry *telemetry_pub,
 void
 nixlXferReqH::traceFailure() const {
     const nixl::trace::Attribute status_attr{nixl::trace::AttributeKey::NixlStatus, status};
-    const std::optional<nixlBackendNativeStatus> native =
-        (traceable_.recording() && (engine != nullptr) && (backendHandle != nullptr)) ?
-        engine->getNativeStatus(backendHandle) :
-        std::nullopt;
+    const std::optional<nixlBackendStatus> native =
+        (traceable_.recording() && (backendHandle != nullptr)) ? backendHandle->backendStatus :
+                                                                 std::nullopt;
     if (!native) {
         traceable_.trace(nixl::trace::Record::XferError, status_attr);
         return;
@@ -296,7 +295,8 @@ nixlXferReqH::traceFailure() const {
     const nixl::trace::Attribute attrs[] = {
         status_attr,
         {nixl::trace::AttributeKey::NixlBackendStatusCode, native->code},
-        {nixl::trace::AttributeKey::NixlBackendStatusName, std::string_view(native->name)}};
+        {nixl::trace::AttributeKey::NixlBackendStatusName,
+         std::string_view((native->name != nullptr) ? native->name : "")}};
     traceable_.trace(nixl::trace::Record::XferError, attrs);
 }
 

@@ -53,12 +53,12 @@ public:
         if (notif_.empty()) {
             notifStatus_.reset();
         }
-        failure_ = UCS_OK;
+        backendStatus.reset();
     }
 
-    [[nodiscard]] virtual ucs_status_t
+    [[nodiscard]] ucs_status_t
     failure() const noexcept {
-        return failure_;
+        return backendStatus ? static_cast<ucs_status_t>(backendStatus->code) : UCS_OK;
     }
 
     [[nodiscard]] const nixlUcxEp &
@@ -68,11 +68,11 @@ public:
     }
 
     [[nodiscard]] nixl_status_t
-    append(nixl_status_t status, nixlUcxReq req) {
+    append(nixl_status_t status, nixlUcxReq req, ucs_status_t failure = UCS_OK) {
         if (status == NIXL_IN_PROG) [[likely]] {
             requests_.push_back(req);
         } else if (status != NIXL_SUCCESS) {
-            noteImmediateFailure();
+            noteFailure(failure);
             // Error. Release all previously initiated ops and exit:
             release();
             return status;
@@ -87,16 +87,18 @@ public:
     [[nodiscard]] nixl_status_t
     flush() {
         nixlUcxReq req = nullptr;
+        ucs_status_t failure = UCS_OK;
         const bool has_notif = !notif_.empty();
         NIXL_ASSERT(has_notif == (notifStatus_ != nullptr));
         const bool callback = has_notif || trace.completesOnCallback();
-        const nixl_status_t status = ep_->flushEp(req, callback ? flushCb : nullptr, this);
+        const nixl_status_t status =
+            ep_->flushEp(req, callback ? flushCb : nullptr, this, &failure);
         trace.callbackRequested(status == NIXL_SUCCESS);
         if (has_notif && (status == NIXL_SUCCESS)) {
             sendNotif();
         }
 
-        return append(status, req);
+        return append(status, req, failure);
     }
 
     virtual void
@@ -144,7 +146,7 @@ public:
         if (ret == NIXL_IN_PROG) {
             return NIXL_IN_PROG;
         } else if (ret != NIXL_SUCCESS) {
-            noteInFlightFailure(req);
+            noteFailure(ucp_request_check_status(req));
             return checkConnection(ret);
         }
 
@@ -163,7 +165,7 @@ public:
                 requests_[incomplete_reqs++] = req;
             } else {
                 // Any other ret value is ERR and will be returned
-                noteInFlightFailure(req);
+                noteFailure(ucp_request_check_status(req));
                 out_ret = checkConnection(ret);
             }
         }
@@ -196,21 +198,32 @@ protected:
 
     [[nodiscard]] ucs_status_t
     takeFailure() noexcept {
-        return std::exchange(failure_, UCS_OK);
+        const ucs_status_t taken = failure();
+        backendStatus.reset();
+        return taken;
+    }
+
+    void
+    noteFailure(ucs_status_t failure) noexcept {
+        if ((failure != UCS_OK) && !backendStatus) {
+            backendStatus = nixlBackendStatus{failure, ucs_status_string(failure)};
+        }
     }
 
     void
     sendNotif() {
         NIXL_ASSERT(!notif_.empty());
+        ucs_status_t failure = UCS_OK;
         const nixl_status_t status = getEp().sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
                                                     std::exchange(notif_, {}),
                                                     UCP_AM_SEND_FLAG_EAGER,
-                                                    notifStatus_);
+                                                    notifStatus_,
+                                                    &failure);
         trace.notifSent(status);
         if (status != NIXL_IN_PROG) {
             notifStatus_->store(status);
             if (status != NIXL_SUCCESS) {
-                noteImmediateFailure();
+                noteFailure(failure);
             }
         }
     }
@@ -230,21 +243,6 @@ private:
         }
         if (!handle->notif_.empty()) {
             handle->sendNotif();
-        }
-    }
-
-    void
-    noteInFlightFailure(nixlUcxReq req) noexcept {
-        if (failure_ == UCS_OK) {
-            failure_ = ucp_request_check_status(req);
-        }
-    }
-
-    void
-    noteImmediateFailure() noexcept {
-        const ucs_status_t failure = nixlUcxEp::takeImmediateFailure();
-        if (failure_ == UCS_OK) {
-            failure_ = failure;
         }
     }
 
@@ -301,7 +299,6 @@ private:
     std::string notif_;
     // Status of the notification send, shared with that send; null without a notification.
     std::shared_ptr<nixl::ucx::amSendStatus> notifStatus_;
-    ucs_status_t failure_ = UCS_OK;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

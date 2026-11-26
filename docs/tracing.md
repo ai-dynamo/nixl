@@ -271,10 +271,10 @@ sees the failure: `postXferReq` when the backend fails it at once, and otherwise
 seen, each post that took an execution number has exactly one of the two.
 `nixl.status` is the native `nixl_status_t`: on a `postXferReq` span the call's return;
 on `nixl::xfer.error` the failure; on `nixl::releaseXferReq` the call's return. When the
-backend reports its own status for the failure (`nixlBackendEngine::getNativeStatus()`;
-UCX does, with the `ucs_status_t` and its `ucs_status_string()`), `nixl::xfer.error` also
-carries it, as `nixl.backend_status_code` and `nixl.backend_status_name`; the agent asks
-only for a sampled post. Each release attempt is a span of its own, inside the request's
+backend reports its own status for the failure (in its request handle's
+`nixlBackendReqH::backendStatus`; UCX does, with the `ucs_status_t` and its
+`ucs_status_string()`), `nixl::xfer.error` also carries it, as `nixl.backend_status_code` and
+`nixl.backend_status_name`; the agent reads it only for a sampled post. Each release attempt is a span of its own, inside the request's
 context and carrying its latest post's execution number, so a release refused with
 `NIXL_ERR_REPOST_ACTIVE` and its retry are two records.
 

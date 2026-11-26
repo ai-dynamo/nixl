@@ -176,8 +176,6 @@ public:
     checkXfer(nixlBackendReqH *handle) const override;
     nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
-    [[nodiscard]] std::optional<nixlBackendNativeStatus>
-    getNativeStatus(const nixlBackendReqH *handle) const override;
 
     unsigned
     progress();
