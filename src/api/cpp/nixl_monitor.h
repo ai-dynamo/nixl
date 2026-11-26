@@ -68,8 +68,8 @@ public:
     /**
      * @brief  Wait until at least one attached request completes, successfully or not
      *
-     * @param  completions   [out] All requests completed so far are appended with their final
-     *                       status and detached from the monitor
+     * @param  completions   [out] Cleared and then filled with the requests completed so far
+     *                       and their final status. They are detached from the monitor
      * @param  timeout       Time limit: the default waits without a limit, and zero or less
      *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if a request completed or no request is attached,
@@ -82,8 +82,9 @@ public:
     /**
      * @brief  Wait until all attached requests complete, successfully or not
      *
-     * @param  completions   [out] The completed requests are appended with their final status
-     *                       and detached from the monitor, also when the time limit expires
+     * @param  completions   [out] Cleared and then filled with the completed requests and
+     *                       their final status, also when the time limit expires. They are
+     *                       detached from the monitor
      * @param  timeout       Time limit: the default waits without a limit, and zero or less
      *                       returns what is available without blocking
      * @return nixl_status_t NIXL_SUCCESS if no request remains attached, NIXL_IN_PROG if the

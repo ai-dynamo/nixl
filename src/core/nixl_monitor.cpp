@@ -50,9 +50,9 @@ nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
         std::clamp(timeout, std::chrono::milliseconds::zero(), max_timeout).count());
 
     const nixlTime::ms_t start_ms = nixlTime::getMs();
-    const size_t num_completions = completions.size();
     int remaining_ms = 0;
 
+    completions.clear();
     do {
         pollfd pfd = {fd_, POLLIN, 0};
         const int ret = poll(&pfd, 1, remaining_ms);
@@ -78,7 +78,7 @@ nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
             return true;
         });
 
-        if (handles_.empty() || (any && (completions.size() > num_completions))) {
+        if (handles_.empty() || (any && !completions.empty())) {
             return NIXL_SUCCESS;
         }
 
