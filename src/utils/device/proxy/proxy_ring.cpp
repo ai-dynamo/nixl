@@ -32,6 +32,10 @@ proxyRing::allocate(deviceOps &allocator,
     }
 
     depth_ = depth;
+    publish_batch_ = depth / 4;
+    if (publish_batch_ > kProxyConsumerIdxPublishBatch) {
+        publish_batch_ = kProxyConsumerIdxPublishBatch;
+    }
     control_ = &control;
     ops_ = &allocator;
     if (allocator.getActiveDevice(device_id_) != NIXL_SUCCESS) {
@@ -127,7 +131,7 @@ proxyRing::retireOldest(nixl_status_t status) noexcept {
     consumer_idx_shadow_ = next_idx;
 
     const bool ring_empty = next_idx == submit_idx_;
-    const bool batch_full = next_idx - published_consumer_idx_ >= kProxyConsumerIdxPublishBatch;
+    const bool batch_full = next_idx - published_consumer_idx_ >= publish_batch_;
     if (ring_empty || batch_full) {
         if (publishConsumerIdx(next_idx) != NIXL_SUCCESS) {
             NIXL_FATAL << "proxyRing::retireOldest: failed to publish CI"
@@ -219,6 +223,7 @@ proxyRing::deallocate() noexcept {
     inflight_.clear();
     submit_idx_ = 0;
     depth_ = 0;
+    publish_batch_ = 0;
     device_view_ = nixlProxyRingDesc{};
 }
 

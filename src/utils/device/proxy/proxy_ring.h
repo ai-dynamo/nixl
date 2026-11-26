@@ -192,6 +192,7 @@ private:
     int device_id_ = 0;
     /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
     uint32_t depth_ = 0;
+    uint32_t publish_batch_ = 0;
     nixlProxyRingDesc device_view_{};
 };
 
