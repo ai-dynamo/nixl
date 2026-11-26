@@ -28,20 +28,6 @@
 
 constexpr size_t MAX_TELEMETRY_QUEUE_SIZE = 1000;
 
-enum class nixl_backend_capability_t : uint64_t {
-    NONE = 0,
-    REMOTE = 1ULL << 0,
-    LOCAL = 1ULL << 1,
-    NOTIF = 1ULL << 2,
-    TRACE_CONTEXT = 1ULL << 3,
-};
-
-[[nodiscard]] constexpr nixl_backend_capability_t
-operator|(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
-    return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) |
-                                                  static_cast<uint64_t>(b));
-}
-
 // Base backend engine class for different backend implementations
 class nixlBackendEngine {
     private:
@@ -141,6 +127,26 @@ class nixlBackendEngine {
         [[nodiscard]] bool
         supportsCapability(nixl_backend_capability_t cap) const noexcept {
             return (static_cast<uint64_t>(capabilities_) & static_cast<uint64_t>(cap)) != 0;
+        }
+
+        // All capabilities as the agent uses them. REMOTE, LOCAL and NOTIF follow the
+        // supports*() methods above, since a backend may override them instead.
+        [[nodiscard]] nixl_backend_capability_t
+        getCapabilities() const {
+            constexpr auto queried = nixl_backend_capability_t::REMOTE |
+                nixl_backend_capability_t::LOCAL | nixl_backend_capability_t::NOTIF;
+            auto result = static_cast<nixl_backend_capability_t>(
+                static_cast<uint64_t>(capabilities_) & ~static_cast<uint64_t>(queried));
+            if (supportsRemote()) {
+                result = result | nixl_backend_capability_t::REMOTE;
+            }
+            if (supportsLocal()) {
+                result = result | nixl_backend_capability_t::LOCAL;
+            }
+            if (supportsNotif()) {
+                result = result | nixl_backend_capability_t::NOTIF;
+            }
+            return result;
         }
 
         virtual nixl_mem_list_t getSupportedMems() const = 0;  // TODO: Return by const-reference and mark noexcept?

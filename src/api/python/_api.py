@@ -411,6 +411,26 @@ class nixl_agent:
             )
             return {}
 
+    def get_backend_capabilities(self, backend: str) -> list[str]:
+        """Get the capabilities of a backend.
+        Here, a backend means an initialized plugin. Capabilities belong to the
+        initialized backend and can depend on its initialization parameters.
+
+        Args:
+            backend: Name of the backend.
+
+        Returns:
+            List of capability names, such as "REMOTE" for operations with other
+            agents, "LOCAL" for operations within this agent, "NOTIF" for
+            notifications, and "TRACE_CONTEXT" for carrying trace context.
+        """
+        if backend not in self.backends:
+            logger.warning(
+                "Backend %s not instantiated to get its capabilities.", backend
+            )
+            return []
+        return self.agent.getBackendCapabilities(self.backends[backend])
+
     def create_backend(self, backend: str, initParams: dict[str, str] = {}):
         """Initialize a backend with the specified initialization parameters, described above.
 

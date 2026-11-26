@@ -62,6 +62,26 @@ For `ucx_vram_memtype_hint`:
 - Values are case-sensitive, so `CUDA` is rejected.
 - An explicit hint fails backend creation when the UCX context does not support the requested memory type.
 
+## Backend capabilities
+
+After a backend is created, `get_backend_capabilities(backend)` returns the names of its
+capabilities. They belong to the created backend and can depend on its initialization
+parameters:
+
+- `REMOTE`: operations with other agents.
+- `LOCAL`: operations within the same agent.
+- `NOTIF`: notifications.
+- `TRACE_CONTEXT`: carrying a request's trace context to the peer.
+
+```python
+agent.create_backend("POSIX")
+if "REMOTE" not in agent.get_backend_capabilities("POSIX"):
+    print("POSIX only transfers within this agent")
+```
+
+In C++, `nixlAgent::getBackendCapabilities()` returns the same information as a combination of
+`nixl_backend_capability_t` flags.
+
 ## Examples
 
 See the [Python examples](../examples/python/) directory for complete working examples including:

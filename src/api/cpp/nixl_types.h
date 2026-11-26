@@ -79,6 +79,32 @@ enum class nixl_thread_sync_t {
 };
 
 /**
+ * @enum  nixl_backend_capability_t
+ * @brief Bit flags for what a backend supports. Backends pass a combination of them to
+ *        nixlBackendEngine, and nixlAgent::getBackendCapabilities() reports them for a
+ *        created backend.
+ */
+enum class nixl_backend_capability_t : uint64_t {
+    NONE = 0,
+    REMOTE = 1ULL << 0, // Operations with other agents
+    LOCAL = 1ULL << 1, // Operations within the same agent
+    NOTIF = 1ULL << 2, // Notifications
+    TRACE_CONTEXT = 1ULL << 3, // Carrying a request's trace context to the peer
+};
+
+[[nodiscard]] constexpr nixl_backend_capability_t
+operator|(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
+    return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) |
+                                                  static_cast<uint64_t>(b));
+}
+
+[[nodiscard]] constexpr nixl_backend_capability_t
+operator&(nixl_backend_capability_t a, nixl_backend_capability_t b) noexcept {
+    return static_cast<nixl_backend_capability_t>(static_cast<uint64_t>(a) &
+                                                  static_cast<uint64_t>(b));
+}
+
+/**
  * @namespace nixlEnumStrings
  * @brief     This namespace to get string representation
  *            of different enums
@@ -90,6 +116,9 @@ std::string
 xferOpStr(const nixl_xfer_op_t &op);
 std::string
 statusStr(const nixl_status_t &status);
+// The name of a single capability, without the type prefix, such as "REMOTE".
+std::string
+backendCapabilityStr(const nixl_backend_capability_t &capability);
 } // namespace nixlEnumStrings
 
 /*** NIXL typedefs and defines used in the API ***/
