@@ -47,6 +47,12 @@ put(const memViewElem &, const memViewElem &, size_t, unsigned, uint64_t, xferSt
 
 template<level_t level>
 __device__ nixl_status_t
+get(const memViewElem &, const memViewElem &, size_t, unsigned, uint64_t, xferStatusH *) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+template<level_t level>
+__device__ nixl_status_t
 atomicAdd(uint64_t, const memViewElem &, unsigned, uint64_t, xferStatusH *) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
@@ -154,6 +160,33 @@ put(const memViewElem &src,
         status = ucx::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
     } else if (execution_mode == exec_mode_t::PROXY) {
         status = proxy::put<level>(backend_src, backend_dst, size, channel_id, flags, xfer_status);
+    } else {
+        status = NIXL_ERR_INVALID_PARAM;
+    }
+    detail::writeExecutionMode<level, mode>(xfer_status, status, execution_mode);
+    return status;
+}
+
+template<level_t level, exec_mode_t mode>
+__device__ nixl_status_t
+get(const memViewElem &dst,
+    const memViewElem &src,
+    size_t size,
+    unsigned channel_id,
+    uint64_t flags,
+    xferStatusH *xfer_status) {
+    const auto *dst_view = detail::asDeviceMemView(dst.mvh);
+    const auto *src_view = detail::asDeviceMemView(src.mvh);
+    const memViewElem backend_dst{dst_view->backend_memview, dst.index, dst.offset};
+    const memViewElem backend_src{src_view->backend_memview, src.index, src.offset};
+
+    // The source decides: for a get it is the view that names the peer.
+    const exec_mode_t execution_mode = detail::executionMode<mode>(*src_view);
+    nixl_status_t status;
+    if (execution_mode == exec_mode_t::UCX_DIRECT) {
+        status = ucx::get<level>(backend_dst, backend_src, size, channel_id, flags, xfer_status);
+    } else if (execution_mode == exec_mode_t::PROXY) {
+        status = proxy::get<level>(backend_dst, backend_src, size, channel_id, flags, xfer_status);
     } else {
         status = NIXL_ERR_INVALID_PARAM;
     }

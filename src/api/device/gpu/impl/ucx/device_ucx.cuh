@@ -128,6 +128,40 @@ put(const memViewElem &src,
     return convertSubmitStatus(status);
 }
 
+// Make the get lookup dependent so older UCX headers can omit ucp_device_get.
+template<level_t level, typename LocalMemList = ucp_device_local_mem_list_h>
+inline constexpr bool get_supported = requires(LocalMemList local, nixlMemViewH remote) {
+    ucp_device_get<ucsDeviceLevel<level>::value>(
+        local, 0, 0, remoteMemList(remote), 0, 0, 0, 0, 0, nullptr);
+};
+
+template<level_t level, typename LocalMemList = ucp_device_local_mem_list_h>
+__device__ nixl_status_t
+get(const memViewElem &dst,
+    const memViewElem &src,
+    size_t size,
+    unsigned channel_id,
+    uint64_t flags,
+    xferStatusH *xfer_status) {
+    if constexpr (get_supported<level, LocalMemList>) {
+        auto dst_mem_list = static_cast<LocalMemList>(dst.mvh);
+        auto src_mem_list = remoteMemList(src.mvh);
+        const auto status = ucp_device_get<ucsDeviceLevel<level>::value>(dst_mem_list,
+                                                                         dst.index,
+                                                                         dst.offset,
+                                                                         src_mem_list,
+                                                                         src.index,
+                                                                         src.offset,
+                                                                         size,
+                                                                         channel_id,
+                                                                         toUcpFlags(flags),
+                                                                         requestPtr(xfer_status));
+        return convertSubmitStatus(status);
+    } else {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
+}
+
 template<level_t level>
 __device__ nixl_status_t
 atomicAdd(uint64_t value,
