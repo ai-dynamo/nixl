@@ -323,27 +323,41 @@ flushChannel(nixlMemViewH remote, unsigned channel) {
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
+    // Flush covers the work accepted before it. Take that target under the lock, then
+    // wait without holding the lock, so other callers keep using the channel.
+    bool have_target = false;
+    uint64_t target = 0;
     unsigned delay_ns = 32;
     for (;;) {
-        uint32_t previous = phase.load(cuda::memory_order_acquire);
-        if (previous == gpunetio_lane_phase_failed) {
-            return NIXL_ERR_BACKEND;
+        if (have_target &&
+            deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
+            return NIXL_SUCCESS;
         }
-        if (previous == gpunetio_lane_phase_posting) {
-            return NIXL_ERR_NOT_ALLOWED;
+        uint32_t previous = phase.load(cuda::memory_order_acquire);
+        if (previous == gpunetio_lane_phase_failed || previous == gpunetio_lane_phase_posting) {
+            // A failure after the target leaves the flush successful, and a readSession only
+            // takes an idle lane, so a flush that already has a target has completed by then.
+            if (have_target &&
+                deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
+                return NIXL_SUCCESS;
+            }
+            return previous == gpunetio_lane_phase_failed ? NIXL_ERR_BACKEND : NIXL_ERR_NOT_ALLOWED;
         }
         if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
             phase.compare_exchange_weak(previous,
                                         gpunetio_lane_phase_scalar,
                                         cuda::memory_order_acq_rel,
                                         cuda::memory_order_acquire)) {
-            publish(lane);
-            nixl_status_t result;
-            do {
-                result = progress(lane, lane->active_ticket);
-            } while (result == NIXL_IN_PROG);
+            if (!have_target) {
+                publish(lane);
+                target = lane->active_ticket;
+                have_target = true;
+            }
+            const auto result = progress(lane, target);
             unlockLane(lane);
-            return result;
+            if (result != NIXL_IN_PROG) {
+                return result;
+            }
         }
         backoff(delay_ns);
     }
