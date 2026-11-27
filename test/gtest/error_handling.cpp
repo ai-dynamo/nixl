@@ -358,7 +358,7 @@ TestErrorHandling::SetUp() {
     }
 
     // Failover cannot select protocols over shared memory and TCP alone.
-    if (::nixl::hwInfo::instance().numActiveIbPorts == 0) {
+    if (::nixl::hwInfo::instance().numVerbsIbPorts == 0) {
         GTEST_SKIP() << "UCX failover error handling requires an active RDMA port";
     }
 

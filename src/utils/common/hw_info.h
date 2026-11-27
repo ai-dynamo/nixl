@@ -40,6 +40,8 @@ public:
     unsigned numEfaDevices = 0;
     /** Active ports of RDMA devices under /sys/class/infiniband (IB, RoCE, EFA). */
     unsigned numActiveIbPorts = 0;
+    /** Active RDMA ports whose device has a verbs node in /dev/infiniband. */
+    unsigned numVerbsIbPorts = 0;
 
     /**
      * @brief Returns the process-wide singleton, populating it via the PCI sysfs scan
