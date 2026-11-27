@@ -120,7 +120,10 @@ private:
 
 nixlUcxThreadEngine::nixlUcxThreadEngine(const nixlBackendInitParams &init_params,
                                          size_t num_dedicated_workers)
-    : nixlUcxEngine(init_params, num_dedicated_workers) {
+    : nixlUcxEngine(init_params,
+                    num_dedicated_workers,
+                    init_params.enableProgTh ? nixl_backend_capability_t::COMPLETION :
+                                               nixl_backend_capability_t::NONE) {
     if (!init_params.enableProgTh) {
         return;
     }

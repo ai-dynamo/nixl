@@ -99,15 +99,24 @@ class nixl_xfer_handle:
         value: Internal handle
     """
 
-    __slots__ = ("_handle", "_agent", "_released")
+    __slots__ = ("_handle", "_agent", "_released", "_monitor")
 
     def __init__(self, agent, value: int):
         self._handle = int(value)
         self._agent = agent
         self._released = False
+        self._monitor: Optional[nixl_completion_monitor] = None
 
     def __repr__(self) -> str:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
+
+    def _set_monitor(self, monitor: Optional[nixl_completion_monitor]) -> None:
+        # A handle keeps its last monitor alive until the release or the next transfer
+        if self._monitor is not None:
+            self._monitor._handles.pop(self._handle, None)
+        self._monitor = monitor
+        if monitor is not None:
+            monitor._handles[self._handle] = self
 
     def release(self):
         """Release the request; on refusal retain it for explicit polling and retry.
@@ -120,6 +129,7 @@ class nixl_xfer_handle:
         if not self._released:
             self._agent.agent.releaseXferReq(self._handle)
             self._released = True
+            self._set_monitor(None)
 
     def __del__(self):
         if not self._released:
@@ -138,6 +148,74 @@ class nixl_xfer_handle:
                 except Exception:
                     pass
                 return
+
+
+class nixl_completion_monitor:
+    """Waits for the completion of transfers without polling each handle.
+
+    A transfer is attached to a monitor by nixl_agent.transfer(handle, monitor=monitor).
+    A wait returns the completed handles and detaches them. The monitor never releases
+    a handle.
+
+    A monitor must be used by one thread only, which posts, waits for and releases
+    its transfers. It must stay alive until all its transfers are released.
+
+    Args:
+        agent: Agent that posts the transfers attached to this monitor.
+    """
+
+    __slots__ = ("_monitor", "_handles")
+
+    def __init__(self, agent: nixl_agent):
+        self._monitor = nixlBind.nixlCompletionMonitor(agent.agent)
+        # Attached handles: they stay alive until a wait returns them
+        self._handles: dict[int, nixl_xfer_handle] = {}
+
+    def fd(self) -> int:
+        """Event file descriptor for poll, epoll or an event loop.
+        It becomes readable when an attached transfer completes. Do not read it,
+        call wait_any(timeout_ms=0) instead.
+        """
+        return self._monitor.fd()
+
+    def size(self) -> int:
+        """Number of attached transfers, which no wait has returned yet."""
+        return self._monitor.size()
+
+    def wait_any(self, timeout_ms: int = -1) -> list[tuple[nixl_xfer_handle, str]]:
+        """Wait until at least one attached transfer completes.
+
+        Args:
+            timeout_ms: Time limit in milliseconds. Negative waits without a limit,
+                0 returns what is available without blocking.
+
+        Returns:
+            List of (handle, state) of all transfers completed so far, where state is
+                "DONE" or "ERR". It is empty if the time limit expired.
+        """
+        return self._to_handles(self._monitor.waitAny(timeout_ms))
+
+    def wait_all(self, timeout_ms: int = -1) -> list[tuple[nixl_xfer_handle, str]]:
+        """Wait until all attached transfers complete.
+
+        Args:
+            timeout_ms: Time limit in milliseconds. Negative waits without a limit,
+                0 returns what is available without blocking.
+
+        Returns:
+            List of (handle, state) of the completed transfers, where state is "DONE"
+                or "ERR". If the time limit expired, the rest stay attached.
+        """
+        return self._to_handles(self._monitor.waitAll(timeout_ms))
+
+    def _to_handles(self, completions) -> list[tuple[nixl_xfer_handle, str]]:
+        result = []
+        for value, status in completions:
+            # The handle keeps its monitor: a late completion callback can still signal it
+            handle = self._handles.pop(value)
+            state = "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR"
+            result.append((handle, state))
+        return result
 
 
 # Opaque handle for backend can be just int, as it's not passed to the user
@@ -671,7 +749,12 @@ class nixl_agent:
 
         return nixl_xfer_handle(self, handle)
 
-    def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
+    def transfer(
+        self,
+        handle: nixl_xfer_handle,
+        notif_msg: bytes = b"",
+        monitor: Optional[nixl_completion_monitor] = None,
+    ) -> str:
         """Initiate a data transfer operation.
         After calling this, the transfer state can be checked asynchronously till completion.
         In case of small transfers that are completed as part of the call itself, return value
@@ -681,11 +764,16 @@ class nixl_agent:
             handle: Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
             notif_msg: Optional notification message can be specified or updated per transfer call.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
+            monitor: Optional completion monitor to attach the transfer to, also when it is
+                completed as part of the call itself.
 
         Returns:
             Status of the transfer operation ("DONE", "PROC", or "ERR").
         """
-        status = self.agent.postXferReq(handle._handle, notif_msg)
+        status = self.agent.postXferReq(
+            handle._handle, notif_msg, monitor._monitor if monitor is not None else None
+        )
+        handle._set_monitor(monitor)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:

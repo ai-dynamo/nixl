@@ -56,6 +56,7 @@ namespace nixl::ucx {
 using amSendStatus = std::atomic<nixl_status_t>;
 } // namespace nixl::ucx
 
+class nixlBackendReqCallback;
 class nixlUcxMem;
 
 class nixlUcxEp {
@@ -89,15 +90,18 @@ public:
      * @brief Send an active message that owns its payload
      * @param payload Data released once the send completes
      * @param send_status If not null, receives the final status of an in-progress send
+     * @param callback If not null, called with the final status of an in-progress send.
+     *                 It is not called if the send completes or fails at once.
      *
-     * Only the callback of an in-progress send releases it: the request and the payload, and
-     * then it sets @p send_status.
+     * Only the UCX callback of an in-progress send releases it: the request and the payload,
+     * and then it calls @p callback and sets @p send_status last.
      */
     nixl_status_t
     sendAm(nixl::ucx::am_cb_op_t msg_id,
            std::string &&payload,
            uint32_t flags,
-           std::shared_ptr<nixl::ucx::amSendStatus> send_status = nullptr) const;
+           std::shared_ptr<nixl::ucx::amSendStatus> send_status = nullptr,
+           nixlBackendReqCallback *callback = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t

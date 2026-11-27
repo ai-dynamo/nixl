@@ -25,6 +25,7 @@
 #include <utility>
 
 #include "nixl_types.h"
+#include "nixl_monitor_impl.h"
 #include "backend_engine.h"
 #include "telemetry.h"
 #include "common/nixl_duration.h"
@@ -44,7 +45,7 @@ using nixl_remote_section_weak_t = std::weak_ptr<nixlRemoteSection>;
 
 // Contains pointers to corresponding backend engine and its handler, and populated
 // and verified DescLists, and other state and metadata needed for a NIXL transfer
-class nixlXferReqH {
+class nixlXferReqH : private nixlBackendReqCallback {
 public:
     nixlXferReqH(const std::string &remote_agent,
                  const nixl_xfer_op_t backend_op,
@@ -95,8 +96,17 @@ public:
     }
 
     friend class nixlAgent;
+    friend class nixlCompletionMonitorImpl;
 
 private:
+    void
+    completed(nixl_status_t status) override {
+        nixlCompletionMonitorImpl *const monitor = monitor_.load();
+        if (monitor != nullptr) {
+            monitor->completed({this, status});
+        }
+    }
+
     nixlBackendEngine *engine = nullptr;
     nixlBackendReqH *backendHandle = nullptr;
 
@@ -115,6 +125,7 @@ private:
 
     const nixl_xfer_op_t backendOp;
     nixl_status_t status = NIXL_ERR_NOT_POSTED;
+    std::atomic<nixlCompletionMonitorImpl *> monitor_ = nullptr;
 
     nixl_xfer_telem_t telemetry;
     nixlTime::nixlDuration timer;

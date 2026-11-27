@@ -84,9 +84,10 @@ public:
         nixlUcxReq req = nullptr;
         const bool has_notif = !notif_.empty();
         NIXL_ASSERT(has_notif == (notifStatus_ != nullptr));
-        const nixl_status_t status = ep_->flushEp(req, has_notif ? flushCb : nullptr, this);
-        if (has_notif && (status == NIXL_SUCCESS)) {
-            sendNotif();
+        const bool need_cb = has_notif || (callback_ != nullptr);
+        const nixl_status_t status = ep_->flushEp(req, need_cb ? flushCb : nullptr, this);
+        if (need_cb && (status == NIXL_SUCCESS)) {
+            flushCb(nullptr, UCS_OK, this);
         }
 
         return append(status, req);
@@ -98,6 +99,12 @@ public:
         notif_ = std::move(notif);
         notifStatus_ =
             notif_.empty() ? nullptr : std::make_shared<nixl::ucx::amSendStatus>(NIXL_IN_PROG);
+    }
+
+    // The callback is not owned and must stay valid until the request is released
+    virtual void
+    setCallback(nixlBackendReqCallback *callback) {
+        callback_ = callback;
     }
 
     [[nodiscard]] virtual bool
@@ -185,16 +192,18 @@ protected:
         worker_ = worker;
     }
 
-    void
+    nixl_status_t
     sendNotif() {
         NIXL_ASSERT(!notif_.empty());
         const nixl_status_t status = getEp().sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
                                                     std::exchange(notif_, {}),
                                                     UCP_AM_SEND_FLAG_EAGER,
-                                                    notifStatus_);
+                                                    notifStatus_,
+                                                    callback_);
         if (status != NIXL_IN_PROG) {
             notifStatus_->store(status);
         }
+        return status;
     }
 
 private:
@@ -204,8 +213,17 @@ private:
 
     static void
     flushCb(void *, ucs_status_t status, void *user_data) {
-        if (status == UCS_OK) {
-            static_cast<nixlUcxBackendReqH *>(user_data)->sendNotif();
+        const auto handle = static_cast<nixlUcxBackendReqH *>(user_data);
+        nixl_status_t result = nixl::ucx::ucsToNixlStatus(status);
+        if ((status == UCS_OK) && !handle->notif_.empty()) {
+            result = handle->sendNotif();
+            if (result == NIXL_IN_PROG) {
+                // The send callback calls the request callback
+                return;
+            }
+        }
+        if (handle->callback_ != nullptr) {
+            handle->callback_->completed(result);
         }
     }
 
@@ -262,6 +280,7 @@ private:
     std::string notif_;
     // Status of the notification send, shared with that send; null without a notification.
     std::shared_ptr<nixl::ucx::amSendStatus> notifStatus_;
+    nixlBackendReqCallback *callback_ = nullptr;
 };
 
 #endif // NIXL_SRC_PLUGINS_UCX_UCX_BACKEND_REQ_H

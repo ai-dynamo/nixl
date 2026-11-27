@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import contextlib
 import gc
 import os
@@ -30,6 +31,7 @@ import nixl._utils as utils
 from nixl._api import (
     nixl_agent,
     nixl_agent_config,
+    nixl_completion_monitor,
     nixl_thread_sync_t,
     nixl_xfer_handle,
 )
@@ -938,3 +940,51 @@ def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch)
         # 0xDEAD is not a real request, so the agent's destructor must not
         # hand it to the native release once the real agent is back.
         one_empty_agent._leaked_xfer_handles.clear()
+
+
+@pytest.mark.timeout(10)
+@pytest.mark.parametrize("prepped", [False, True])
+@pytest.mark.parametrize("wait", ["wait_any", "wait_all"])
+def test_completion_monitor_wait(backend_name, prepped, wait):
+    """A wait returns the posted handle once, also when it is posted again."""
+    if backend_name != "UCX":
+        pytest.skip("completion monitors are supported by UCX only")
+    with _xfer_handle(backend_name, prepped) as (agent, handle):
+        monitor = nixl_completion_monitor(agent)
+        assert monitor.fd() >= 0
+        assert getattr(monitor, wait)(timeout_ms=0) == []
+        for _ in range(2):
+            agent.transfer(handle, monitor=monitor)
+            assert monitor.size() == 1
+            completions = getattr(monitor, wait)(timeout_ms=5000)
+            assert len(completions) == 1
+            assert completions[0][0] is handle
+            assert completions[0][1] == "DONE"
+            assert monitor.size() == 0
+
+
+@pytest.mark.timeout(10)
+def test_completion_monitor_asyncio(backend_name):
+    """An event loop waits on the monitor fd and collects without blocking."""
+    if backend_name != "UCX":
+        pytest.skip("completion monitors are supported by UCX only")
+
+    async def post_and_wait(agent, handle, monitor):
+        readable = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_reader(monitor.fd(), readable.set)
+        try:
+            agent.transfer(handle, monitor=monitor)
+            completions = []
+            while not completions:
+                await asyncio.wait_for(readable.wait(), timeout=5)
+                readable.clear()
+                completions = monitor.wait_any(timeout_ms=0)
+            return completions
+        finally:
+            loop.remove_reader(monitor.fd())
+
+    with _xfer_handle(backend_name) as (agent, handle):
+        monitor = nixl_completion_monitor(agent)
+        assert asyncio.run(post_and_wait(agent, handle, monitor)) == [(handle, "DONE")]
+        assert monitor.size() == 0

@@ -257,7 +257,9 @@ protected:
                   size_t start_idx,
                   size_t end_idx) const;
 
-    nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers = 0);
+    nixlUcxEngine(const nixlBackendInitParams &init_params,
+                  size_t num_dedicated_workers = 0,
+                  nixl_backend_capability_t extra_capabilities = nixl_backend_capability_t::NONE);
 
     notif_list_t notifList_;
 

@@ -25,6 +25,7 @@
 #include <span>
 
 #include "nixl.h"
+#include "nixl_monitor_impl.h"
 #include "serdes/serdes.h"
 #include "backend/backend_engine.h"
 #include "transfer_request.h"
@@ -1420,6 +1421,23 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         req_hndl->hasNotif = opt_args.hasNotif;
     }
 
+    auto *const monitor =
+        static_cast<nixlCompletionMonitorImpl *>(extra_params ? extra_params->monitor : nullptr);
+    if (monitor != nullptr) {
+        // TODO: for such a backend the monitor wait could poll getXferStatus instead of failing
+        if (!req_hndl->engine->supportsCapability(nixl_backend_capability_t::COMPLETION)) {
+            NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
+                            << "' does not support completion monitors";
+            data->addErrorTelemetry(NIXL_ERR_NOT_SUPPORTED);
+            NIXL_TRACE_ATTR(
+                trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_NOT_SUPPORTED));
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        opt_args.callback = req_hndl;
+    }
+    // Set before the post, because the backend can report the completion during the post
+    nixlCompletionMonitorImpl *const prev_monitor = req_hndl->monitor_.exchange(monitor);
+
     req_hndl->tracePostContext_ = call_context;
     opt_args.traceContext = &req_hndl->tracePostContext();
     if (req_hndl->traceRequestId_ != 0) {
@@ -1442,6 +1460,18 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
                                                   req_hndl->remoteAgent,
                                                   req_hndl->backendHandle,
                                                   &opt_args);
+
+    // A successful post attaches the request to its monitor and detaches it from a previous one
+    if (req_hndl->status >= 0) {
+        if (prev_monitor != nullptr) {
+            prev_monitor->detach(req_hndl);
+        }
+        if (monitor != nullptr) {
+            monitor->attach(req_hndl);
+        }
+    } else {
+        req_hndl->monitor_ = prev_monitor;
+    }
 
     if (req_hndl->status < 0) {
         traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
@@ -1615,6 +1645,10 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
         req_hndl->backendHandle = nullptr;
     }
     NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_SUCCESS));
+    nixlCompletionMonitorImpl *const monitor = req_hndl->monitor_;
+    if (monitor != nullptr) {
+        monitor->detach(req_hndl);
+    }
     delete req_hndl;
     return NIXL_SUCCESS;
 }
