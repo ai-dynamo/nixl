@@ -482,6 +482,19 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     return NIXL_SUCCESS;
 }
 
+nixl_status_t
+nixlAgent::getBackendCapabilities(const nixlBackendH *backend,
+                                  nixl_backend_capability_t &capabilities) const {
+    if (!backend) {
+        NIXL_ERROR_FUNC << "backend handle is not provided";
+        return NIXL_ERR_INVALID_PARAM;
+    }
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    capabilities = backend->engine->getCapabilities();
+    return NIXL_SUCCESS;
+}
+
 void
 nixlAgentData::warnAboutEfaHardwareMismatch() {
     // Atomic test-and-set so concurrent registerMem() calls warn at most once

@@ -1162,6 +1162,56 @@ namespace agent {
         }
     };
 
+    TEST_F(singleAgentSessionFixture, BackendCapabilitiesCombineFlagsAndSupportQueries) {
+        // The mock reports REMOTE, LOCAL and NOTIF through its supports*() overrides.
+        ON_CALL(agent_helper_->getGMockEngine(), capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        auto capabilities = nixl_backend_capability_t::NONE;
+        ASSERT_EQ(agent_->getBackendCapabilities(backend, capabilities), NIXL_SUCCESS);
+        EXPECT_EQ(capabilities,
+                  nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
+                      nixl_backend_capability_t::NOTIF | nixl_backend_capability_t::TRACE_CONTEXT);
+    }
+
+    TEST_F(singleAgentSessionFixture, BackendCapabilitiesFollowSupportOverrides) {
+        auto &engine = agent_helper_->getGMockEngine();
+        // The overrides win over flags passed to the base engine.
+        ON_CALL(engine, capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::REMOTE |
+                                           nixl_backend_capability_t::NOTIF));
+        ON_CALL(engine, supportsRemote()).WillByDefault(testing::Return(false));
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(false));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        auto capabilities = nixl_backend_capability_t::NONE;
+        ASSERT_EQ(agent_->getBackendCapabilities(backend, capabilities), NIXL_SUCCESS);
+        EXPECT_EQ(capabilities, nixl_backend_capability_t::LOCAL);
+    }
+
+    TEST_F(singleAgentSessionFixture, BackendCapabilitiesRequireBackend) {
+        auto capabilities = nixl_backend_capability_t::LOCAL;
+        EXPECT_EQ(agent_->getBackendCapabilities(nullptr, capabilities), NIXL_ERR_INVALID_PARAM);
+        EXPECT_EQ(capabilities, nixl_backend_capability_t::LOCAL);
+    }
+
+    TEST(backendCapabilityStr, NamesSingleFlags) {
+        using nixlEnumStrings::backendCapabilityStr;
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::NONE), "NONE");
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::REMOTE), "REMOTE");
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::LOCAL), "LOCAL");
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::NOTIF), "NOTIF");
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::TRACE_CONTEXT), "TRACE_CONTEXT");
+        EXPECT_EQ(backendCapabilityStr(nixl_backend_capability_t::REMOTE |
+                                       nixl_backend_capability_t::LOCAL),
+                  "BAD_CAPABILITY");
+    }
+
     TEST_F(singleAgentSessionFixture, ActiveReleaseRequiresDrain) {
         selfXferSetup setup;
         nixl_b_params_t params;

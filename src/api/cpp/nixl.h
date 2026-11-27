@@ -95,6 +95,19 @@ class nixlAgent {
                           nixl_b_params_t &params) const;
 
         /**
+         * @brief  Get the capabilities of a created backend, such as whether it supports
+         *         operations with other agents or notifications. Capabilities belong to the
+         *         backend instance and can depend on its initialization parameters.
+         *
+         * @param  backend            Backend handle returned by createBackend
+         * @param  capabilities [out] Combination of nixl_backend_capability_t flags
+         * @return NIXL_ERR_INVALID_PARAM if no backend handle is provided
+         */
+        [[nodiscard]] nixl_status_t
+        getBackendCapabilities(const nixlBackendH *backend,
+                               nixl_backend_capability_t &capabilities) const;
+
+        /**
          * @brief  Instantiate a backend engine object based on the corresponding parameters
          *
          * @param  type          Backend type

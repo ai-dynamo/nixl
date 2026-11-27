@@ -40,7 +40,7 @@ Architecture, backend plugin API, C++ style, Python API, telemetry, and tracing.
 - [NIXL Code Style](../../docs/CodeStyle.md): C++ naming, class layout, headers, formatting, Doxygen comments, and coding practices.
 - [NIXL Doxygen Overview](../../docs/doxygen/nixl_doxygen.md): Doxygen architecture overview of agents, memory sections, backends, metadata exchange, etcd, and Redis.
 - [NIXL Architecture](../../docs/nixl.md): Architecture, agents, memory sections, backends, metadata exchange with etcd and Redis, and TOML configuration.
-- [NIXL Python API](../../docs/python_api.md): Python API features, installation, backend parameters via get_plugin_params, QueryMem, UCX, and GDS.
+- [NIXL Python API](../../docs/python_api.md): Python API features, installation, backend parameters and capabilities, QueryMem, UCX, and GDS.
 - [NIXL Telemetry System](../../docs/telemetry.md): Telemetry events, metrics, shared-memory buffer, Prometheus, prometheus_mp, DOCA exporters, and readers.
 - [NIXL Tracing System](../../docs/tracing.md): Span tracing with NVTX, Nsight Systems, sampling, backend plugins, and correlation.
 - [NIXL Usage Examples](../../docs/uses.md): Designs and frameworks that use NIXL to move model weights during RL post-training.
@@ -179,9 +179,9 @@ Public C++ headers and Python modules for agents, descriptors, backends, telemet
 - [nixlAgent (nixl.h)](../../src/api/cpp/nixl.h): Declares nixlAgent for backends, memory registration, transfers, memory views, notifications, and peer and etcd metadata.
 - [Descriptors (nixl_descriptors.h)](../../src/api/cpp/nixl_descriptors.h): Declares nixlBasicDesc, nixlStrideDesc, nixlBlobDesc, nixlRemoteDesc, nixlDescList, and descriptor-list aliases.
 - [nixlAgentConfig (nixl_params.h)](../../src/api/cpp/nixl_params.h): Declares nixlAgentConfig for progress and listener threads, synchronization, telemetry, and etcd.
-- [Core types (nixl_types.h)](../../src/api/cpp/nixl_types.h): Declares nixl_mem_t, nixl_xfer_op_t, nixl_status_t, nixl_thread_sync_t, nixlAgentOptionalArgs, nixlMemViewH, and nixlXferTelemetry.
+- [Core types (nixl_types.h)](../../src/api/cpp/nixl_types.h): Declares nixl_mem_t, nixl_xfer_op_t, nixl_status_t, nixl_thread_sync_t, nixl_backend_capability_t, nixlAgentOptionalArgs, nixlMemViewH, and nixlXferTelemetry.
 - [Backend auxiliary types (backend_aux.h)](../../src/api/cpp/backend/backend_aux.h): Declares nixlBackendInitParams, nixlBackendOptionalArgs, nixlBackendReqH, nixlBackendMD, nixlMetaDesc, and nixlMetaStrideDescList.
-- [nixlBackendEngine (backend_engine.h)](../../src/api/cpp/backend/backend_engine.h): Declares nixlBackendEngine and its capability flags for registration, connections, transfers, notifications, queryMem, and telemetry events.
+- [nixlBackendEngine (backend_engine.h)](../../src/api/cpp/backend/backend_engine.h): Declares nixlBackendEngine for capabilities, registration, connections, transfers, notifications, queryMem, and telemetry events.
 - [nixlBackendPlugin (backend_plugin.h)](../../src/api/cpp/backend/backend_plugin.h): Declares nixlBackendPlugin, creator template, plugin API, and dynamic loading entry points.
 - [nixlTelemetryExporter (telemetry_exporter.h)](../../src/api/cpp/telemetry/telemetry_exporter.h): Declares nixlTelemetryExporter, exporter initialization, batch hooks, and bind-failure handling.
 - [nixlTelemetryPlugin (telemetry_plugin.h)](../../src/api/cpp/telemetry/telemetry_plugin.h): Declares nixlTelemetryPlugin, exporter creator, plugin API, and dynamic loading entry points.

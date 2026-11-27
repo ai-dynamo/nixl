@@ -211,9 +211,25 @@ def test_invalid_plugin_name(one_agent):
 
     backend_mems = one_agent.get_backend_mem_types("UVX")
     backend_params = one_agent.get_backend_mem_types("UVX")
+    backend_capabilities = one_agent.get_backend_capabilities("UVX")
 
     assert len(plugin_mems) == 0 and len(plugin_params) == 0
     assert len(backend_mems) == 0 and len(backend_params) == 0
+    assert len(backend_capabilities) == 0
+
+
+def test_backend_capabilities(one_agent, backend_name):
+    expected = {
+        "UCX": ["REMOTE", "LOCAL", "NOTIF", "TRACE_CONTEXT"],
+        "LIBFABRIC": ["REMOTE", "LOCAL", "NOTIF"],
+        "POSIX": ["LOCAL"],
+    }
+    capabilities = one_agent.get_backend_capabilities(backend_name)
+
+    # Every backend supports operations within or across agents.
+    assert capabilities
+    if backend_name in expected:
+        assert capabilities == expected[backend_name]
 
 
 def test_invalid_backend_name_creation(one_agent):

@@ -84,4 +84,21 @@ statusStr(const nixl_status_t &status) {
     return "BAD_STATUS";
 }
 
+std::string
+backendCapabilityStr(const nixl_backend_capability_t &capability) {
+    switch (capability) {
+    case nixl_backend_capability_t::NONE:
+        return "NONE";
+    case nixl_backend_capability_t::REMOTE:
+        return "REMOTE";
+    case nixl_backend_capability_t::LOCAL:
+        return "LOCAL";
+    case nixl_backend_capability_t::NOTIF:
+        return "NOTIF";
+    case nixl_backend_capability_t::TRACE_CONTEXT:
+        return "TRACE_CONTEXT";
+    }
+    return "BAD_CAPABILITY";
+}
+
 } // namespace nixlEnumStrings

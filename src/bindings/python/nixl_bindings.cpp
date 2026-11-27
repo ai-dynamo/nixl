@@ -636,6 +636,23 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::call_guard<py::gil_scoped_release>())
         .def(
+            "getBackendCapabilities",
+            [](nixlAgent &agent, uintptr_t backend) -> std::vector<std::string> {
+                nixl_backend_capability_t capabilities = nixl_backend_capability_t::NONE;
+                throw_nixl_exception(
+                    agent.getBackendCapabilities((nixlBackendH *)backend, capabilities));
+                // One name per set flag, in bit order.
+                std::vector<std::string> names;
+                for (uint64_t bit = 1; bit != 0; bit <<= 1) {
+                    const auto flag = static_cast<nixl_backend_capability_t>(bit);
+                    if ((capabilities & flag) != nixl_backend_capability_t::NONE) {
+                        names.push_back(nixlEnumStrings::backendCapabilityStr(flag));
+                    }
+                }
+                return names;
+            },
+            py::call_guard<py::gil_scoped_release>())
+        .def(
             "createBackend",
             [](nixlAgent &agent,
                const nixl_backend_t &type,
