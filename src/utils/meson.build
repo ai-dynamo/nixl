@@ -15,7 +15,6 @@
 
 subdir('common')
 subdir('serdes')
-subdir('stream')
 subdir('file')
 subdir('object')
 subdir('device')

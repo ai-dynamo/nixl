@@ -23,7 +23,6 @@
 #include <nixl_params.h>
 #include <nixl.h>
 #include "test_utils.h"
-#include "stream/metadata_stream.h"
 #include "serdes/serdes.h"
 #include <mutex>
 #include <vector>

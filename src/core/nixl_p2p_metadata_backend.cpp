@@ -587,16 +587,7 @@ nixlP2PMetadataBackend::acceptPeers() {
         }
         if (error) {
             NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << error.message();
-            if (error == asio::error::connection_aborted || error == asio::error::no_descriptors ||
-                error == asio::error::no_buffer_space || error == asio::error::no_memory ||
-                error == std::errc::too_many_files_open_in_system) {
-                acceptRetryTimer_.expires_after(accept_retry_interval);
-                acceptRetryTimer_.async_wait([this](const asio::error_code &) {
-                    if (acceptor_.is_open()) {
-                        acceptPeers();
-                    }
-                });
-            }
+            acceptPeers();
             return;
         }
 
@@ -614,7 +605,7 @@ nixlP2PMetadataBackend::acceptPeers() {
             getOrCreateSession(address)->setAcceptedSocket(std::move(socket));
         }
         catch (const std::exception &e) {
-            NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << e.what();
+            NIXL_ERROR << getLogPrefix() << "Failed to get peer address: " << e.what();
             asio::error_code ec;
             socket.close(ec);
         }
