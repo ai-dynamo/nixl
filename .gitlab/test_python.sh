@@ -62,6 +62,7 @@ fi
 $pip3 install --break-system-packages pytest
 $pip3 install --break-system-packages pytest-timeout
 $pip3 install --break-system-packages zmq
+$pip3 install --break-system-packages tomlkit
 
 start_etcd_server "/nixl/python_ci"
 

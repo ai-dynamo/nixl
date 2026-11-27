@@ -97,10 +97,13 @@ def _load_cuda_backend() -> str:
             RuntimeWarning,
         )
     # ROCm version unknown, or only the legacy backend: use whatever backend is
-    # installed.
+    # installed. An absent candidate falls through to the next one; an installed
+    # backend that fails to load raises, so the real error is never hidden by a
+    # silent switch to another backend.
     backends = ("nixl_cu13", *rocm_backends, "nixl_rocm")
     if rocm is not None or detect_rocm():
         backends = (*rocm_backends, "nixl_rocm", "nixl_cu13")
+    first_missing = None
     for mod_name in backends:
         try:
             return importlib.import_module(mod_name).__name__
@@ -108,8 +111,11 @@ def _load_cuda_backend() -> str:
             if e.name != mod_name:
                 # Re-raise if the error is not about the module we're trying to import
                 raise
-            continue
-    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_rocm)")
+            if first_missing is None:
+                first_missing = e
+    raise ImportError(
+        f"No NIXL backend found (tried {', '.join(backends)})"
+    ) from first_missing
 
 
 _pkg = sys.modules[_load_cuda_backend()]

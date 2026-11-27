@@ -720,17 +720,34 @@ def test_no_torch_with_rocm_backend(env):
     assert "torch" not in sys.modules
 
 
-NO_BACKEND_MESSAGE = "No NIXL backend found (tried nixl_cu13, nixl_rocm)"
+def _assert_no_backend(excinfo, tried):
+    """The error names the fallback candidates in the order they were tried and
+    chains the first one's ModuleNotFoundError."""
+    assert str(excinfo.value) == f"No NIXL backend found (tried {', '.join(tried)})"
+    cause = excinfo.value.__cause__
+    assert isinstance(cause, ModuleNotFoundError)
+    assert cause.name == tried[0]
 
 
 def test_no_backend(env):
     with pytest.raises(ImportError) as excinfo:
         selected_backend()
-    assert str(excinfo.value) == NO_BACKEND_MESSAGE
+    _assert_no_backend(excinfo, ["nixl_cu13", "nixl_rocm"])
 
 
 def test_no_backend_with_rocm_detected(env):
     set_rocm_install(env, "10.2.0")
     with pytest.raises(ImportError) as excinfo:
         selected_backend()
-    assert str(excinfo.value) == NO_BACKEND_MESSAGE
+    _assert_no_backend(excinfo, ["nixl_rocm", "nixl_cu13"])
+
+
+def test_broken_backend_is_not_masked_by_fallback(env):
+    # An installed backend whose own dependency is missing raises that error
+    # instead of silently switching to the next candidate.
+    add_backend(env, "nixl_cu13")
+    (env.backends / "nixl_cu13" / "__init__.py").write_text("import nixl_missing_dep\n")
+    importlib.invalidate_caches()
+    with pytest.raises(ModuleNotFoundError) as excinfo:
+        selected_backend()
+    assert excinfo.value.name == "nixl_missing_dep"
