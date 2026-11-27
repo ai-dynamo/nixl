@@ -36,8 +36,8 @@ Project overview, contribution and community policies, security reporting, and t
 
 ## Core documentation
 Architecture, backend plugin API, C++ style, Python API, telemetry, and tracing.
-- [Backend Plugin Interface](../../docs/BackendGuide.md): Southbound backend plugin API, plugin manager, capabilities, memory registration, transfers, notifications, and UCX.
-- [NIXL Code Style](../../docs/CodeStyle.md): C++ naming, class layout, headers, formatting, Doxygen comments, and coding practices.
+- [Backend Plugin Interface](../../docs/BackendGuide.md): Southbound backend plugin API, plugin manager, capabilities, memory registration, transfers, notifications, plugin READMEs, and UCX.
+- [NIXL Code Style](../../docs/CodeStyle.md): C++20, STL/Abseil, naming, class layout, formatting, error handling, logging, Doxygen, and Python docstrings.
 - [NIXL Doxygen Overview](../../docs/doxygen/nixl_doxygen.md): Doxygen architecture overview of agents, memory sections, backends, metadata exchange, etcd, and Redis.
 - [NIXL Architecture](../../docs/nixl.md): Architecture, agents, memory sections, backends, metadata exchange with etcd and Redis, and TOML configuration.
 - [NIXL Python API](../../docs/python_api.md): Python API features, installation, backend parameters via get_plugin_params, QueryMem, UCX, and GDS.

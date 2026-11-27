@@ -140,6 +140,16 @@ From a user perspective talking to the NIXL agent, the type of backend transport
 
 The plugin manager maintains API versioning of these above APIs. The check is strict equality against `NIXL_PLUGIN_API_VERSION`: a plugin reporting any other version is refused at load rather than being run against an incompatible core. There is no backward- or forward-compatibility range, so a bump requires rebuilding out-of-tree plugins. Furthermore, there can be both static and dynamic plugins, meaning being auto-loaded and/or built-in into the NIXL library directly or being loaded from disk on-demand respectively. Static plugins can provide slightly better performance at the expense of a larger application size. The API for both options are the same.
 
+## Plugin Documentation
+
+Each new backend plugin must include a `README.md` with these sections:
+
+* **Overview**: Basic functionality description
+* **Dependencies**: List all external requirements
+* **Build Instructions**: How to build with/without the plugin
+* **API Reference**: Key classes and functions
+* **Example Usage**: Simple, working example
+
 ## Comparing two plugins as an example
 
 NIXL UCX plugin provides networking across different nodes, while GDS plugin provides storage access. UCX plugin sets all of the “supports” flags, while GDS only has the supportsLocal flag set. The reason being UCX is a network plugin that should support inter-agent communication and notifications, and it also supports intra-agent transfers, for instance from GPU to CPU.

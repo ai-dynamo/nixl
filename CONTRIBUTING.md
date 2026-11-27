@@ -100,70 +100,7 @@ pre-commit install
 
 ## Code Standards
 
-### C++20 Guidelines
-
-NIXL is a modern C++20 project. We adhere to the [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines) where appropriate. Key principles:
-
-1. **Use modern C++ features**: Prefer `auto`, range-based loops, structured bindings, `std::optional`, etc.
-2. **RAII everywhere**: Resource management through constructors/destructors
-3. **Smart pointers for ownership**: Use `std::unique_ptr`, `std::shared_ptr` appropriately
-4. **Prefer `const` correctness**: Mark methods and variables `const` when appropriate
-5. **Exception handling**: Exceptions are recommended for control-path code, while error codes should be used for data-path
-
-### STL and Abseil Usage
-
-1. **Prefer STL types**: Use rich STL types as the primary choice
-   - Standard containers: `std::vector`, `std::unordered_map`, etc.
-   - Modern utilities: `std::optional`, `std::variant`, `std::string_view`
-   - Algorithms from `<algorithm>` and `<numeric>`
-
-2. **Fallback to Abseil**: When STL lacks required functionality
-   - String formatting: `absl::StrFormat`
-   - Error handling: `absl::StatusOr` for data-path operations that return values with potential errors
-   - High-performance containers: `absl::flat_hash_map` when needed
-   - Logging utilities (integrated with NIXL logging)
-
-3. **⚠️ WARNING: Never expose Abseil in public APIs**
-   - Keep Abseil types internal to implementation files
-   - Plugin and agent public APIs must only use STL types
-   - Convert between Abseil and STL types at API boundaries
-
-### Code Style
-
-All code must adhere to the style guide in `docs/CodeStyle.md` and be formatted with `.clang-format`. Key points:
-
-1. **Follow the existing code style** in the file/module you're modifying
-2. **Use descriptive names** for variables, functions, and classes
-3. **Document complex logic** with clear comments, but avoid redundant self-explanatory comments that don't add value
-4. **Prefer clarity over cleverness**
-
-### Error Handling
-
-1. **Control-path code**: Use exceptions for exceptional conditions
-   - `std::runtime_error` for runtime failures
-   - `std::invalid_argument` for invalid parameters
-   - Custom exceptions when appropriate
-
-2. **Data-path code**: Use error codes for performance-critical paths
-   - Return `nixl_status_t` or similar error codes
-   - Avoid exceptions in hot paths
-
-3. **Logging**: Use NIXL logging macros
-   - `NIXL_ERROR`: Critical errors that prevent normal operation
-     - System failures, resource exhaustion, unrecoverable errors
-     - Failed operations that cannot continue
-   - `NIXL_WARN`: Warning conditions that don't prevent operation but indicate problems
-     - Deprecated API usage, performance degradation, recoverable errors
-     - Fallback behavior, suboptimal configurations
-   - `NIXL_INFO`: Informational messages about normal operation
-     - Initialization complete, configuration loaded, major state changes
-     - Connection established/closed, module lifecycle events
-   - `NIXL_DEBUG`: Detailed debugging information for development
-     - Function entry/exit, intermediate values, algorithm decisions
-     - Variable states, decision branches, detailed flow information
-   - `NIXL_TRACE`: Very detailed trace information for deep debugging
-     - Per-packet processing, memory allocations, lock acquisitions
-     - Low-level operations, fine-grained timing, verbose diagnostics
+Format C++ code with `.clang-format`, and follow [docs/CodeStyle.md](docs/CodeStyle.md).
 
 ## Contributing Process
 
@@ -251,22 +188,28 @@ src/plugins/your_plugin/
 Tests should be added in the GoogleTest-based test directory:
 
 ```text
-test/gtest/unit/plugins/your_plugin/
+test/gtest/unit/your_plugin/
 └── test_your_plugin.cpp
 ```
 
 #### 2. Build System Integration
 
-Create a `meson.build` file for your plugin. If your plugin requires external dependencies:
+Add the plugin name to `all_plugins` in the top-level `meson.build`, then add an entry for the plugin to `src/plugins/meson.build`. If your plugin requires external dependencies, check them there: fail when the user explicitly requested the plugin, and skip the plugin otherwise:
 
 ```meson
-# Check for required dependency
 your_dep = dependency('your-dependency', required: false)
-if not your_dep.found()
-    subdir_done()  # Skip building this plugin
+if enabled_plugins.get('YOUR_PLUGIN')
+    if not your_dep.found() and is_explicit_enable
+        error('YOUR_PLUGIN plugin requested but your-dependency not found')
+    elif your_dep.found()
+        subdir('your_plugin')
+    endif
 endif
+```
 
-# Build the plugin
+Create a `meson.build` file in your plugin directory that builds the plugin:
+
+```meson
 your_plugin_lib = shared_library(
     'YOUR_PLUGIN',
     your_sources,
@@ -305,17 +248,11 @@ RUN cd /usr/local/src && \
 
 #### 4. Plugin Documentation
 
-Your plugin's README.md must include:
-
-- **Overview**: Basic functionality description
-- **Dependencies**: List all external requirements
-- **Build Instructions**: How to build with/without the plugin
-- **API Reference**: Key classes and functions
-- **Example Usage**: Simple, working example
+Every new backend plugin must include a `README.md` following the required sections in [docs/BackendGuide.md](docs/BackendGuide.md#plugin-documentation).
 
 ### Plugin Testing
 
-1. **Unit tests**: Test individual components in `test/gtest/unit/plugins/your_plugin/`
+1. **Unit tests**: Test individual components in `test/gtest/unit/your_plugin/`
 2. **Integration tests**: Test plugin with NIXL framework
 3. **Example validation**: Ensure examples compile and run
 
@@ -350,47 +287,7 @@ TEST(YourPlugin, HandlesInvalidInput) {
 
 ### Code Documentation
 
-Document public APIs and complex implementations:
-
-```cpp
-/**
- * Brief description of the function
- *
- * Detailed explanation if needed
- *
- * @param param1 Description of parameter
- * @return Description of return value
- */
-```
-
-### Python Docstrings
-
-Document public Python modules, classes, methods, and functions according to
-[PEP 257](https://peps.python.org/pep-0257/) and use
-[Google-style docstrings](https://google.github.io/styleguide/pyguide.html#38-comments-and-docstrings)
-for structured sections. The docstring must be the first statement in the documented object.
-
-Start with a concise summary and add the standard `Args:`, `Returns:`, `Raises:`,
-`Examples:`, and `Notes:` sections when applicable. Keep types and defaults in the
-Python signature rather than duplicating them in parameter descriptions. This format is
-readable through Python's built-in help system and can be consumed by API documentation
-generators.
-
-```python
-def connect(host: str, timeout_s: float = 10.0) -> Connection:
-    """Connect to a remote agent.
-
-    Args:
-        host: Hostname or address of the remote agent.
-        timeout_s: Maximum time to wait for the connection.
-
-    Returns:
-        The established connection.
-
-    Raises:
-        ConnectionError: If the remote agent cannot be reached.
-    """
-```
+Document code as [docs/CodeStyle.md](docs/CodeStyle.md) describes.
 
 ### PR Documentation
 
