@@ -186,18 +186,20 @@ config::dumped_values_t
 config::dumpValues(const ucp_config_t &config) {
     char *buf = nullptr;
     size_t size = 0;
-    FILE *stream = open_memstream(&buf, &size);
-    if (stream == nullptr) {
-        NIXL_PDEBUG << "Failed to open a memory stream for the UCX config";
-        return {};
+    {
+        const std::unique_ptr<FILE, decltype(&fclose)> stream(open_memstream(&buf, &size), &fclose);
+        if (!stream) {
+            NIXL_PDEBUG << "Failed to open a memory stream for the UCX config";
+            return {};
+        }
+
+        ucp_config_print(&config,
+                         stream.get(),
+                         nullptr,
+                         static_cast<ucs_config_print_flags_t>(UCS_CONFIG_PRINT_CONFIG |
+                                                               UCS_CONFIG_PRINT_COMMENT_DEFAULT));
     }
 
-    ucp_config_print(&config,
-                     stream,
-                     nullptr,
-                     static_cast<ucs_config_print_flags_t>(UCS_CONFIG_PRINT_CONFIG |
-                                                           UCS_CONFIG_PRINT_COMMENT_DEFAULT));
-    fclose(stream);
     const std::unique_ptr<char, decltype(&free)> buf_guard(buf, &free);
 
     // The lines are "UCX_<key>=<value>", commented out by "# " for a default value
