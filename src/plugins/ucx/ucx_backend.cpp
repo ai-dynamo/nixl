@@ -26,10 +26,10 @@
 #include "common/backend.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
-#include "tracing/backend_trace.h"
+#include "tracing/api/phase_sink.h"
 
 #include <array>
-#include <bit>
+#include <cstddef>
 #include <cstdint>
 #include <optional>
 #include <string.h>
@@ -384,34 +384,6 @@ nixlUcxEngine::getWorkerIdFromOptArgs(const nixl_opt_b_args_t &opt_args) const n
     }
 }
 
-namespace {
-
-[[nodiscard]] std::optional<nixl::trace::TraceContext>
-sampledTraceContext(const nixlBackendTraceSink *sink, const nixl_opt_b_args_t *opt_args) noexcept {
-    if ((sink == nullptr) || (opt_args == nullptr) || (opt_args->traceContext == nullptr) ||
-        !opt_args->traceContext->sampled()) {
-        return std::nullopt;
-    }
-    return *opt_args->traceContext;
-}
-
-void
-recordPhase(nixlBackendTraceSink *sink,
-            nixl_trace_phase_t phase,
-            const nixlUcxBackendReqH &handle) noexcept {
-    if ((sink != nullptr) && handle.traceContext) {
-        sink->recordPhase(phase,
-                          {},
-                          nixlTime::getUs(),
-                          {},
-                          &*handle.traceContext,
-                          handle.traceRequestId,
-                          handle.traceExecution);
-    }
-}
-
-} // namespace
-
 nixl_status_t nixlUcxEngine::prepXfer (const nixl_xfer_op_t &operation,
                                        const nixl_meta_dlist_t &local,
                                        const nixl_meta_dlist_t &remote,
@@ -518,8 +490,9 @@ nixlUcxEngine::sendXferSgl(nixlBackendReqH *handle) const {
     int_handle->init(conn, *ep);
 
     nixlUcxReq req;
-    const nixl_status_t post_ret = sgl.post(*ep, req);
-    if (int_handle->append(post_ret, req) != NIXL_SUCCESS) {
+    ucs_status_t failure = UCS_OK;
+    const nixl_status_t post_ret = sgl.post(*ep, req, &failure);
+    if (int_handle->append(post_ret, req, failure) != NIXL_SUCCESS) {
         return post_ret;
     }
 
@@ -558,6 +531,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
     nixl_status_t status = NIXL_SUCCESS;
     nixlUcxReq pending_req = nullptr;
+    ucs_status_t failure = UCS_OK;
 
     for (size_t i = start_idx; i < end_idx; ++i) {
         void *laddr = (void *)local[i].addr;
@@ -571,8 +545,8 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
 
         nixlUcxReq req;
         const nixl_status_t ret = operation == NIXL_READ ?
-            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req) :
-            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req);
+            ep->read(raddr, rmd->getRkey(worker_id), laddr, lmd->mem, lsize, req, &failure) :
+            ep->write(laddr, lmd->mem, raddr, rmd->getRkey(worker_id), lsize, req, &failure);
 
         if (ret == NIXL_IN_PROG) {
             if (pending_req != nullptr) [[likely]] {
@@ -593,7 +567,7 @@ nixlUcxEngine::sendXferRange(const nixl_xfer_op_t &operation,
         status = NIXL_IN_PROG;
     }
 
-    if (int_handle->append(status, pending_req) != NIXL_SUCCESS) {
+    if (int_handle->append(status, pending_req, failure) != NIXL_SUCCESS) {
         return status;
     }
 
@@ -622,10 +596,11 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    int_handle->traceContext = sampledTraceContext(traceSink_, opt_args);
-    int_handle->traceRequestId = int_handle->traceContext ? opt_args->traceRequestId : 0;
-    int_handle->traceExecution = int_handle->traceContext ? opt_args->traceExecution : 0;
-    recordPhase(traceSink_, nixl_trace_phase_t::SUBMIT, *int_handle);
+    int_handle->trace.begin(traceSink_,
+                            operation,
+                            int_handle->isComposite() ? nixl_trace_completion_t::LAST_PART :
+                                hasProgressThread()   ? nixl_trace_completion_t::CALLBACK :
+                                                        nixl_trace_completion_t::POLLED);
 
     // TODO: assert that handle is empty/completed, as we can't post request before completion
 
@@ -633,10 +608,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
     // Revisit with the serdes optimization and UCX memory pool for notifications.
     std::string notif;
     if (opt_args && opt_args->hasNotif) {
-        notif = buildNotif(opt_args->notifMsg,
-                           opt_args->traceContext,
-                           int_handle->traceRequestId,
-                           int_handle->traceExecution);
+        notif = buildNotif(opt_args->notifMsg, int_handle->trace.post());
     }
     int_handle->setNotif(std::move(notif));
 
@@ -645,7 +617,7 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
         return ret;
     }
 
-    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
+    int_handle->trace.submitted();
     return int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
 }
 
@@ -686,91 +658,45 @@ nixlUcxEngine::progressLoop() {
  * Notifications
 *****************************************/
 
-namespace {
-
-static_assert(std::endian::native == std::endian::little);
-
-struct requestTag {
-    std::uint64_t requestId;
-    std::uint64_t execution;
-};
-
-void
-addRequestTag(nixlSerDes &ser_des, std::uint64_t request_id, std::uint64_t execution) {
-    const requestTag tag{request_id, execution};
-    ser_des.addBuf("treq", &tag, sizeof(tag));
-}
-
-void
-readRequestTag(nixlSerDes &ser_des, nixl::ucx::notifMessage &notif) {
-    requestTag tag;
-    if ((ser_des.peekBufLen("treq") == sizeof(tag)) &&
-        (ser_des.getBuf("treq", &tag, sizeof(tag)) == NIXL_SUCCESS) && (tag.requestId != 0)) {
-        notif.traceRequestId = tag.requestId;
-        notif.traceExecution = tag.execution;
-    }
-}
-
-} // namespace
-
 std::string
 nixl::ucx::serializeNotif(const std::string &agent,
                           const std::string &msg,
-                          const nixl::trace::TraceContext *trace_context,
-                          std::uint64_t request_id,
-                          std::uint64_t execution) {
+                          const nixlBackendPostTrace &trace) {
+    constexpr size_t notif_overhead = 128;
     nixlSerDes ser_des;
 
+    ser_des.reserve(agent.size() + msg.size() + trace.baggage().size() + notif_overhead);
     ser_des.addStr("name", agent);
     ser_des.addStr("msg", msg);
-    if ((trace_context != nullptr) && trace_context->sampled()) {
-        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
-        if (const auto size = nixl::trace::encodeTraceContext(*trace_context, record)) {
-            ser_des.addBuf("tctx", record.data(), *size);
-            if (request_id != 0) {
-                addRequestTag(ser_des, request_id, execution);
-            }
-        }
-    }
+    nixl::trace::addTraceTags(ser_des, trace);
     return std::move(ser_des).exportMoveStr();
 }
 
 nixl::ucx::notifMessage
-nixl::ucx::deserializeNotif(const std::string &buffer, bool with_trace_context) {
+nixl::ucx::deserializeNotif(const std::string &buffer, nixlBackendTraceSink *sink) {
     nixlSerDes ser_des;
     ser_des.importStr(buffer);
 
     notifMessage notif;
     notif.agent = ser_des.getStr("name");
     notif.msg = ser_des.getStr("msg");
-    if (with_trace_context && (ser_des.peekBufLen("tctx") == nixl::trace::traceContextWireSize)) {
-        std::array<std::uint8_t, nixl::trace::traceContextWireSize> record;
-        nixl::trace::TraceContext context;
-        if ((ser_des.getBuf("tctx", record.data(), record.size()) == NIXL_SUCCESS) &&
-            (nixl::trace::decodeTraceContext(record, context) ==
-             nixl::trace::WireDecodeResult::Ok)) {
-            notif.traceContext = context;
-            readRequestTag(ser_des, notif);
-        }
-    }
+    notif.trace = nixlBackendNotifTrace{ser_des, sink};
     return notif;
 }
 
 std::string
-nixlUcxEngine::buildNotif(const std::string &msg,
-                          const nixl::trace::TraceContext *trace_context,
-                          std::uint64_t request_id,
-                          std::uint64_t execution) const {
+nixlUcxEngine::buildNotif(const std::string &msg, const nixlBackendPostTrace &trace) const {
     // TODO: replace with mpool for performance
-    return nixl::ucx::serializeNotif(localAgent, msg, trace_context, request_id, execution);
+    return nixl::ucx::serializeNotif(localAgent, msg, trace);
 }
 
 nixl_status_t
 nixlUcxEngine::notifSendPriv(const std::string &remote_agent,
                              const std::string &msg,
                              const nixlUcxEp &ep) const {
-    return ep.sendAm(
-        nixl::ucx::am_cb_op_t::NOTIF_STR, buildNotif(msg, nullptr), UCP_AM_SEND_FLAG_EAGER);
+    return ep.sendAm(nixl::ucx::am_cb_op_t::NOTIF_STR,
+                     buildNotif(msg, nixlBackendPostTrace{traceSink_}),
+                     UCP_AM_SEND_FLAG_EAGER);
 }
 
 ucx_connection_ptr_t
@@ -798,18 +724,8 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
     NIXL_ASSERT(!(param->recv_attr & UCP_AM_RECV_ATTR_FLAG_RNDV));
     NIXL_ASSERT(header_length == 0) << "header_length " << header_length;
 
-    nixl::ucx::notifMessage notif =
-        nixl::ucx::deserializeNotif(ser_str, engine->traceSink_ != nullptr);
-    if ((engine->traceSink_ != nullptr) && notif.traceContext && notif.traceContext->sampled()) {
-        const std::array attrs{nixlBackendTraceAttr{"nixl.remote_agent", notif.agent}};
-        engine->traceSink_->recordPhase(nixl_trace_phase_t::NOTIF_RECEIVED,
-                                        {},
-                                        nixlTime::getUs(),
-                                        attrs,
-                                        &*notif.traceContext,
-                                        notif.traceRequestId,
-                                        notif.traceExecution);
-    }
+    nixl::ucx::notifMessage notif = nixl::ucx::deserializeNotif(ser_str, engine->traceSink_);
+    notif.trace.recordReceived(notif.agent);
 
     engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
     return UCS_OK;

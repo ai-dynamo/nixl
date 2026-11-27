@@ -54,6 +54,9 @@ public:
     nixl_status_t getBuf(const std::string &tag, void *buf, ssize_t len);
 
     /* Ser/Des buffer management */
+    void
+    reserve(size_t size);
+
     std::string
     exportStr() const;
 

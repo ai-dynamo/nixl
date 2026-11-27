@@ -62,10 +62,14 @@ class nixlUcxEp {
 private:
     ucp_ep_h eph_{nullptr};
     std::atomic<nixl::ucx::ep_state_t> state_{nixl::ucx::ep_state_t::CONNECTED};
+    std::atomic<ucs_status_t> failure_{UCS_OK};
     const uint32_t closeFlags_;
 
     nixl_status_t
     disconnect();
+
+    [[nodiscard]] nixl_status_t
+    refused(nixl_status_t status, ucs_status_t *failure) const noexcept;
 
     static void
     sendAmCallback(void *request, ucs_status_t status, void *user_data);
@@ -97,7 +101,8 @@ public:
     sendAm(nixl::ucx::am_cb_op_t msg_id,
            std::string &&payload,
            uint32_t flags,
-           std::shared_ptr<nixl::ucx::amSendStatus> send_status = nullptr) const;
+           std::shared_ptr<nixl::ucx::amSendStatus> send_status = nullptr,
+           ucs_status_t *failure = nullptr) const;
 
     /* Data access */
     [[nodiscard]] nixl_status_t
@@ -106,14 +111,16 @@ public:
          void *laddr,
          nixlUcxMem &mem,
          size_t size,
-         nixlUcxReq &req);
+         nixlUcxReq &req,
+         ucs_status_t *failure = nullptr);
     [[nodiscard]] nixl_status_t
     write(void *laddr,
           const nixlUcxMem &mem,
           uint64_t raddr,
           const nixl::ucx::rkey &rkey,
           size_t size,
-          nixlUcxReq &req);
+          nixlUcxReq &req,
+          ucs_status_t *failure = nullptr);
     [[nodiscard]] nixl_status_t
     atomicAdd(uint64_t value, uint64_t raddr, const nixl::ucx::rkey &rkey, nixlUcxReq &req) const;
     nixl_status_t
@@ -124,7 +131,8 @@ public:
     nixl_status_t
     flushEp(nixlUcxReq &req,
             ucp_send_nbx_callback_t cb = nullptr,
-            void *user_data = nullptr) const noexcept;
+            void *user_data = nullptr,
+            ucs_status_t *failure = nullptr) const noexcept;
 
 #ifdef HAVE_UCX_SGL_API
     /* Scatter-gather list (SGL) operations */
@@ -132,7 +140,8 @@ public:
     postSgl(const ucp_dt_local_sgl_t &local,
             const ucp_dt_remote_sgl_t &remote,
             size_t count,
-            nixlUcxReq &req);
+            nixlUcxReq &req,
+            ucs_status_t *failure = nullptr);
 #endif
 
     [[nodiscard]] ucp_ep_h

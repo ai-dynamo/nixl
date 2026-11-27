@@ -16,6 +16,7 @@
  */
 
 #include "ucx_utils.h"
+#include "tracing/api/phase_sink.h"
 
 #include <algorithm>
 #include <array>
@@ -137,6 +138,24 @@ err_cb_wrapper(void *arg, ucp_ep_h ucp_ep, ucs_status_t status) {
     ep->err_cb(ucp_ep, status);
 }
 
+namespace {
+[[nodiscard]] nixl_status_t
+failedImmediately(ucs_status_t status, ucs_status_t *failure) noexcept {
+    if (failure != nullptr) {
+        *failure = status;
+    }
+    return nixl::ucx::ucsToNixlStatus(status);
+}
+} // namespace
+
+nixl_status_t
+nixlUcxEp::refused(nixl_status_t status, ucs_status_t *failure) const noexcept {
+    if (failure != nullptr) {
+        *failure = failure_.load(std::memory_order_relaxed);
+    }
+    return status;
+}
+
 void
 nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
     const auto current_state = state_.load(std::memory_order_relaxed);
@@ -146,6 +165,7 @@ nixlUcxEp::err_cb(ucp_ep_h ucp_ep, ucs_status_t status) {
                << ucs_status_string(status) << ")";
 
     NIXL_ASSERT(eph_ == ucp_ep);
+    failure_.store(status, std::memory_order_relaxed);
     state_ = nixl::ucx::ep_state_t::FAILED;
 }
 
@@ -248,12 +268,13 @@ nixl_status_t
 nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
                   std::string &&payload,
                   uint32_t flags,
-                  std::shared_ptr<nixl::ucx::amSendStatus> send_status) const {
+                  std::shared_ptr<nixl::ucx::amSendStatus> send_status,
+                  ucs_status_t *failure) const {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
         // The endpoint is already in a failed state (e.g. the peer disconnected),
         // so no request will be issued.
-        return status;
+        return refused(status, failure);
     }
 
     auto ctx = std::make_unique<amSendCtx>(amSendCtx{std::move(payload), std::move(send_status)});
@@ -274,7 +295,8 @@ nixlUcxEp::sendAm(nixl::ucx::am_cb_op_t msg_id,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request), failure) :
+                                     NIXL_SUCCESS;
 }
 
 /* ===========================================
@@ -287,10 +309,11 @@ nixlUcxEp::read(uint64_t raddr,
                 void *laddr,
                 nixlUcxMem &mem,
                 size_t size,
-                nixlUcxReq &req) {
+                nixlUcxReq &req,
+                ucs_status_t *failure) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
-        return status;
+        return refused(status, failure);
     }
 
     ucp_request_param_t param;
@@ -303,7 +326,8 @@ nixlUcxEp::read(uint64_t raddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request), failure) :
+                                     NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -312,10 +336,11 @@ nixlUcxEp::write(void *laddr,
                  uint64_t raddr,
                  const nixl::ucx::rkey &rkey,
                  size_t size,
-                 nixlUcxReq &req) {
+                 nixlUcxReq &req,
+                 ucs_status_t *failure) {
     nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) [[unlikely]] {
-        return status;
+        return refused(status, failure);
     }
 
     ucp_request_param_t param;
@@ -328,7 +353,8 @@ nixlUcxEp::write(void *laddr,
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request), failure) :
+                                     NIXL_SUCCESS;
 }
 
 nixl_status_t
@@ -385,7 +411,10 @@ nixlUcxEp::estimateCost(size_t size,
 }
 
 nixl_status_t
-nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data) const noexcept {
+nixlUcxEp::flushEp(nixlUcxReq &req,
+                   ucp_send_nbx_callback_t cb,
+                   void *user_data,
+                   ucs_status_t *failure) const noexcept {
     ucp_request_param_t param;
     ucs_status_ptr_t request;
 
@@ -402,7 +431,8 @@ nixlUcxEp::flushEp(nixlUcxReq &req, ucp_send_nbx_callback_t cb, void *user_data)
         return NIXL_IN_PROG;
     }
 
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request), failure) :
+                                     NIXL_SUCCESS;
 }
 
 #ifdef HAVE_UCX_SGL_API
@@ -410,10 +440,11 @@ nixl_status_t
 nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
                    const ucp_dt_remote_sgl_t &remote,
                    size_t count,
-                   nixlUcxReq &req) {
+                   nixlUcxReq &req,
+                   ucs_status_t *failure) {
     const nixl_status_t status = checkTxState();
     if (status != NIXL_SUCCESS) {
-        return status;
+        return refused(status, failure);
     }
 
     const ucp_request_param_t param = {
@@ -433,7 +464,8 @@ nixlUcxEp::postSgl(const ucp_dt_local_sgl_t &local,
     }
 
     req = nullptr;
-    return nixl::ucx::ucsToNixlStatus(UCS_PTR_STATUS(request));
+    return UCS_PTR_IS_ERR(request) ? failedImmediately(UCS_PTR_STATUS(request), failure) :
+                                     NIXL_SUCCESS;
 }
 #endif
 
@@ -936,7 +968,7 @@ nixlUcxWorker::test(nixlUcxReq req) {
     if (req == nullptr) {
         return NIXL_SUCCESS;
     }
-    ucp_worker_progress(worker.get());
+    progress();
     return nixl::ucx::ucsToNixlStatus(ucp_request_check_status(req));
 }
 

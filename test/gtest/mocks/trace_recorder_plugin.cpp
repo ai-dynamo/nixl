@@ -14,11 +14,13 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-#include "tracing/trace_plugin.h"
+#include "tracing/api/trace_plugin.h"
+#include "tracing/core/trace_context.h"
 
 #include <fcntl.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdlib>
 #include <memory>
@@ -43,6 +45,17 @@ contextStack() noexcept {
     return stack;
 }
 
+[[nodiscard]] std::string
+hexOf(std::span<const std::uint8_t> bytes) {
+    static constexpr char digits[] = "0123456789abcdef";
+    std::string text;
+    for (const std::uint8_t byte : bytes) {
+        text += digits[byte >> 4];
+        text += digits[byte & 0x0f];
+    }
+    return text;
+}
+
 void
 addAttributes(nixl::trace::SpanBackend &record, std::span<const nixl::trace::Attribute> attrs) {
     for (const nixl::trace::Attribute &attr : attrs) {
@@ -60,28 +73,17 @@ public:
     }
 
     void
-    addAttribute(std::string_view key, std::string_view value) override {
-        line_.append(" ").append(key).append("=").append(value);
+    addAttribute(nixl::trace::AttributeKey key, std::string_view value) override {
+        line_.append(" ").append(nixl::trace::toStringView(key)).append("=").append(value);
     }
 
     void
-    addAttribute(std::string_view key, std::int64_t value) override {
+    addAttribute(nixl::trace::AttributeKey key, std::int64_t value) override {
         addAttribute(key, std::to_string(value));
     }
 
     void
-    addAttribute(std::string_view, double) override {}
-
-    void
-    addCtrlDep(nixl::trace::SpanId) override {}
-
-    void
-    addDataDep(nixl::trace::SpanId) override {}
-
-    [[nodiscard]] nixl::trace::SpanId
-    id() const noexcept override {
-        return {};
-    }
+    addAttribute(nixl::trace::AttributeKey, double) override {}
 
 private:
     const int fd_;
@@ -99,54 +101,64 @@ public:
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginSpan(std::string_view name, nixl::trace::Kind) override {
+    beginSpan(nixl::trace::Name name, nixl::trace::Kind) override {
         const auto &stack = contextStack();
         const pushedScope top = stack.empty() ? pushedScope{} : stack.back();
-        return std::make_unique<recordingSpan>(fd_, lineFor(name, top.context, top.requestId));
+        return std::make_unique<recordingSpan>(fd_,
+                                               lineFor(name.view(), top.context, top.requestId));
     }
 
     [[nodiscard]] std::unique_ptr<nixl::trace::SpanBackend>
-    beginContextSpan(std::string_view name,
+    beginContextSpan(nixl::trace::Name name,
                      nixl::trace::Kind,
-                     const nixl::trace::TraceContext &context,
-                     std::uint64_t request_id) override {
-        return std::make_unique<recordingSpan>(fd_, lineFor(name, context, request_id, "span"));
+                     const nixl::trace::TraceIdentity &identity) override {
+        return std::make_unique<recordingSpan>(
+            fd_, lineFor(name.view(), identity.context, *identity.requestId, "span"));
     }
 
     void
-    mark(std::string_view name, nixl::trace::Kind kind) override {
-        static_cast<void>(beginSpan(name, kind));
-    }
-
-    void
-    emitSpan(std::string_view name,
+    emitSpan(nixl::trace::Name name,
              nixl::trace::Kind,
-             const nixl::trace::TraceContext &context,
-             std::uint64_t request_id,
+             const nixl::trace::TraceIdentity &identity,
              nixlTime::us_t start,
              nixlTime::us_t end,
              std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan span(fd_,
-                           lineFor(name, context, request_id) + " start_us=" +
-                               std::to_string(start) + " end_us=" + std::to_string(end));
+                           lineFor(name.view(), identity.context, *identity.requestId) +
+                               " start_us=" + std::to_string(start) +
+                               " end_us=" + std::to_string(end));
         addAttributes(span, attrs);
     }
 
     void
-    emitEvent(std::string_view name,
+    emitContextSpan(nixl::trace::Name name,
+                    nixl::trace::Kind,
+                    const nixl::trace::TraceIdentity &identity,
+                    nixlTime::us_t start,
+                    nixlTime::us_t end,
+                    std::span<const nixl::trace::Attribute> attrs) override {
+        recordingSpan span(fd_,
+                           lineFor(name.view(), identity.context, *identity.requestId, "span") +
+                               " start_us=" + std::to_string(start) +
+                               " end_us=" + std::to_string(end));
+        addAttributes(span, attrs);
+    }
+
+    void
+    emitEvent(nixl::trace::Name name,
               nixl::trace::Kind,
-              const nixl::trace::TraceContext &context,
-              std::uint64_t request_id,
+              const nixl::trace::TraceIdentity &identity,
               nixlTime::us_t at,
               std::span<const nixl::trace::Attribute> attrs) override {
         recordingSpan event(fd_,
-                            lineFor(name, context, request_id) + " at_us=" + std::to_string(at));
+                            lineFor(name.view(), identity.context, *identity.requestId) +
+                                " at_us=" + std::to_string(at));
         addAttributes(event, attrs);
     }
 
     void
-    pushContext(const nixl::trace::TraceContext &context, std::uint64_t request_id) override {
-        contextStack().push_back({context, request_id});
+    pushContext(const nixl::trace::TraceIdentity &identity) override {
+        contextStack().push_back({identity.context, *identity.requestId});
     }
 
     void
@@ -173,6 +185,11 @@ private:
         }
         if (context.valid()) {
             line += " " + std::string(context_key) + "=" + nixl::trace::formatTraceparent(context);
+            if ((context_key == "span") &&
+                std::ranges::any_of(*context.parentSpanId,
+                                    [](std::uint8_t byte) { return byte != 0; })) {
+                line += " parent=" + hexOf(*context.parentSpanId);
+            }
         }
         return line;
     }

@@ -21,9 +21,12 @@
 #include "common/backend.h"
 #include "common/blocking_queue.h"
 #include "common/nixl_log.h"
+#include "common/nixl_time.h"
+#include "tracing/api/phase_sink.h"
 
 #include <algorithm>
 #include <atomic>
+#include <cstdint>
 #include <exception>
 #include <latch>
 #include <ostream>
@@ -31,6 +34,7 @@
 
 #include "absl/container/inlined_vector.h"
 
+#include "ucx_split_failure.h"
 #include "ucx_utils.h"
 
 namespace {
@@ -144,6 +148,12 @@ public:
     }
 
 private:
+    void
+    publishFailure(nixl_status_t status, ucs_status_t failure) noexcept;
+
+    [[nodiscard]] bool
+    canRetire(ucs_status_t failure) noexcept;
+
     std::shared_ptr<nixlUcxBackendSharedState> sharedState_;
 };
 
@@ -155,8 +165,10 @@ private:
 struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
+    nixlUcxSplitFailure failure;
     std::string notif;
     std::vector<nixlUcxChunkBackendReqH> chunks;
+    nixlBackendPostPhases trace;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
         : status(NIXL_SUCCESS),
@@ -171,16 +183,31 @@ struct nixlUcxBackendSharedState {
 };
 
 void
+nixlUcxChunkBackendReqH::publishFailure(const nixl_status_t status,
+                                        const ucs_status_t failure) noexcept {
+    if (sharedState_->failure.publish(status, failure)) {
+        sharedState_->status.store(status);
+    }
+}
+
+void
 nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
     NIXL_ASSERT(sharedState_.get() != nullptr);
     if (status != NIXL_SUCCESS) {
+        const ucs_status_t failure = takeFailure();
         nixlUcxBackendReqH::release();
-        sharedState_->status.store(status);
+        publishFailure(status, failure);
     }
     sharedState_->pendingReqs.fetch_sub(1);
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
     sharedState_.reset();
+}
+
+bool
+nixlUcxChunkBackendReqH::canRetire(const ucs_status_t failure) noexcept {
+    return (this != &sharedState_->chunks.front()) ||
+        sharedState_->failure.observe(failure, sharedState_->trace);
 }
 
 nixl_status_t
@@ -190,20 +217,36 @@ nixlUcxChunkBackendReqH::status() {
     // First check if entire request was cancelled or failed
     const nixl_status_t status = sharedState_->status.load();
     if (status != NIXL_SUCCESS) {
-        return status;
+        return canRetire(sharedState_->failure.native()) ? status : NIXL_IN_PROG;
     }
 
     const nixl_status_t ret = nixlUcxBackendReqH::status();
+    if (ret < 0) {
+        if (canRetire(failure())) {
+            return ret;
+        }
+        publishFailure(ret, failure());
+        return NIXL_IN_PROG;
+    }
     if ((ret != NIXL_SUCCESS) || (this != &sharedState_->chunks.front()) ||
-        sharedState_->notif.empty()) {
+        (sharedState_->notif.empty() && !sharedState_->trace.active())) {
         return ret;
     }
 
-    if (last) {
-        setNotif(std::exchange(sharedState_->notif, {}));
-        sendNotif();
+    if (!last) {
+        return NIXL_IN_PROG;
     }
 
+    trace = std::exchange(sharedState_->trace, {});
+    if (trace.active()) {
+        trace.completed(NIXL_SUCCESS);
+    }
+    if (sharedState_->notif.empty()) {
+        return NIXL_SUCCESS;
+    }
+
+    setNotif(std::exchange(sharedState_->notif, {}));
+    sendNotif();
     return NIXL_IN_PROG;
 }
 
@@ -228,6 +271,8 @@ public:
     startXfer() {
         NIXL_ASSERT(sharedState_->pendingReqs.load() == 0);
         sharedState_->status.store(NIXL_SUCCESS);
+        sharedState_->failure.reset();
+        sharedState_->trace = trace;
         sharedState_->pendingReqs.store(getNumChunks());
     }
 
@@ -239,9 +284,25 @@ public:
         return chunk;
     }
 
+    void
+    finishSubmission(nixl_status_t status) noexcept {
+        if (trace.active()) {
+            sharedState_->failure.finishSubmission(status);
+        }
+    }
+
     [[nodiscard]] bool
     isComposite() const noexcept override {
         return true;
+    }
+
+    [[nodiscard]] nixl_status_t
+    submissionStatus(nixl_status_t fanout) noexcept {
+        const nixl_status_t ret = sharedState_->failure.submissionStatus(fanout);
+        if (ret != NIXL_SUCCESS) {
+            noteFailure(sharedState_->failure.native());
+        }
+        return ret;
     }
 
     void
@@ -270,7 +331,11 @@ public:
             return NIXL_IN_PROG;
         }
 
-        return sharedState_->status.load();
+        const nixl_status_t ret = sharedState_->status.load();
+        if (ret != NIXL_SUCCESS) {
+            noteFailure(sharedState_->failure.native());
+        }
+        return ret;
     }
 
     friend std::ostream &
@@ -502,5 +567,6 @@ nixlUcxThreadPoolEngine::sendXferRange(const nixl_xfer_op_t &operation,
     });
 
     NIXL_TRACE << "sent " << *comp_handle << " with status: " << status;
-    return status;
+    comp_handle->finishSubmission(status);
+    return comp_handle->submissionStatus(status);
 }
