@@ -509,7 +509,11 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
 
     ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
-    std::this_thread::sleep_for(std::chrono::seconds(7)); // Must exceed timeout to catch logs.
+    auto start_time = std::chrono::steady_clock::now();
+    while (lig.getIgnoredCount() == 0 &&
+           (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(10))) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
 
     EXPECT_GE(lig.getIgnoredCount(), 1);
 
