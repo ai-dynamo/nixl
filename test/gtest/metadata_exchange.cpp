@@ -514,9 +514,13 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
            (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(10))) {
         std::this_thread::sleep_for(std::chrono::milliseconds(100));
     }
-
     EXPECT_GE(lig.getIgnoredCount(), 1);
 
+    start_time = std::chrono::steady_clock::now();
+    while (dst.agent->checkRemoteMD(src.name, {DRAM_SEG}) != NIXL_ERR_NOT_FOUND &&
+           (std::chrono::steady_clock::now() - start_time < std::chrono::seconds(10))) {
+        std::this_thread::sleep_for(std::chrono::milliseconds(100));
+    }
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
 
     // Stop the agent explicitly to ignore the retry connection failure logs.

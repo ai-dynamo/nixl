@@ -22,6 +22,7 @@
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <chrono>
 #include <cstddef>
 #include <cstdint>
@@ -48,6 +49,7 @@ constexpr auto receive_timeout = std::chrono::seconds(5);
 
 constexpr auto connection_retry_interval = std::chrono::seconds(1);
 constexpr auto max_connection_retry_count = 10;
+constexpr auto min_accept_retry_delay = std::chrono::microseconds(50000); // 50ms
 
 constexpr auto module_prefix = "[P2P Metadata Backend]";
 } // namespace
@@ -539,7 +541,7 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx,
       ioContext_(io_context),
       acceptor_(io_context),
       acceptRetryTimer_(io_context),
-      acceptRetryInterval_(config.workerDelay) {
+      acceptRetryInterval_(std::max(config.workerDelay, min_accept_retry_delay)) {
     if (config.useListenThread) {
         try {
             bindListener(asio::ip::tcp::endpoint(asio::ip::tcp::v6(), config.listenPort));
