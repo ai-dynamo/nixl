@@ -134,7 +134,7 @@ ARG ARCH="x86_64"
 ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
-ARG UCX_REF="v1.23.x"
+ARG UCX_REF="v1.24.x"
 ARG UCX_SONAME_SUFFIX=""
 ARG BUILD_NIXL_EP="true"
 ARG RDMA_CORE_PREFIX="/usr"
@@ -565,5 +565,5 @@ RUN cd src/bindings/rust && cargo build --release --locked
 # torch - works on any base, no dependency on public torch wheels.
 # Redistributable wheels are produced by the wheel CI pipelines, not here.
 RUN ./contrib/tomlutil.py --wheel-name nixl-cu13 pyproject.toml && \
-    uv pip install --system --no-build-isolation . && \
+    uv pip install --system --no-build-isolation -Csetup-args=-Dbuild_nixl_ep="$BUILD_NIXL_EP" . && \
     uv pip install --system build/src/bindings/python/nixl-meta/nixl-*.whl

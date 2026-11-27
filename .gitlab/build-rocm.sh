@@ -389,7 +389,7 @@ if [ -n "$PRE_INSTALLED_UCX_ENV" ]; then
 else
     # UCCL is skipped if no Nvidia GPU is present.
     # Skipping steps entirely for ROCm.
-    UCX_VERSION=${UCX_VERSION:-v1.23.x}
+    UCX_VERSION=${UCX_VERSION:-v1.24.x}
     git clone --depth 1 --branch "${UCX_VERSION}" https://github.com/openucx/ucx.git ${TMPDIR}/ucx
     ( \
         cd ${TMPDIR}/ucx && \
@@ -427,12 +427,12 @@ else
     # This image is CUDA-free. Restrict building to plugins that do not require cuFile.
     # POSIX alone is enough to produce libnixl and nixlbench.
     NIXL_ENABLE_PLUGINS="${NIXL_ENABLE_PLUGINS:-POSIX}"
+    # wheel_variant unset: meson derives rocm<X>_<Y> from the ROCm install.
     # shellcheck disable=SC2086
     meson setup \
         ${NIXL_BUILD_DIR} \
         --prefix=${INSTALL_DIR} \
         -Ducx_path=${UCX_INSTALL_DIR} \
-        -Dwheel_variant=rocm \
         -Dbuild_docs=false \
         -Drust=false \
         ${EXTRA_BUILD_ARGS} \

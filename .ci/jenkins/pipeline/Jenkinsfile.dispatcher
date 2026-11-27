@@ -281,6 +281,7 @@ def leafJobs = [
     'dl-gpu':          [job: 'nixl-ci-dl-gpu',             components: []],
     'dl-gpu-ep':       [job: 'nixl-ci-dl-gpu-ep',          components: []],
     'gpu-vr':          [job: 'nixl-ci-gpu-vr',             components: []],
+    'gpu-vr-ep':       [job: 'nixl-ci-gpu-vr-ep',          components: []],
     'wheel':           [job: 'nixl-ci-build-wheel',        components: []],
     'sanitizers':      [job: 'nixl-ci-test-sanitizers',    components: []],
     'build-container': [job: 'nixl-ci-build-container-pr', components: []],
