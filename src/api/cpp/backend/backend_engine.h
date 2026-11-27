@@ -36,6 +36,7 @@ enum class nixl_backend_capability_t : uint64_t {
     LOCAL = 1ULL << 1, // Transfers within a node
     NOTIF = 1ULL << 2, // Transfer notifications, getNotifs() and genNotif()
     TRACE_CONTEXT = 1ULL << 3, // Carries the trace context to the peer, in-tree plugins only
+    COMPLETION = 1ULL << 4, // Calls nixl_opt_b_args_t::callback when a posted request completes
 };
 
 [[nodiscard]] constexpr nixl_backend_capability_t
@@ -58,6 +59,8 @@ backendCapabilityStr(const nixl_backend_capability_t cap) noexcept {
         return "NOTIF";
     case nixl_backend_capability_t::TRACE_CONTEXT:
         return "TRACE_CONTEXT";
+    case nixl_backend_capability_t::COMPLETION:
+        return "COMPLETION";
     }
     return "UNKNOWN";
 }

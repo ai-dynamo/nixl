@@ -96,11 +96,13 @@ nixlUcxEngine::create(const nixlBackendInitParams &init_params) {
     return std::unique_ptr<nixlUcxEngine>(engine);
 }
 
-nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t num_dedicated_workers)
+nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params,
+                             size_t num_dedicated_workers,
+                             nixl_backend_capability_t extra_capabilities)
     : nixlBackendEngine(&init_params,
                         nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
                             nixl_backend_capability_t::NOTIF |
-                            nixl_backend_capability_t::TRACE_CONTEXT),
+                            nixl_backend_capability_t::TRACE_CONTEXT | extra_capabilities),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
@@ -639,14 +641,19 @@ nixlUcxEngine::postXfer(const nixl_xfer_op_t &operation,
                            int_handle->traceExecution);
     }
     int_handle->setNotif(std::move(notif));
+    int_handle->setCallback(opt_args ? opt_args->callback : nullptr);
 
     ret = sendXferRange(operation, local, remote, remote_agent, handle, 0, lcnt);
-    if (ret != NIXL_SUCCESS) {
-        return ret;
+    if (ret == NIXL_SUCCESS) {
+        recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
+        ret = int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
     }
 
-    recordPhase(traceSink_, nixl_trace_phase_t::WIRE_SUBMITTED, *int_handle);
-    return int_handle->hasPendingRequests() ? NIXL_IN_PROG : int_handle->status();
+    if (ret < 0) {
+        int_handle->setCallback(nullptr);
+    }
+
+    return ret;
 }
 
 nixl_status_t nixlUcxEngine::checkXfer (nixlBackendReqH* handle) const

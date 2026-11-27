@@ -26,6 +26,7 @@
 #include <atomic>
 #include <exception>
 #include <latch>
+#include <mutex>
 #include <ostream>
 #include <utility>
 
@@ -156,6 +157,8 @@ struct nixlUcxBackendSharedState {
     std::atomic<nixl_status_t> status;
     std::atomic<size_t> pendingReqs;
     std::string notif;
+    std::mutex callbackMutex;
+    nixlBackendReqCallback *callback = nullptr;
     std::vector<nixlUcxChunkBackendReqH> chunks;
 
     explicit nixlUcxBackendSharedState(size_t num_chunks)
@@ -177,7 +180,12 @@ nixlUcxChunkBackendReqH::complete(const nixl_status_t status) {
         nixlUcxBackendReqH::release();
         sharedState_->status.store(status);
     }
-    sharedState_->pendingReqs.fetch_sub(1);
+    if (sharedState_->pendingReqs.fetch_sub(1) == 1) {
+        const std::lock_guard lock(sharedState_->callbackMutex);
+        if (sharedState_->callback != nullptr) {
+            sharedState_->callback->completed(sharedState_->status.load());
+        }
+    }
     NIXL_TRACE << *this << " completed with status: " << status << ", " << *sharedState_;
     setWorker(nullptr);
     sharedState_.reset();
@@ -250,10 +258,17 @@ public:
     }
 
     void
+    setCallback(nixlBackendReqCallback *callback) override {
+        const std::lock_guard lock(sharedState_->callbackMutex);
+        sharedState_->callback = callback;
+    }
+
+    void
     release() override {
         NIXL_TRACE << *this << " releasing";
         nixlUcxBackendReqH::release();
         if (sharedState_) {
+            setCallback(nullptr);
             // Set failed status to stop progress chunks
             sharedState_->status.store(NIXL_ERR_NOT_FOUND);
             // Reset shared state - it will be effectively released when the last chunk
