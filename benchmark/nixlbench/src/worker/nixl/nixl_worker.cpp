@@ -711,6 +711,9 @@ getVramDescCuda(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_CUDA_ERROR(cudaMalloc(&addr, buffer_size), "Failed to allocate CUDA buffer");
     CHECK_CUDA_ERROR(cudaMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    // cudaMemset() of device memory is asynchronous with respect to the host: wait for it, so
+    // that a NIC or a drive that accesses this buffer directly does not race with the fill.
+    CHECK_CUDA_ERROR(cudaStreamSynchronize(0), "Failed to synchronize stream 0");
 
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
@@ -779,6 +782,8 @@ getVramDescCudaVmm(int devid, size_t buffer_size, uint8_t memset_value) {
     // Set memory content based on role
     CHECK_CUDA_DRIVER_ERROR(cuMemsetD8(addr, memset_value, buffer_size),
                             "Failed to set VMM device memory");
+    // cuMemsetD8() is asynchronous as well: wait for the fill, as getVramDescCuda() does.
+    CHECK_CUDA_DRIVER_ERROR(cuCtxSynchronize(), "Failed to synchronize the current context");
 
     return std::optional<xferBenchIOV>(
         std::in_place, (uintptr_t)addr, buffer_size, devid, padded_size, handle);
@@ -811,6 +816,9 @@ getVramDescRocm(int devid, size_t buffer_size, uint8_t memset_value) {
     void *addr;
     CHECK_HIP_ERROR(hipMalloc(&addr, buffer_size), "Failed to allocate ROCm buffer");
     CHECK_HIP_ERROR(hipMemset(addr, memset_value, buffer_size), "Failed to set device memory");
+    // hipMemset() of device memory is asynchronous with respect to the host: wait for it, so
+    // that a NIC or a drive that accesses this buffer directly does not race with the fill.
+    CHECK_HIP_ERROR(hipStreamSynchronize(nullptr), "Failed to synchronize the default stream");
     return std::optional<xferBenchIOV>(std::in_place, (uintptr_t)addr, buffer_size, devid);
 }
 
