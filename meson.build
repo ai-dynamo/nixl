@@ -475,15 +475,24 @@ if ucx_path != ''
   # Check if path is absolute
   if ucx_inc_path.startswith('/')
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct', '-lucm'],
       compile_args : ['-I' + ucx_inc_path])
   else
     ucx_dep = declare_dependency(
-      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct'],
+      link_args : ['-L' + ucx_lib_path, '-lucp', '-lucs', '-luct', '-lucm'],
       include_directories : include_directories(ucx_inc_path))
   endif
 else
   ucx_dep = dependency('ucx', modules: ['ucx::ucs', 'ucx::ucp', 'ucx::uct'], required: false)
+  if ucx_dep.found()
+    # The UCX CMake package does not export ucx::ucm, so find libucm separately,
+    # also in the UCX library directory, which may be outside of the default paths
+    ucx_libdir = ucx_dep.get_variable(pkgconfig: 'libdir', default_value: '')
+    ucm_dep = cpp.find_library('ucm',
+                               dirs: ucx_libdir != '' ? [ucx_libdir] : [],
+                               required: true)
+    ucx_dep = declare_dependency(dependencies: [ucx_dep, ucm_dep])
+  endif
 endif
 
 libfabric_path = get_option('libfabric_path')
