@@ -148,7 +148,8 @@ class nixl_completion_monitor:
     a handle.
 
     A monitor must be used by one thread only, which posts, waits for and releases
-    its transfers.
+    its transfers. It must stay alive until all its transfers are returned by a wait
+    or released.
 
     Args:
         agent: Agent that posts the transfers attached to this monitor.
