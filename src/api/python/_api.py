@@ -111,7 +111,7 @@ class nixl_xfer_handle:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
 
     def _set_monitor(self, monitor: Optional[nixl_completion_monitor]) -> None:
-        # A handle is attached to one monitor at most, and keeps that monitor alive
+        # A handle keeps its last monitor alive until the release or the next transfer
         if self._monitor is not None:
             self._monitor._handles.pop(self._handle, None)
         self._monitor = monitor
@@ -158,8 +158,7 @@ class nixl_completion_monitor:
     a handle.
 
     A monitor must be used by one thread only, which posts, waits for and releases
-    its transfers. It must stay alive until all its transfers are returned by a wait
-    or released.
+    its transfers. It must stay alive until all its transfers are released.
 
     Args:
         agent: Agent that posts the transfers attached to this monitor.
@@ -212,8 +211,8 @@ class nixl_completion_monitor:
     def _to_handles(self, completions) -> list[tuple[nixl_xfer_handle, str]]:
         result = []
         for value, status in completions:
-            handle = self._handles[value]
-            handle._set_monitor(None)
+            # The handle keeps its monitor: a late completion callback can still signal it
+            handle = self._handles.pop(value)
             state = "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR"
             result.append((handle, state))
         return result
