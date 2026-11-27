@@ -389,6 +389,18 @@ class nixlAgent {
                           nixlBackendH* &backend) const;
 
         /**
+         * @brief  Ask the backend to cancel the in-flight request `req_hndl`. The transfer owns
+         *         the buffers until getXferStatus() returns a terminal status. The return
+         *         codes of getXferStatus() keep their meaning. Cancellation only makes
+         *         NIXL_ERR_CANCELED more likely. If the backend cannot cancel, nothing
+         *         happens and the transfer runs to completion.
+         *
+         * @param  req_hndl      Transfer request handle
+         */
+        void
+        cancelXferReq(nixlXferReqH &req_hndl) const;
+
+        /**
          * @brief  Release the transfer request `req_hndl`. If the transfer is active,
          *         return an error without canceling it.
          *

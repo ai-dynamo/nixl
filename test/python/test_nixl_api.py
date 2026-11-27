@@ -938,3 +938,18 @@ def test_leaked_xfer_handle_is_queued_on_the_agent(one_empty_agent, monkeypatch)
         # 0xDEAD is not a real request, so the agent's destructor must not
         # hand it to the native release once the real agent is back.
         one_empty_agent._leaked_xfer_handles.clear()
+
+
+def test_cancel_xfer_handle_returns_nothing(backend_name):
+    with _xfer_handle(backend_name) as (agent, handle):
+        state = agent.transfer(handle)
+        if state == "PROC":
+            # No plugin cancels yet, so the transfer still completes.
+            assert agent.cancel_xfer_handle(handle) is None
+        deadline = time.monotonic() + 5
+        while state == "PROC" and time.monotonic() < deadline:
+            state = agent.check_xfer_state(handle)
+        assert state == "DONE"
+        agent.release_xfer_handle(handle)
+        with pytest.raises(bindings.nixlInvalidParamError):
+            agent.cancel_xfer_handle(handle)

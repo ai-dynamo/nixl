@@ -315,6 +315,15 @@ nixl_capi_query_xfer_backend(nixl_capi_agent_t agent,
                              nixl_capi_xfer_req_t req_hndl,
                              nixl_capi_backend_t *backend);
 
+/**
+ * Ask the backend to cancel an in-flight transfer request.
+ * Poll nixl_capi_get_xfer_status() until it is not NIXL_CAPI_IN_PROG.
+ * Returns NIXL_CAPI_ERROR_INVALID_PARAM for a null argument, NIXL_CAPI_ERROR_BACKEND if the
+ * native call threw, else NIXL_CAPI_SUCCESS.
+ */
+nixl_capi_status_t
+nixl_capi_cancel_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req);
+
 nixl_capi_status_t nixl_capi_release_xfer_req(nixl_capi_agent_t agent, nixl_capi_xfer_req_t req);
 
 nixl_capi_status_t nixl_capi_destroy_xfer_req(nixl_capi_xfer_req_t req);

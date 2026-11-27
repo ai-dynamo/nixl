@@ -1560,6 +1560,32 @@ nixlAgent::queryXferBackend(const nixlXferReqH* req_hndl,
     return NIXL_SUCCESS;
 }
 
+void
+nixlAgent::cancelXferReq(nixlXferReqH &req_hndl) const {
+    NIXL_TRACE_CORRELATION_SCOPE(
+        data->tracer_.get(), req_hndl.tracePostContext(), req_hndl.traceRequestId());
+    NIXL_TRACE_SCOPE(
+        trace_span, data->tracer_.get(), "nixl::cancelXferReq", nixl::trace::Kind::Generic);
+    NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(req_hndl.traceRequestId()));
+
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    if (!req_hndl.isInFlight()) {
+        NIXL_ERROR_FUNC << "only an in-flight transfer request can be canceled";
+        return;
+    }
+    if (!req_hndl.engine->supportsCapability(nixl_backend_capability_t::XFER_CANCEL)) {
+        NIXL_DEBUG << "backend '" << req_hndl.engine->getType()
+                   << "' does not support canceling transfer requests";
+        return;
+    }
+    const nixl_status_t ret = req_hndl.engine->cancelXfer(req_hndl.backendHandle);
+    NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(ret));
+    if (ret != NIXL_SUCCESS && ret != NIXL_IN_PROG) {
+        NIXL_ERROR_FUNC << "backend '" << req_hndl.engine->getType()
+                        << "' failed to cancel the transfer request with status " << ret;
+    }
+}
+
 /** Release only when safe; refusal preserves the request and its backend handle for retry. */
 nixl_status_t
 nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
