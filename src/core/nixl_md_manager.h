@@ -44,8 +44,8 @@ class nixlMetadataContext;
  * chosen from the environment; a peer address selects P2P, otherwise the name
  * backend (address wins per call). The manager owns a dedicated I/O thread for
  * async I/O operations from all backends.
- * TODO: The work is still in-progress. The P2P and etcd backends still owns
- * their own threads for sync I/O operations.
+ * TODO: The work is still in-progress. The etcd backend still owns
+ * its own worker thread for sync I/O operations.
  */
 class nixlMDManager {
 public:
