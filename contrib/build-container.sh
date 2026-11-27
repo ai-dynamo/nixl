@@ -42,7 +42,7 @@ WHL_BASE=manylinux_2_39
 WHL_PLATFORM=${WHL_BASE}_${ARCH}
 WHL_PYTHON_VERSIONS=""
 UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
-UCX_REF=${UCX_REF:-v1.23.x}
+UCX_REF=${UCX_REF:-v1.24.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
 PRIVATE_UCX_SONAME_SUFFIX="nixl"
 BUILD_NIXL_EP="true"
@@ -54,7 +54,7 @@ BUILD_INFINIA="false"
 INFINIA_LIBS_IMAGE="il.artifactory.nvidia.com/sw-nbu-swx-nixl-docker-local/static/infinia-libs:v2.5.0-rcx.1"
 APT_MIRROR=""
 BUILD_UCX_SPCX_PLUGIN="false"
-UCX_SPCX_PLUGIN_REF="v0.3.x"
+UCX_SPCX_PLUGIN_REF="v0.4.x"
 UCX_SPCX_PLUGIN_INSTALL=""
 BUILD_OPTIONS_FILE=""
 
