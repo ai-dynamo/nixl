@@ -47,7 +47,7 @@ struct aisXferReq {
 
 // Abstract base for the AIS (AMD Infinity Storage) backend's engines. It owns
 // everything that is independent of how I/O is submitted: the local-only
-// capability/connection/metadata overrides, the hipFile driver lifecycle,
+// capability, the connection/metadata overrides, the hipFile driver lifecycle,
 // memory and file registration (refcounted handle cache + buffer
 // RAII), queryMem, and the prepXfer preamble (validation + descriptor->aisXferReq
 // translation). The only engine-specific step in preparation is finalizePrep();
@@ -60,21 +60,6 @@ struct aisXferReq {
 class nixlAisEngine : public nixlBackendEngine {
 public:
     explicit nixlAisEngine(const nixlBackendInitParams *init_params);
-
-    [[nodiscard]] bool
-    supportsNotif() const override {
-        return false;
-    }
-
-    [[nodiscard]] bool
-    supportsRemote() const override {
-        return false;
-    }
-
-    [[nodiscard]] bool
-    supportsLocal() const override {
-        return true;
-    }
 
     // DRAM_SEG is not advertised until hipFile supports host buffers. Until
     // then registerMem rejects it unless allow_dram_ is set.
