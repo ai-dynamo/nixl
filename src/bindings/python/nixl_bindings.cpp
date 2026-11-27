@@ -26,6 +26,7 @@
 #include <span>
 
 #include "nixl.h"
+#include "nixl_monitor.h"
 #include "serdes/serdes.h"
 
 namespace py = pybind11;
@@ -213,6 +214,24 @@ prep_mem_view(const nixlAgent &agent, const DlistT &dlist, const std::vector<uin
     nixlMemViewH mvh;
     throw_nixl_exception(agent.prepMemView(dlist, mvh, &extra_params));
     return reinterpret_cast<uintptr_t>(mvh);
+}
+
+using nixl_py_completions_t = std::vector<std::pair<uintptr_t, nixl_status_t>>;
+
+nixl_py_completions_t
+wait_completions(nixlCompletionMonitor &monitor, int timeout_ms, bool any) {
+    const auto timeout =
+        (timeout_ms < 0) ? std::chrono::milliseconds::max() : std::chrono::milliseconds(timeout_ms);
+    std::vector<nixlXferCompletion> completions;
+    throw_nixl_exception(any ? monitor.waitAny(completions, timeout) :
+                               monitor.waitAll(completions, timeout));
+
+    nixl_py_completions_t result;
+    result.reserve(completions.size());
+    for (const nixlXferCompletion &completion : completions) {
+        result.emplace_back(reinterpret_cast<uintptr_t>(completion.req), completion.status);
+    }
+    return result;
 }
 } // namespace
 
@@ -597,6 +616,9 @@ PYBIND11_MODULE(_bindings, m) {
     // note: pybind will automatically convert notif_map to python types:
     // so, a Dictionary of string: List<string>
 
+    // Registered before nixlAgent, whose postXferReq takes it as an argument
+    py::class_<nixlCompletionMonitor> completion_monitor(m, "nixlCompletionMonitor");
+
     py::class_<nixlAgent>(m, "nixlAgent")
         .def(py::init<std::string, nixlAgentConfig>())
         .def(
@@ -876,11 +898,17 @@ PYBIND11_MODULE(_bindings, m) {
             py::call_guard<py::gil_scoped_release>())
         .def(
             "postXferReq",
-            [](nixlAgent &agent, uintptr_t reqh, std::string notif_msg) -> nixl_status_t {
+            [](nixlAgent &agent,
+               uintptr_t reqh,
+               std::string notif_msg,
+               nixlCompletionMonitor *monitor) -> nixl_status_t {
                 nixl_opt_args_t extra_params;
                 nixl_status_t ret;
+                extra_params.monitor = monitor;
                 if (notif_msg.size() > 0) {
                     extra_params.notif = notif_msg;
+                }
+                if ((notif_msg.size() > 0) || (monitor != nullptr)) {
                     ret = agent.postXferReq((nixlXferReqH *)reqh, &extra_params);
                 } else {
                     ret = agent.postXferReq((nixlXferReqH *)reqh);
@@ -890,6 +918,7 @@ PYBIND11_MODULE(_bindings, m) {
             },
             py::arg("reqh"),
             py::arg("notif_msg") = std::string(""),
+            py::arg("monitor") = py::none(),
             py::call_guard<py::gil_scoped_release>())
         .def(
             "getXferStatus",
@@ -1151,5 +1180,26 @@ PYBIND11_MODULE(_bindings, m) {
                 agent.releaseMemView(reinterpret_cast<nixlMemViewH>(mvh));
             },
             py::arg("mvh"),
+            py::call_guard<py::gil_scoped_release>());
+
+    // The monitor keeps a reference to its agent, so the agent must outlive it
+    completion_monitor
+        .def(py::init([](const nixlAgent &agent) { return nixlCompletionMonitor::create(agent); }),
+             py::keep_alive<1, 2>())
+        .def("fd", [](const nixlCompletionMonitor &monitor) { return monitor.fd(); })
+        .def("size", [](const nixlCompletionMonitor &monitor) { return monitor.size(); })
+        .def(
+            "waitAny",
+            [](nixlCompletionMonitor &monitor, int timeout_ms) {
+                return wait_completions(monitor, timeout_ms, true);
+            },
+            py::arg("timeout_ms") = -1,
+            py::call_guard<py::gil_scoped_release>())
+        .def(
+            "waitAll",
+            [](nixlCompletionMonitor &monitor, int timeout_ms) {
+                return wait_completions(monitor, timeout_ms, false);
+            },
+            py::arg("timeout_ms") = -1,
             py::call_guard<py::gil_scoped_release>());
 }

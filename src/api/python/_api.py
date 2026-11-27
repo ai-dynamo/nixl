@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pickle
 import sys
+import weakref
 from enum import Enum
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -99,12 +100,18 @@ class nixl_xfer_handle:
         value: Internal handle
     """
 
-    __slots__ = ("_handle", "_agent", "_released")
+    __slots__ = ("_handle", "_agent", "_released", "__weakref__")
+
+    # Live handles by their internal value. An entry disappears with its handle
+    _by_value: weakref.WeakValueDictionary[int, nixl_xfer_handle] = (
+        weakref.WeakValueDictionary()
+    )
 
     def __init__(self, agent, value: int):
         self._handle = int(value)
         self._agent = agent
         self._released = False
+        nixl_xfer_handle._by_value[self._handle] = self
 
     def __repr__(self) -> str:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
@@ -138,6 +145,73 @@ class nixl_xfer_handle:
                 except Exception:
                     pass
                 return
+
+
+class nixl_completion_monitor:
+    """Waits for the completion of transfers without polling each handle.
+
+    A transfer is attached to a monitor by nixl_agent.transfer(handle, monitor=monitor).
+    A wait returns the completed handles and detaches them. The monitor never releases
+    a handle.
+
+    A monitor must be used by one thread only, which posts, waits for and releases
+    its transfers.
+
+    Args:
+        agent: Agent that posts the transfers attached to this monitor.
+    """
+
+    __slots__ = ("_monitor",)
+
+    def __init__(self, agent: nixl_agent):
+        self._monitor = nixlBind.nixlCompletionMonitor(agent.agent)
+
+    def fd(self) -> int:
+        """Event file descriptor for poll, epoll or an event loop.
+        It becomes readable when an attached transfer completes. Do not read it,
+        call wait_any(timeout_ms=0) instead.
+        """
+        return self._monitor.fd()
+
+    def size(self) -> int:
+        """Number of attached transfers, which no wait has returned yet."""
+        return self._monitor.size()
+
+    def wait_any(self, timeout_ms: int = -1) -> list[tuple[nixl_xfer_handle, str]]:
+        """Wait until at least one attached transfer completes.
+
+        Args:
+            timeout_ms: Time limit in milliseconds. Negative waits without a limit,
+                0 returns what is available without blocking.
+
+        Returns:
+            List of (handle, state) of all transfers completed so far, where state is
+                "DONE" or "ERR". It is empty if the time limit expired.
+        """
+        return self._to_handles(self._monitor.waitAny(timeout_ms))
+
+    def wait_all(self, timeout_ms: int = -1) -> list[tuple[nixl_xfer_handle, str]]:
+        """Wait until all attached transfers complete.
+
+        Args:
+            timeout_ms: Time limit in milliseconds. Negative waits without a limit,
+                0 returns what is available without blocking.
+
+        Returns:
+            List of (handle, state) of the completed transfers, where state is "DONE"
+                or "ERR". If the time limit expired, the rest stay attached.
+        """
+        return self._to_handles(self._monitor.waitAll(timeout_ms))
+
+    @staticmethod
+    def _to_handles(completions) -> list[tuple[nixl_xfer_handle, str]]:
+        return [
+            (
+                nixl_xfer_handle._by_value[value],
+                "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR",
+            )
+            for value, status in completions
+        ]
 
 
 # Opaque handle for backend can be just int, as it's not passed to the user
@@ -671,7 +745,12 @@ class nixl_agent:
 
         return nixl_xfer_handle(self, handle)
 
-    def transfer(self, handle: nixl_xfer_handle, notif_msg: bytes = b"") -> str:
+    def transfer(
+        self,
+        handle: nixl_xfer_handle,
+        notif_msg: bytes = b"",
+        monitor: Optional[nixl_completion_monitor] = None,
+    ) -> str:
         """Initiate a data transfer operation.
         After calling this, the transfer state can be checked asynchronously till completion.
         In case of small transfers that are completed as part of the call itself, return value
@@ -681,11 +760,15 @@ class nixl_agent:
             handle: Handle to the transfer operation, from make_prepped_xfer, or initialize_xfer.
             notif_msg: Optional notification message can be specified or updated per transfer call.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
+            monitor: Optional completion monitor to attach the transfer to, also when it is
+                completed as part of the call itself.
 
         Returns:
             Status of the transfer operation ("DONE", "PROC", or "ERR").
         """
-        status = self.agent.postXferReq(handle._handle, notif_msg)
+        status = self.agent.postXferReq(
+            handle._handle, notif_msg, monitor._monitor if monitor is not None else None
+        )
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
