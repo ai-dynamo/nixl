@@ -104,6 +104,7 @@ gtest_sources = [
     'telemetry_benchmark.cpp',
     'nixl_duration_test.cpp',
     'blocking_queue_test.cpp',
+    'thread_pool_test.cpp',
     'nixl_log_file_test.cpp',
     'configuration.cpp',
     'trace_recorder_test.cpp',
