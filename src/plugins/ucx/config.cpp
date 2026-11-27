@@ -72,6 +72,15 @@ tlsEnablesCudaSupport(std::string_view tls) {
     return deny_list ? !has_cuda_support : has_cuda_support;
 }
 
+// A deleter type for a FILE stream: decltype(&fclose) would drop the attributes that glibc
+// declares fclose() with, which GCC reports as an error with -Werror
+struct fileCloser {
+    void
+    operator()(FILE *stream) const noexcept {
+        fclose(stream);
+    }
+};
+
 } // namespace
 
 namespace nixl::ucx {
@@ -179,7 +188,7 @@ config::dumpValues(const ucp_config_t &config) {
     char *buf = nullptr;
     size_t size = 0;
     {
-        const std::unique_ptr<FILE, decltype(&fclose)> stream(open_memstream(&buf, &size), &fclose);
+        const std::unique_ptr<FILE, fileCloser> stream(open_memstream(&buf, &size));
         if (!stream) {
             NIXL_PDEBUG << "Failed to open a memory stream for the UCX config";
             return {};
