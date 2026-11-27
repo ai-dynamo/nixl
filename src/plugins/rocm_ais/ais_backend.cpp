@@ -82,7 +82,7 @@ public:
 } // namespace
 
 nixlAisEngine::nixlAisEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params),
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL),
       allow_dram_(nixl::getBackendParamDefaulted(init_params->customParams, "allow_dram", false)) {}
 
 nixl_status_t

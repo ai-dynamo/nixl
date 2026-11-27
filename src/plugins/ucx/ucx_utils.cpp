@@ -38,7 +38,7 @@ get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
 
     params.emplace(nixl_ucx_err_handling_param_name,
-                   ucx_err_mode_to_string(UCP_ERR_HANDLING_MODE_PEER));
+                   ucx_err_mode_to_string(nixl_ucx_default_err_handling_mode));
     params.emplace(nixl_ucx_vram_memtype_hint_param_name,
                    ucx_vram_memtype_hint_to_string(nixl_ucx_vram_memtype_hint_t::AUTO));
     return params;
