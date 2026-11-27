@@ -20,6 +20,7 @@
 #include <nixl.h>
 #include <sys/time.h>
 #include "utils/utils.h"
+#include "utils/memos_buffer.h"
 #if HAVE_RAW_CLI
 #include "utils/raw_cli.h"
 #endif
@@ -88,10 +89,25 @@ static std::vector<std::vector<xferBenchIOV>> createTransferDescLists(xferBenchW
 
         for (const auto &iov : iov_list) {
             for (size_t i = 0; i < count; i++) {
-                size_t dev_offset = ((i * stride) % iov.len);
+                size_t dev_offset =
+                    xferBenchConfig::memos_reuse_local ? 0 : ((i * stride) % iov.len);
 
                 for (size_t j = 0; j < batch_size; j++) {
-                    size_t block_offset = ((j * block_size) % iov.len);
+                    size_t block_offset;
+                    if (xferBenchConfig::memos_reuse_local) {
+                        // Reuse is validated as single-device SG/pairwise only.
+                        if (count != 1) {
+                            throw std::invalid_argument("MEMOS reuse requires one local region");
+                        }
+                        block_offset =
+                            nixlbench::memosLocalBufferOffset(j,
+                                                              block_size,
+                                                              xferBenchConfig::max_batch_size,
+                                                              xferBenchConfig::pipeline_depth,
+                                                              iov.len);
+                    } else {
+                        block_offset = ((j * block_size) % iov.len);
+                    }
                     if (block_offset + block_size > iov.len) {
                         // Prevent memory overflow when iov.len is not divisible by block_size
                         block_offset = 0;
@@ -117,7 +133,9 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
-        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
+        size_t effective_batch = xferBenchConfig::memos_keys_per_thread != 0 ?
+            xferBenchConfig::memos_keys_per_thread :
+            batch_size * xferBenchConfig::pipeline_depth;
         auto local_trans_lists =
             createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
 
@@ -205,6 +223,10 @@ runBenchmark() {
     }
 
     std::vector<std::vector<xferBenchIOV>> iov_lists = worker_ptr->allocateMemory(num_workers);
+    if (iov_lists.size() != static_cast<size_t>(num_workers)) {
+        std::cerr << "Failed to initialize worker buffer partitions" << std::endl;
+        return EXIT_FAILURE;
+    }
     auto mem_guard = make_scope_guard ([&] {
         worker_ptr->deallocateMemory(iov_lists);
     });
