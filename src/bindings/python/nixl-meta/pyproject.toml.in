@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,6 +33,7 @@ dependencies = [@WHEEL_DEPS@]
 
 [project.optional-dependencies]
 cu13 = ["nixl-cu13==@VERSION@"]
+@CUTE_EXTRA@
 
 [tool.setuptools]
 packages = ["nixl", "nixl.runtime", "nixl_ep"]
