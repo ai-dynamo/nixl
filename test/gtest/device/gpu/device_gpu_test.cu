@@ -148,6 +148,57 @@ putFlushKernel(void *src_mvh,
     putAndComplete(src, dst, bytes, channel_id, put_flags);
 }
 
+__device__ void
+getAndComplete(const memViewElem &dst,
+               const memViewElem &src,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t get_flags) {
+    xferStatusH xfer_status;
+    auto status = get(dst, src, bytes, channel_id, get_flags, &xfer_status);
+    assert(status == NIXL_IN_PROG);
+    if (get_flags & flags::defer) {
+        status = flush(src.mvh, channel_id);
+        assert(status == NIXL_SUCCESS);
+    } else {
+        waitPostedWithSystemFence(status, xfer_status);
+    }
+}
+
+__global__ void
+getOffsetKernel(void *dst_mvh, void *src_mvh) {
+    assert(threadIdx.x == 0);
+    memViewElem dst{dst_mvh, 0, 0};
+    memViewElem src{src_mvh, 0, 0};
+    const nixl_status_t status = get(dst, src, half_size, 0, flags::defer);
+    assert(status == NIXL_IN_PROG);
+
+    dst.offset = half_size;
+    src.offset = half_size;
+    getAndComplete(dst, src, half_size, 0, 0);
+}
+
+__global__ void
+getChannelKernel(void *dst_mvh, void *src_mvh) {
+    assert(threadIdx.x == 0);
+    for (unsigned channel_id = 0; channel_id < 2; ++channel_id) {
+        const memViewElem dst{dst_mvh, channel_id, 0};
+        const memViewElem src{src_mvh, channel_id, 0};
+        getAndComplete(dst, src, size, channel_id, 0);
+    }
+}
+
+__global__ void
+getFlushKernel(void *dst_mvh,
+               void *src_mvh,
+               size_t bytes,
+               unsigned channel_id,
+               uint64_t get_flags) {
+    const memViewElem dst{dst_mvh, 0, 0};
+    const memViewElem src{src_mvh, 0, 0};
+    getAndComplete(dst, src, bytes, channel_id, get_flags);
+}
+
 void
 waitForData(const memBuffer &actual, const memBuffer &expected) {
     const auto deadline = std::chrono::steady_clock::now() + data_arrival_timeout;
@@ -198,6 +249,20 @@ protected:
     [[nodiscard]] bool
     isProxy() const {
         return GetParam();
+    }
+
+    void
+    skipIfGetUnsupported() const {
+        if (isProxy()) {
+            GTEST_SKIP() << "GPU get is unsupported in proxy mode";
+        }
+#if __has_include(<ucp/api/device/ucp_device_impl.h>)
+        if constexpr (!impl::ucx::get_supported<level_t::THREAD>) {
+            GTEST_SKIP() << "UCX device get API is unavailable";
+        }
+#else
+        GTEST_SKIP() << "UCX direct GPU API is unavailable";
+#endif
     }
 
 private:
@@ -287,6 +352,79 @@ TEST_P(test, deferredPutFlush) {
     void *dst_mvh = prepRemoteMemView(dst_mbs);
     // Exercise a non-default channel and complete solely through flush.
     putFlushKernel<<<1, 1>>>(src_mvh, dst_mvh, bytes, 1, flags::defer);
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+}
+
+TEST_P(test, getOffset) {
+    skipIfGetUnsupported();
+    if (IsSkipped()) {
+        return;
+    }
+
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(memBuffer{size, &test_value});
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(memBuffer{size});
+
+    void *src_mvh = prepRemoteMemView(src_mbs);
+    void *dst_mvh = prepLocalMemView(dst_mbs);
+
+    getOffsetKernel<<<1, 1>>>(dst_mvh, src_mvh);
+    // Launch errors are reported only here, not by cudaDeviceSynchronize().
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+}
+
+TEST_P(test, getChannel) {
+    skipIfGetUnsupported();
+    if (IsSkipped()) {
+        return;
+    }
+
+    constexpr uint64_t other_value{~test_value};
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(memBuffer{size, &test_value});
+    src_mbs.emplace_back(memBuffer{size, &other_value});
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(memBuffer{size});
+    dst_mbs.emplace_back(memBuffer{size});
+
+    void *src_mvh = prepRemoteMemView(src_mbs);
+    void *dst_mvh = prepLocalMemView(dst_mbs);
+
+    getChannelKernel<<<1, 1>>>(dst_mvh, src_mvh);
+    // Launch errors are reported only here, not by cudaDeviceSynchronize().
+    const cudaError_t launch_status = cudaGetLastError();
+    ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
+
+    ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);
+    EXPECT_EQ(src_mbs[0], dst_mbs[0]);
+    EXPECT_EQ(src_mbs[1], dst_mbs[1]);
+}
+
+TEST_P(test, deferredGetFlush) {
+    skipIfGetUnsupported();
+    if (IsSkipped()) {
+        return;
+    }
+
+    constexpr size_t bytes = 4 * 1024;
+    const std::vector<uint64_t> pattern(bytes / sizeof(test_value), test_value);
+    std::vector<memBuffer> src_mbs;
+    src_mbs.emplace_back(memBuffer{bytes, pattern.data()});
+    std::vector<memBuffer> dst_mbs;
+    dst_mbs.emplace_back(memBuffer{bytes});
+
+    void *src_mvh = prepRemoteMemView(src_mbs);
+    void *dst_mvh = prepLocalMemView(dst_mbs);
+    // Exercise a non-default channel and complete solely through flush.
+    getFlushKernel<<<1, 1>>>(dst_mvh, src_mvh, bytes, 1, flags::defer);
     const cudaError_t launch_status = cudaGetLastError();
     ASSERT_EQ(launch_status, cudaSuccess) << cudaGetErrorString(launch_status);
     ASSERT_EQ(cudaDeviceSynchronize(), cudaSuccess);

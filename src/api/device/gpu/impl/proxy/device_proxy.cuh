@@ -108,6 +108,12 @@ put(const memViewElem &src,
 
 template<level_t level>
 __device__ __forceinline__ nixl_status_t
+get(const memViewElem &, const memViewElem &, size_t, unsigned, uint64_t, xferStatusH *) {
+    return NIXL_ERR_NOT_SUPPORTED;
+}
+
+template<level_t level>
+__device__ __forceinline__ nixl_status_t
 atomicAdd(uint64_t value,
           const memViewElem &counter,
           unsigned channel_id,
