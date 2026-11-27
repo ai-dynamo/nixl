@@ -37,6 +37,11 @@ if is_variable('daos_backend_interface')
     unit_test_deps += [daos_unit_test_dep]
 endif
 
+if is_variable('posix_backend_interface')
+    subdir('posix')
+    unit_test_deps += [posix_unit_test_dep]
+endif
+
 subdir('agent')
 unit_test_deps += [agent_unit_test_dep]
 
