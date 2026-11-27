@@ -120,7 +120,7 @@ nixlMDManager::etcdConfigured() {
 // precedence (address wins over a configured backend).
 nixlMDManager::nixlMDManager(nixlMetadataContext &ctx, const nixlMDConfig &config)
     : asioImpl_(std::make_unique<AsioImpl>()),
-      p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config)),
+      p2pBackend_(std::make_unique<nixlP2PMetadataBackend>(ctx, config, asioImpl_->ioContext_)),
       backend_(makeBackend(ctx, config, asioImpl_->ioContext_)) {}
 
 nixlMDManager::~nixlMDManager() {
@@ -164,8 +164,7 @@ nixlMDManager::backendName() const noexcept {
 
 bool
 nixlMDManager::usesThread() const noexcept {
-    // The backends answer from configuration they already hold.
-    return p2pBackend_->usesThread() || (backend_ && backend_->usesThread());
+    return true;
 }
 
 void

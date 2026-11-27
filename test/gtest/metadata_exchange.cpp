@@ -505,26 +505,18 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     const std::string port_str = std::to_string(port);
     send_args.ipAddr = ip_str;
     send_args.port = port;
-    {
-        const LogIgnoreGuard lig1("poll timed out for ip_addr: " + ip_str +
-                                  " and port: " + port_str);
-        const LogIgnoreGuard lig2("P2P backend could not connect to IP " + ip_str + " and port " +
-                                  port_str);
-        const LogIgnoreGuard lig3("getsockopt gave error for ip_addr: " + ip_str +
-                                  " and port: " + port_str + ": No route to host");
-        const LogIgnoreGuard lig4("poll returned but socket not ready for write for ip_addr: " +
-                                  ip_str + " and port: " + port_str);
+    const LogIgnoreGuard lig(std::regex("\\[Peer: " + ip_str + ":" + port_str + "\\] connect:"));
 
-        ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
+    ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 
-        std::this_thread::sleep_for(std::chrono::seconds(3)); // Must exceed timeout to catch logs.
+    std::this_thread::sleep_for(std::chrono::seconds(7)); // Must exceed timeout to catch logs.
 
-        const size_t ignored = lig1.getIgnoredCount() + lig2.getIgnoredCount() +
-            lig3.getIgnoredCount() + lig4.getIgnoredCount();
-        EXPECT_GE(ignored, 1);
-    }
+    EXPECT_GE(lig.getIgnoredCount(), 1);
 
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+
+    // Stop the agent explicitly to ignore the retry connection failure logs.
+    src.agent.reset();
 }
 
 TEST_F(MetadataExchangeTestFixture, SocketFetchRemoteAndInvalidateLocal) {
@@ -700,8 +692,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("loadRemoteMD in P2P backend failed from "
-                                             "peer 127.0.0.1:[0-9]+ with error NIXL_ERR_BACKEND"));
+        const LogIgnoreGuard lig2(std::regex("\\[Peer: 127.0.0.1:[0-9]+\\] loadRemoteMD in P2P backend "
+                                             "failed with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
