@@ -103,9 +103,24 @@ struct FakeCompletion {
 static std::vector<FakeCompletion> pending_completions;
 static size_t completions_consumed = 0;
 
+// Inject exactly one FI_EAVAIL after the normal completion queue is exhausted.
+static bool inject_cq_error = false;
+static void *cq_error_context = nullptr;
+static int queued_write_attempts = 0;
+
+static ssize_t
+cq_error_test_writemsg(struct fid_ep *, const struct fi_msg_rma *, uint64_t) {
+    ++queued_write_attempts;
+    return queued_write_attempts == 1 ? -FI_EAGAIN : 0;
+}
+
 static ssize_t
 fi_cq_readfrom_stub(struct fid_cq * /*cq*/, void *buf, size_t count, fi_addr_t *src_addr) {
     if (completions_consumed >= pending_completions.size()) {
+        if (inject_cq_error) {
+            inject_cq_error = false;
+            return -FI_EAVAIL;
+        }
         return -FI_EAGAIN;
     }
     auto *entries = static_cast<struct fi_cq_data_entry *>(buf);
@@ -124,8 +139,14 @@ fi_cq_readfrom_stub(struct fid_cq * /*cq*/, void *buf, size_t count, fi_addr_t *
 }
 
 static ssize_t
-fi_cq_readerr_stub(struct fid_cq * /*cq*/, struct fi_cq_err_entry * /*buf*/, uint64_t /*flags*/) {
-    return -FI_EAGAIN;
+fi_cq_readerr_stub(struct fid_cq * /*cq*/, struct fi_cq_err_entry *entry, uint64_t /*flags*/) {
+    if (!cq_error_context) {
+        return -FI_EAGAIN;
+    }
+    entry->op_context = cq_error_context;
+    entry->err = FI_ECANCELED;
+    cq_error_context = nullptr;
+    return 1;
 }
 
 static void
@@ -464,6 +485,133 @@ testFiSourceRequested() {
     return 0;
 }
 
+static int
+testCqErrorDuringPostDrain(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testCqErrorDuringPostDrain";
+    queue_reset();
+    nixlLibfabricRail &rail = mgr.getRail(0);
+    TEST_ASSERT(rail.initPostQueue(2), "initialized post queue for direct rail use");
+    auto *failed = rail.allocateDataRequest(nixlLibfabricReq::WRITE, 11);
+    auto *healthy = rail.allocateDataRequest(nixlLibfabricReq::WRITE, 22);
+    TEST_ASSERT(failed && healthy, "allocated both requests");
+
+    std::vector<nixl_status_t> failed_status;
+    std::vector<nixl_status_t> healthy_status;
+    failed->completion_callback = [&](nixl_status_t status) { failed_status.push_back(status); };
+    healthy->completion_callback = [&](nixl_status_t status) { healthy_status.push_back(status); };
+
+    // An FI_EAVAIL CQ entry belongs to the earlier request. Polling it
+    // must complete only that request, not discard the next queued write.
+    fi_ops_rma mock_rma = {};
+    mock_rma.writemsg = cq_error_test_writemsg;
+    auto *previous_rma = rail.endpoint->rma;
+    rail.endpoint->rma = &mock_rma;
+    queued_write_attempts = 0;
+    cq_error_context = &failed->ctx;
+    inject_cq_error = true;
+
+    nixlLibfabricPostRequest post = {};
+    post.type = nixlLibfabricPostRequest::WRITE;
+    post.req = healthy;
+    post.length = 64;
+    rail.enqueuePost(post);
+    auto status = rail.drainPostQueue();
+    rail.endpoint->rma = previous_rma;
+
+    TEST_ASSERT(status == NIXL_SUCCESS, "unrelated queued post survives CQ error");
+    TEST_ASSERT(failed_status.size() == 1 && failed_status[0] == NIXL_ERR_BACKEND,
+                "failed request received its terminal status");
+    TEST_ASSERT(!failed->in_use, "failed request released");
+    TEST_ASSERT(healthy_status.empty() && healthy->in_use, "healthy request remains in flight");
+    TEST_ASSERT(queued_write_attempts == 2, "healthy post retried once");
+
+    struct fi_cq_data_entry completion = {};
+    completion.op_context = &healthy->ctx;
+    completion.flags = FI_RMA | FI_WRITE;
+    pending_completions.push_back({completion, FI_ADDR_NOTAVAIL});
+    TEST_ASSERT(rail.progressCompletionQueue() == NIXL_SUCCESS, "processed healthy completion");
+    TEST_ASSERT(healthy_status.size() == 1 && healthy_status.front() == NIXL_SUCCESS,
+                "healthy request received exactly one success");
+    TEST_ASSERT(!healthy->in_use, "healthy request released");
+    return 0;
+}
+
+static constexpr fi_addr_t blocked_destination = 10;
+static bool block_destination = false;
+static std::vector<void *> posted_contexts;
+
+static ssize_t
+writemsgWithBlockedDestination(struct fid_ep *, const struct fi_msg_rma *msg, uint64_t) {
+    if (block_destination && msg->addr == blocked_destination) {
+        return -FI_EAGAIN;
+    }
+    posted_contexts.push_back(msg->context);
+    return 0;
+}
+
+static int
+testPostBackpressureDoesNotBlockOtherDestinations(nixlLibfabricRailManager &mgr) {
+    NIXL_INFO << "  testPostBackpressureDoesNotBlockOtherDestinations";
+    queue_reset();
+    posted_contexts.clear();
+    auto &rail = mgr.getRail(1);
+    TEST_ASSERT(rail.initPostQueue(3), "initialized the post queue");
+    auto *first = rail.allocateDataRequest(nixlLibfabricReq::WRITE, 31);
+    auto *second = rail.allocateDataRequest(nixlLibfabricReq::WRITE, 32);
+    auto *healthy = rail.allocateDataRequest(nixlLibfabricReq::WRITE, 33);
+    TEST_ASSERT(first && second && healthy, "allocated three requests");
+    std::vector<nixl_status_t> completions;
+    for (auto *req : {first, second, healthy}) {
+        req->completion_callback = [&](nixl_status_t status) { completions.push_back(status); };
+    }
+
+    fi_ops_rma mock_rma = {};
+    mock_rma.writemsg = writemsgWithBlockedDestination;
+    auto *previous_rma = rail.endpoint->rma;
+    rail.endpoint->rma = &mock_rma;
+
+    auto enqueue = [&](nixlLibfabricReq *req, fi_addr_t dest) {
+        nixlLibfabricPostRequest post = {};
+        post.type = nixlLibfabricPostRequest::WRITE;
+        post.req = req;
+        post.dest_addr = dest;
+        post.length = 64;
+        rail.enqueuePost(post);
+    };
+    enqueue(first, blocked_destination);
+    enqueue(second, blocked_destination);
+    enqueue(healthy, 20);
+
+    block_destination = true;
+    const auto first_status = rail.drainPostQueue();
+    const auto posted_while_blocked = posted_contexts;
+    block_destination = false;
+    const auto second_status = rail.drainPostQueue();
+    const auto third_status = rail.drainPostQueue();
+    rail.endpoint->rma = previous_rma;
+
+    TEST_ASSERT(first_status == NIXL_SUCCESS, "drain returns despite a blocked peer");
+    TEST_ASSERT(posted_while_blocked == std::vector<void *>{&healthy->ctx},
+                "healthy peer posts while the first peer is blocked");
+    TEST_ASSERT(second_status == NIXL_SUCCESS && third_status == NIXL_SUCCESS,
+                "drained the deferred posts once the peer recovered");
+    const std::vector<void *> expected{&healthy->ctx, &first->ctx, &second->ctx};
+    TEST_ASSERT(posted_contexts == expected, "deferred posts kept their original order");
+
+    for (auto *context : posted_contexts) {
+        struct fi_cq_data_entry entry = {};
+        entry.op_context = context;
+        entry.flags = FI_RMA | FI_WRITE;
+        pending_completions.push_back({entry, FI_ADDR_NOTAVAIL});
+    }
+    TEST_ASSERT(rail.progressCompletionQueue() == NIXL_SUCCESS, "completed all three requests");
+    const std::vector<nixl_status_t> successes(3, NIXL_SUCCESS);
+    TEST_ASSERT(completions == successes, "each request received exactly one success");
+    TEST_ASSERT(!first->in_use && !second->in_use && !healthy->in_use,
+                "all request slots released");
+    return 0;
+}
+
 int
 main() {
     NIXL_INFO << "=== Source Address Resolution Test ===";
@@ -499,6 +647,12 @@ main() {
         return res;
     }
     if ((res = testRecvCompletionAttribution(mgr)) != 0) {
+        return res;
+    }
+    if ((res = testCqErrorDuringPostDrain(mgr)) != 0) {
+        return res;
+    }
+    if ((res = testPostBackpressureDoesNotBlockOtherDestinations(mgr)) != 0) {
         return res;
     }
     if ((res = testFiSourceRequested()) != 0) {

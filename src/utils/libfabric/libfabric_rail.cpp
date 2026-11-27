@@ -25,6 +25,7 @@
 #include <cuda_runtime.h>
 #endif
 
+#include <algorithm>
 #include <cstring>
 #include <stdexcept>
 #include <stack>
@@ -982,11 +983,12 @@ nixlLibfabricRail::pollForCompletions() {
     fi_addr_t src_addrs[NIXL_LIBFABRIC_CQ_BATCH_SIZE];
     struct fi_cq_err_entry err_entry = {};
     int cq_ret;
+    int err_ret = 0;
     {
         const std::lock_guard<std::mutex> ep_lock(ep_mutex_);
         cq_ret = fi_cq_readfrom(cq, cq_buf, NIXL_LIBFABRIC_CQ_BATCH_SIZE, src_addrs);
         if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
-            fi_cq_readerr(cq, &err_entry, 0);
+            err_ret = fi_cq_readerr(cq, &err_entry, 0);
         }
     }
     if (cq_ret > 0) {
@@ -995,7 +997,24 @@ nixlLibfabricRail::pollForCompletions() {
         }
     } else if (cq_ret < 0 && cq_ret != -FI_EAGAIN) {
         NIXL_ERROR << "CQ error in drain interleave on rail " << rail_id << ": "
-                   << fi_strerror(err_entry.err);
+                   << fi_strerror(-cq_ret);
+        if (err_ret <= 0) {
+            NIXL_ERROR << "fi_cq_readerr failed in drain interleave: " << err_ret;
+            return;
+        }
+        NIXL_ERROR << "CQ error detail on rail " << rail_id << ": " << fi_strerror(err_entry.err)
+                   << " prov_errno: " << err_entry.prov_errno;
+        // fi_cq_readerr consumes the failing operation's only completion.
+        // Complete that request, but keep draining: unrelated peers may still be healthy.
+        if (err_entry.op_context) {
+            nixlLibfabricReq *req = findRequestFromContext(err_entry.op_context);
+            if (req && req->in_use) {
+                if (req->completion_callback) {
+                    req->completion_callback(NIXL_ERR_BACKEND);
+                }
+                releaseRequest(req);
+            }
+        }
     }
 }
 
@@ -1386,18 +1405,13 @@ nixlLibfabricRail::enqueuePost(const nixlLibfabricPostRequest &req) {
 
 nixl_status_t
 nixlLibfabricRail::drainPostQueue() {
-    nixlLibfabricPostRequest pr;
-    int posted = 0;
+    size_t posted = 0;
 #if HAVE_CUDA
     bool use_cuda_addr_wa = false;
     int current_cuda_device = -1;
 #endif
 
-    // drain the queue up to configured limit,
-    // to ensure requests from other rails do not wait too much time
-    size_t post_req_count = 0;
-    while (post_req_count < POST_MAX_BATCH_SIZE && post_ring_.pop(pr)) {
-        ++post_req_count;
+    const auto try_post = [&, this](const nixlLibfabricPostRequest &pr) {
         int ret = -FI_EAGAIN;
 
 #if HAVE_CUDA
@@ -1419,7 +1433,7 @@ nixlLibfabricRail::drainPostQueue() {
 
                 // defrred request cannot be executed, continue to the next
                 NIXL_ERROR << "Failed to set CUDA context, while posting deferred descriptor";
-                continue;
+                return true;
             }
 
             // other-wise set cuda device before call if needed
@@ -1439,14 +1453,16 @@ nixlLibfabricRail::drainPostQueue() {
                     NIXL_ERROR << "Failed to set CUDA device " << pr.device_id
                                << " while posting deferred descriptor: "
                                << cudaGetErrorString(cuda_ret);
-                    continue;
+                    return true;
                 }
                 current_cuda_device = pr.device_id;
             }
         }
 #endif
 
-        while (ret == -FI_EAGAIN) {
+        // FI_EAGAIN represents provider backpressure. Give CQ polling a
+        // chance to free resources, then let other destinations make progress.
+        for (int attempt = 0; attempt < 2 && ret == -FI_EAGAIN; ++attempt) {
             if (pr.type == nixlLibfabricPostRequest::WRITE) {
                 struct iovec iov{};
                 iov.iov_base = pr.local_addr;
@@ -1499,6 +1515,9 @@ nixlLibfabricRail::drainPostQueue() {
             }
         }
 
+        if (ret == -FI_EAGAIN) {
+            return false;
+        }
         if (ret != 0) {
             NIXL_ERROR << "drainPostQueue: post failed ret=" << ret << " (" << fi_strerror(-ret)
                        << ") on rail " << rail_id;
@@ -1510,11 +1529,44 @@ nixlLibfabricRail::drainPostQueue() {
             if (pr.req) {
                 releaseRequest(pr.req);
             }
-            continue;
+            return true;
         }
         posted++;
         if (posted % POST_POLL_INTERLEAVE_RATIO == 0) {
             pollForCompletions();
+        }
+        return true;
+    };
+
+    // Service only the destinations present when this pass began, at most
+    // once each. Reserve room in every pass for newly queued requests.
+    const auto retry_count = std::min(deferred_destinations_.size(), POST_MAX_BATCH_SIZE / 2);
+    for (size_t i = 0; i < retry_count; ++i) {
+        const auto dest = deferred_destinations_.front();
+        deferred_destinations_.pop_front();
+
+        auto it = deferred_posts_.find(dest);
+        auto &pending = it->second;
+        if (try_post(pending.front())) {
+            pending.pop_front();
+        }
+        if (pending.empty()) {
+            deferred_posts_.erase(it);
+        } else {
+            deferred_destinations_.push_back(dest);
+        }
+    }
+
+    // Keep each destination's posting order even across EAGAIN retries.
+    // Never push back into post_ring_: the progress thread is its only consumer.
+    nixlLibfabricPostRequest pr;
+    for (size_t i = retry_count; i < POST_MAX_BATCH_SIZE && post_ring_.pop(pr); ++i) {
+        auto existing = deferred_posts_.find(pr.dest_addr);
+        if (existing != deferred_posts_.end()) {
+            existing->second.push_back(pr);
+        } else if (!try_post(pr)) {
+            deferred_posts_[pr.dest_addr].push_back(pr);
+            deferred_destinations_.push_back(pr.dest_addr);
         }
     }
 
