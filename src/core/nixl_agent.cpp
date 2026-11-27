@@ -244,13 +244,13 @@ nixlXferReqH::nixlXferReqH(const std::string &remote_agent,
                            const nixl_mem_t local_type,
                            const nixl_mem_t remote_type,
                            const size_t desc_count,
-                           const nixl_remote_section_weak_t &remote_section_ref,
+                           std::shared_ptr<nixlRemoteSection> remote_section_ref,
                            const nixl::trace::TraceContext &trace_context,
                            const std::uint64_t trace_request_id)
     : initiatorDescs(local_type),
       targetDescs(remote_type),
       remoteAgent(remote_agent),
-      remoteSection(remote_section_ref),
+      remoteSection(std::move(remote_section_ref)),
       traceContext_(trace_context),
       tracePostContext_(trace_context),
       traceRequestId_(trace_request_id),
@@ -399,6 +399,29 @@ traceXferError(nixl::trace::Tracer *tracer, const nixlXferReqH &req, nixl_status
                      {"nixl.status", static_cast<std::int64_t>(status)});
 }
 
+[[nodiscard]] nixl_status_t
+setNotif(const nixlBackendEngine &engine,
+         const nixl_opt_args_t *extra_params,
+         nixl_opt_b_args_t &opt_args) {
+    if (extra_params != nullptr) {
+        if (extra_params->notif) {
+            opt_args.notifMsg = *extra_params->notif;
+            opt_args.hasNotif = true;
+        } else if (extra_params->hasNotif) {
+            opt_args.notifMsg = extra_params->notifMsg;
+            opt_args.hasNotif = true;
+        }
+    }
+
+    if (opt_args.hasNotif && !engine.supportsNotif()) {
+        NIXL_ERROR << "the selected backend '" << engine.getType()
+                   << "' does not support notifications";
+        return NIXL_ERR_BACKEND;
+    }
+
+    return NIXL_SUCCESS;
+}
+
 } // namespace
 
 nixlAgentData::nixlAgentData(const std::string &name, const nixlAgentConfig &config)
@@ -477,8 +500,8 @@ nixlAgent::getBackendParams (const nixlBackendH* backend,
     }
 
     NIXL_LOCK_GUARD(data->lock);
-    mems   = backend->engine->getSupportedMems();
-    params = backend->engine->getCustomParams();
+    mems = backend->getEngine()->getSupportedMems();
+    params = backend->getEngine()->getCustomParams();
     return NIXL_SUCCESS;
 }
 
@@ -622,9 +645,8 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         }
     }
 
-    // TODO: Simplify, e.g. by making nixlBackendH's c'tor public?
-    std::unique_ptr<nixlBackendH> bknd_temp(new nixlBackendH(backend.get()));
-    const auto [it, inserted] = data->backendHandles_.try_emplace(type, std::move(bknd_temp));
+    const auto [it, inserted] =
+        data->backendHandles_.try_emplace(type, std::make_unique<nixlBackendH>(backend.get()));
     NIXL_ASSERT(inserted);
     bknd_hndl = it->second.get();
 
@@ -651,7 +673,7 @@ nixlAgent::queryMem(const nixl_reg_dlist_t &descs,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    return extra_params->backends[0]->engine->queryMem(descs, resp);
+    return extra_params->backends[0]->getEngine()->queryMem(descs, resp);
 }
 
 nixl_status_t
@@ -677,7 +699,7 @@ nixlAgent::registerMem(const nixl_reg_dlist_t &descs,
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            backend_list->push_back(elm->engine);
+            backend_list->push_back(elm->getEngine());
     }
 
     // Best effort, if at least one succeeds NIXL_SUCCESS is returned
@@ -744,7 +766,7 @@ nixlAgent::deregisterMem(const nixl_reg_dlist_t &descs,
         backend_set = *avail_backends;
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+            backend_set.insert(elm->getEngine());
     }
 
     // Doing best effort, and returning err if any
@@ -802,7 +824,7 @@ nixlAgent::makeConnection(const std::string &remote_agent,
             backend_set.insert(r_bknd);
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine->getType());
+            backend_set.insert(elm->getEngine()->getType());
     }
 
     // For now trying to make all the connections, can become best effort,
@@ -868,7 +890,7 @@ nixlAgentData::prepXferDlist(const std::string &agent_name,
     } else {
         backend_set = new backend_set_t();
         for (auto &elm : extra_params->backends) {
-            backend_set->insert(elm->engine);
+            backend_set->insert(elm->getEngine());
         }
     }
 
@@ -995,9 +1017,9 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     if (extra_params && extra_params->backends.size() > 0) {
         for (auto & elm : extra_params->backends) {
-            if ((local_side.descs.count(elm->engine) > 0) &&
-                (remote_side.descs.count(elm->engine) > 0)) {
-                backend = elm->engine;
+            if ((local_side.descs.count(elm->getEngine()) > 0) &&
+                (remote_side.descs.count(elm->getEngine()) > 0)) {
+                backend = elm->getEngine();
                 break;
             }
         }
@@ -1022,26 +1044,18 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
 
     if (extra_params) {
         opt_args.customParam = extra_params->customParam;
-        if (extra_params->notif) {
-            opt_args.notifMsg = *extra_params->notif;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
     }
 
-    if ((opt_args.hasNotif) && (!backend->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << backend->getType()
-                        << "' does not support notifications";
-        return NIXL_ERR_BACKEND;
+    const nixl_status_t notif_status = setNotif(*backend, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        return notif_status;
     }
 
     NIXL_SHARED_LOCK_GUARD(data->lock);
     // The prepped remote dlist snapshot is only valid for the remote registration generation
     // it was prepared from: reject if that generation was invalidated or replaced since.
-    const auto remote_sec_ref = remote_side.remoteSectionRef.lock();
-    if (!remote_sec_ref) {
+    auto remote_sec_ref = remote_side.remoteSectionRef.lock();
+    if (!remote_sec_ref || !remote_sec_ref->isValid()) {
         NIXL_ERROR_FUNC << "remote agent '" << remote_side.remoteAgent
                         << "' was invalidated or re-registered after prepped xfer request "
                            "creation; prepped descriptor lists must be re-created";
@@ -1060,7 +1074,7 @@ nixlAgent::makeXferReq(nixl_xfer_op_t operation,
                                        local_descs.getType(),
                                        remote_descs.getType(),
                                        desc_count,
-                                       remote_side.remoteSectionRef,
+                                       std::move(remote_sec_ref),
                                        nixl::trace::TraceContext{data->tracer_.get()},
                                        nixl::trace::generateRequestId(data->tracer_.get()));
     NIXL_TRACE_ATTR(trace_span, "nixl.xfer_request_id", std::to_string(handle->traceRequestId()));
@@ -1176,7 +1190,7 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
         }
     } else {
         for (auto & elm : extra_params->backends)
-            backend_set.insert(elm->engine);
+            backend_set.insert(elm->getEngine());
     }
 
     // TODO: when central KV is supported, add a call to fetchRemoteMD
@@ -1216,23 +1230,14 @@ nixlAgent::createXferReq(const nixl_xfer_op_t &operation,
     }
 
     if (extra_params) {
-        if (extra_params->notif) {
-            opt_args.notifMsg = *extra_params->notif;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            opt_args.notifMsg = extra_params->notifMsg;
-            opt_args.hasNotif = true;
-        }
-
         if (extra_params->customParam.length() > 0)
             opt_args.customParam = extra_params->customParam;
     }
 
-    if (opt_args.hasNotif && (!handle->engine->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << handle->engine->getType()
-                        << "' does not support notifications";
-        data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        return NIXL_ERR_BACKEND;
+    const nixl_status_t notif_status = setNotif(*handle->engine, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        data->addErrorTelemetry(notif_status);
+        return notif_status;
     }
 
     handle->notifMsg = opt_args.notifMsg;
@@ -1276,7 +1281,8 @@ nixlAgent::estimateXferCost(const nixlXferReqH *req_hndl,
 
     // Check if the remote agent connection info is still valid
     // (assuming cost estimation requires connection info like transfers)
-    if (!req_hndl->remoteAgent.empty() && req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteAgent.empty() &&
+        (!req_hndl->remoteSection || !req_hndl->remoteSection->isValid())) {
         NIXL_ERROR_FUNC << "invalid request handle, remote agent was invalidated or "
                            "re-registered after transfer request creation";
         data->addErrorTelemetry(NIXL_ERR_NOT_FOUND);
@@ -1347,7 +1353,7 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
     req_hndl->traceRequestSpanIdUsed_ = true;
     // The request was created against a specific remote registration generation: refuse to
     // post if that generation was invalidated or replaced by a re-registration meanwhile.
-    if (req_hndl->remoteSection.expired()) {
+    if (!req_hndl->remoteSection || !req_hndl->remoteSection->isValid()) {
         NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
                         << "' was invalidated or re-registered after transfer request creation; "
                            "not posting stale handle";
@@ -1394,31 +1400,21 @@ nixlAgent::postXferReq(nixlXferReqH *req_hndl,
         opt_args.hasNotif = true;
     }
 
-    // Updating the notification based on opt_args
     if (extra_params) {
         opt_args.customParam = extra_params->customParam;
-        if (extra_params->notif) {
-            req_hndl->notifMsg = *extra_params->notif;
-            opt_args.notifMsg = *extra_params->notif;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else if (extra_params->hasNotif) {
-            req_hndl->notifMsg = extra_params->notifMsg;
-            opt_args.notifMsg = extra_params->notifMsg;
-            req_hndl->hasNotif = true;
-            opt_args.hasNotif = true;
-        } else {
-            req_hndl->hasNotif = false;
-            opt_args.hasNotif = false;
-        }
     }
 
-    if (opt_args.hasNotif && (!req_hndl->engine->supportsNotif())) {
-        NIXL_ERROR_FUNC << "the selected backend '" << req_hndl->engine->getType()
-                        << "' does not support notifications";
-        data->addErrorTelemetry(NIXL_ERR_BACKEND);
-        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(NIXL_ERR_BACKEND));
-        return NIXL_ERR_BACKEND;
+    // A notification of extra_params replaces the one of the request
+    const nixl_status_t notif_status = setNotif(*req_hndl->engine, extra_params, opt_args);
+    if (notif_status != NIXL_SUCCESS) {
+        data->addErrorTelemetry(notif_status);
+        NIXL_TRACE_ATTR(trace_span, "nixl.status", static_cast<std::int64_t>(notif_status));
+        return notif_status;
+    }
+
+    if (extra_params) {
+        req_hndl->notifMsg = opt_args.notifMsg;
+        req_hndl->hasNotif = opt_args.hasNotif;
     }
 
     req_hndl->tracePostContext_ = call_context;
@@ -1487,13 +1483,6 @@ nixlAgent::getXferStatus (nixlXferReqH *req_hndl) const {
     // If the status is done, no need to recheck and no state changes.
     // Same for users incorrectly recalling this method in error/done.
     if (req_hndl->status == NIXL_IN_PROG) {
-        // Check if the remote was invalidated before completion
-        if (req_hndl->remoteSection.expired()) {
-            NIXL_ERROR_FUNC << "remote agent '" << req_hndl->remoteAgent
-                            << "' was invalidated or re-registered during transfer";
-            return NIXL_ERR_NOT_FOUND;
-        }
-
         req_hndl->status = req_hndl->engine->checkXfer(req_hndl->backendHandle);
         if (req_hndl->status < 0) {
             traceXferError(data->tracer_.get(), *req_hndl, req_hndl->status);
@@ -1574,7 +1563,12 @@ nixlAgent::releaseXferReq(nixlXferReqH *req_hndl) const {
     NIXL_TRACE_ATTR(
         trace_span, "nixl.xfer_execution", static_cast<std::int64_t>(req_hndl->traceExecution()));
 
-    NIXL_SHARED_LOCK_GUARD(data->lock);
+    std::shared_lock<nixlLock> read_lock(data->lock);
+    std::unique_lock<nixlLock> write_lock(data->lock, std::defer_lock);
+    if (req_hndl->remoteSection && !req_hndl->remoteSection->isValid()) [[unlikely]] {
+        read_lock.unlock();
+        write_lock.lock();
+    }
     // Refresh the transfer status before releasing its resources.
     if(req_hndl->status == NIXL_IN_PROG) {
         req_hndl->status = req_hndl->engine->checkXfer(
@@ -1649,8 +1643,9 @@ nixlAgent::getNotifs(nixl_notifs_t &notif_map,
     } else {
         backend_list = new backend_list_t();
         for (auto & elm : extra_params->backends)
-            if (elm->engine->supportsNotif())
-                backend_list->push_back(elm->engine);
+            if (elm->getEngine()->supportsNotif()) {
+                backend_list->push_back(elm->getEngine());
+            }
 
         if (backend_list->empty()) {
             NIXL_ERROR_FUNC << "none of specified backends support notifications";
@@ -1706,8 +1701,8 @@ nixlAgent::genNotif(const std::string &remote_agent,
     } else {
         backend_list = &backend_list_value;
         for (auto &elm : extra_params->backends) {
-            if (elm->engine->supportsNotif()) {
-                backend_list->push_back(elm->engine);
+            if (elm->getEngine()->supportsNotif()) {
+                backend_list->push_back(elm->getEngine());
             }
         }
     }
@@ -1844,7 +1839,7 @@ nixlAgentData::getLocalPartialMD(const nixl_reg_dlist_t &descs,
     } else {
         backend_list = &tmp_list;
         for (const auto &elm : extra_params->backends) {
-            backend_list->push_back(elm->engine);
+            backend_list->push_back(elm->getEngine());
         }
     }
 
@@ -2032,10 +2027,14 @@ nixlAgentData::invalidateRemoteMD(const std::string &remote_agent) {
 nixl_status_t
 nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
     nixl_status_t ret = NIXL_SUCCESS;
-    if (remoteSections_.erase(remote_agent) == 0) {
+    const auto sec_it = remoteSections_.find(remote_agent);
+    if (sec_it == remoteSections_.end()) {
         NIXL_INFO << __FUNCTION__ << ": remote metadata for agent '" << remote_agent
                   << "' not found.";
         ret = NIXL_ERR_NOT_FOUND;
+    } else {
+        sec_it->second->invalidate();
+        remoteSections_.erase(sec_it);
     }
 
     const auto rb_it = remoteBackends_.find(remote_agent);
@@ -2182,7 +2181,7 @@ nixlAgentData::getBackends(const nixl_opt_args_t *opt_args,
     if (opt_args && !opt_args->backends.empty()) {
         backend_set_t backends;
         for (const auto &backend : opt_args->backends) {
-            backends.insert(backend->engine);
+            backends.insert(backend->getEngine());
         }
 
         return backends;

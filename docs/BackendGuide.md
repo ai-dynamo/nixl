@@ -31,8 +31,6 @@ Note that plugin implementation is in C++ to achieve SOL, and the header files f
 
 NIXL implements a modular plugin architecture where each backend is encapsulated within a library that exposes its features through the SB API, such as [UCX](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/ucx), [GPUDirect Storage (GDS)](https://github.com/ai-dynamo/nixl/tree/main/src/plugins/cuda_gds), or any other custom implementation. The Plugin Manager component within NIXL handles discovery, loading, and instantiation of backend plugins, whether they are dynamically loaded or statically built into the NIXL library. Each plugin needs to implement the SB API, as well as a few methods for the plugin manager, which are discussed in the following sections.
 
-Note that some of the methods in the SB API are not necessary to be implemented, for instance if a backend does not support notifications, it can indicate it through supportsNotif() method, and if it returns false, the agent will not send requests with notifications to this backend. There are 5 such capability indicators, which are detailed further and which APIs are required to be implemented for each of them.
-
 ![NIXL SB API](figures/nixl_sb_api.png)
 
 ## The South Bound API
@@ -48,15 +46,11 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 
 ### Capability Indicators:
 
-* supportsLocal(): Indicates if the backend supports transfers within a node
-* supportsRemote(): Indicates if the backend supports transfers across nodes
-* supportsNotif(): Indicates if the backend supports notifications
-* getSupportedMems(): Indicates memory types supported by the backend
-* supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
-  * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
-  * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
+A backend passes its capabilities from `nixl_backend_capability_t`, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default. Their meaning is described in `src/api/cpp/backend/backend_engine.h`.
 
-Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
+In addition, getSupportedMems() indicates the memory types supported by the backend.
+
+Based on the `LOCAL`, `REMOTE` and `NOTIF` capabilities, the required methods to be implemented change. Note that a network backend must have the `REMOTE` and `NOTIF` capabilities, and preferably `LOCAL` as well, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have `LOCAL`, and `NOTIF` is optional.
 
 ### Connection Management:
 
@@ -65,9 +59,9 @@ Based on the first 3 methods (supports*), the required methods to be implemented
 * getConnInfo(): Provides connection information in form of a serialized byte array for remote agents
 * loadRemoteConnInfo(): Loads connection information (byte array) received from a remote agent
 
-Some backends require a self connection for loopback, so connect and disconnect is always required, as a backend either supports local or remote communication, or both. However, getConnInfo and loadRemoteConnInfo are required only if supportsRemote is set.
+Some backends require a self connection for loopback, so connect and disconnect is always required, as a backend either supports local or remote communication, or both. However, getConnInfo and loadRemoteConnInfo are required only if the backend has the `REMOTE` capability.
 
-Note that loadRemoteConnInfo does not initiate the connection, if the user wants to pre-establish the connection before the first transfer, there will be a call to the connect method. Another option when connect is called is when the backend has supportsLocal and a connection to the agent itself is called right after instantiation. During the time of the first transfer to an agent, if the connection was not pre-established, the backend should make the connection, either in prepXfer() or postXfer().
+Note that loadRemoteConnInfo does not initiate the connection, if the user wants to pre-establish the connection before the first transfer, there will be a call to the connect method. Another option when connect is called is when the backend has the `LOCAL` capability and a connection to the agent itself is called right after instantiation. During the time of the first transfer to an agent, if the connection was not pre-established, the backend should make the connection, either in prepXfer() or postXfer().
 
 ### Memory Management:
 
@@ -90,7 +84,7 @@ pre-opened fd; see [`src/utils/file/README.md`](../src/utils/file/README.md#path
 
 Similar to registration, each backend can make a class that inherits from nixlBackendMD to store remote identifiers in a deserialized form from the byte array, achieved by loadRemoteMD. For case of local transfers, the serialization/deserialization part is skipped, so loadLocalMD generates a pointer to an object for the remote identifier, or can output the input pointer for the registered memory.
 
-getPublicData and loadRemoteMD are required if backend supportsRemote, and loadLocalMD is required if backend supportsLocal, and unloadMD is required in all cases to release the deserialized remote identifier object.
+getPublicData and loadRemoteMD are required if the backend has the `REMOTE` capability, and loadLocalMD is required if it has the `LOCAL` capability, and unloadMD is required in all cases to release the deserialized remote identifier object.
 
 ### Transfer Operations:
 
@@ -100,7 +94,7 @@ getPublicData and loadRemoteMD are required if backend supportsRemote, and loadL
 * checkXfer(): Checks the status of a transfer request.
 * releaseReqH(): Releases a transfer request handle, which should be an extension of the nixlBackendReqH. Core refuses release while `checkXfer()` reports `NIXL_IN_PROG`; release does not cancel transfers. A non-success return keeps the handle owned by the caller. Error-state cleanup remains the backend's responsibility; an error status alone does not prove that its operations have stopped.
 
-Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not set supportsNotifications, no such notification will be asked.
+Within each transfer request, a descriptor list is passed, if there is room for parallelization across different contiguous memory locations, such as across different GPUs (one transfer can expand multiple GPUs). Optionally the user might ask for a notification, which should be sent after all the descriptors within a transfer request are sent. If a backend does not have the `NOTIF` capability, no such notification will be asked.
 
 Note that any transfer request will be prepped only once, but can be posted multiple times, as long as it gets to DONE state before getting reposted. There is no ordering guarantee across transfer requests, and no locking mechanism for any specific memory region; the user is in charge of not corrupting the memory by having two simultaneous transfers to the same location.
 
@@ -110,7 +104,7 @@ Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_R
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
 * genNotif(): Generates a notification to a remote agent, used for control or dummy notifications.
 
-Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
+Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not have the `NOTIF` capability, these two methods are not needed.
 
 ## Descriptor List Abstraction
 
@@ -142,7 +136,7 @@ The plugin manager maintains API versioning of these above APIs. The check is st
 
 ## Comparing two plugins as an example
 
-NIXL UCX plugin provides networking across different nodes, while GDS plugin provides storage access. UCX plugin sets all of the “supports” flags, while GDS only has the supportsLocal flag set. The reason being UCX is a network plugin that should support inter-agent communication and notifications, and it also supports intra-agent transfers, for instance from GPU to CPU.
+NIXL UCX plugin provides networking across different nodes, while GDS plugin provides storage access. UCX plugin declares the `LOCAL`, `REMOTE` and `NOTIF` capabilities, while GDS only declares `LOCAL`. The reason being UCX is a network plugin that should support inter-agent communication and notifications, and it also supports intra-agent transfers, for instance from GPU to CPU.
 
 However, for NIXL storage backends, there is no need to run a NIXL agent on a remote storage node. Instead, a distributed storage client on the local agent talks to the remote distributed storage, and therefore from NIXL agent point of view for all storage, whether local or remote, it has to talk to this local storage client. In other words, all the transfers are loopback to the agent itself. For the current use case, there is no need for notifications within the same agent.
 
@@ -234,7 +228,7 @@ Note that after this step, if there was at least one backend in common between t
 
 ### Invalidate remote agent metadata
 
-Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources.
+Agent will determine which backends were common during the time of loading remote metadata of that specific agent, and call **disconnect** in SB API to that agent for such backends. Also, for each of the remote identifiers stored for that remote agent for the corresponding common backends, it will call the **unloadMD** in SB API to release the resources. If transfer requests created against that metadata are still alive, **unloadMD** is deferred until the last of them is released, so it can run after **disconnect** and after the same remote agent's metadata has been loaded again. Until then the agent keeps calling **checkXfer** and **releaseReqH** on those requests, so a backend must keep whatever they use valid across **disconnect**.
 
 Note that after this step, the local agent cannot initiate transfers to the remote agent anymore, until its metadata is reloaded again. Through these two methods the dynamicity requirement of NIXL agents are achieved.
 
