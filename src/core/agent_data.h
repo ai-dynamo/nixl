@@ -143,37 +143,16 @@ class nixlBackendEngine;
 
 // This class hides away the nixlBackendEngine from user of the Agent API
 class nixlBackendH {
-    private:
-        nixlBackendEngine* engine;
+public:
+    explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine_(engine) {}
 
-        explicit nixlBackendH(nixlBackendEngine *engine) noexcept : engine(engine) {}
+    [[nodiscard]] nixlBackendEngine *
+    getEngine() const noexcept {
+        return engine_;
+    }
 
-    public:
-        ~nixlBackendH() = default;
-
-        // TODO? engine->getType() returns a const nixl_backend_t&
-        nixl_backend_t
-        getType() const noexcept {
-            return engine->getType();
-        }
-
-        bool
-        supportsRemote() const {
-            return engine->supportsRemote();
-        }
-
-        bool
-        supportsLocal() const {
-            return engine->supportsLocal();
-        }
-
-        bool
-        supportsNotif() const {
-            return engine->supportsNotif();
-        }
-
-    friend class nixlAgentData;
-    friend class nixlAgent;
+private:
+    nixlBackendEngine *const engine_;
 };
 
 #endif
