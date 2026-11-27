@@ -89,7 +89,6 @@ gtest_sources = [
     'main.cpp',
     'mocks/gmock_engine.cpp',
     'plugin_manager.cpp',
-    'backend_name_canonicalization.cpp',
     'error_handling.cpp',
     'test_transfer.cpp',
     'byte_buffer.cpp',

@@ -27,12 +27,6 @@
 
 namespace nixl::str {
 
-/** @brief Fold ASCII letters to uppercase, leaving all other bytes unchanged. */
-[[nodiscard]] inline std::string
-upperAscii(absl::string_view s) {
-    return absl::AsciiStrToUpper(s);
-}
-
 /**
  * @brief Split @p s on @p delim into non-empty, whitespace-stripped tokens.
  *

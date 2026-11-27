@@ -132,33 +132,9 @@ public:
     void
     discoverPluginsFromList(const std::string &filename);
 
-    /**
-     * @brief Resolve a backend name against all loaded, listed and discovered plugins.
-     * @param name Requested name, with optional surrounding ASCII whitespace.
-     * @param[out] canonical Exact spelling if present, otherwise the unique ASCII case match.
-     *        With no match, the trimmed name is used for standard plugin file lookup.
-     * @return NIXL_SUCCESS on resolution, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only
-     *         name, or NIXL_ERR_NOT_FOUND for an ambiguous spelling. On error, logs the reason
-     *         and leaves @p canonical untouched.
-     */
-    [[nodiscard]] nixl_status_t
-    canonicalBackendName(const nixl_backend_t &name, nixl_backend_t &canonical) const;
-
-    /**
-     * @brief Resolve and load a backend plugin.
-     * @param plugin_name Requested name, using the rules of canonicalBackendName().
-     * @return Loaded handle, or nullptr for an empty, ambiguous or unavailable name.
-     */
+    // Load a specific backend plugin
     std::shared_ptr<const nixlBackendPluginHandle>
     loadBackendPlugin(const nixl_backend_t &plugin_name);
-
-    /**
-     * @brief Load and cache a plugin using the spelling already chosen by canonicalBackendName().
-     * @param canonical_name Resolved plugin name. The caller must have ruled out ambiguity.
-     * @return Loaded handle, or nullptr for an empty or untrimmed name or an unavailable plugin.
-     */
-    std::shared_ptr<const nixlBackendPluginHandle>
-    loadResolvedBackendPlugin(const nixl_backend_t &canonical_name);
 
     // Load a specific telemetry plugin
     std::shared_ptr<const nixlTelemetryPluginHandle>
@@ -172,24 +148,12 @@ public:
     void
     unloadBackendPluginForUnitTest(const nixl_backend_t &plugin_name);
 
-    /**
-     * @brief Get the default parameters and memory types of a backend plugin.
-     * @param type Requested name, using the rules of canonicalBackendName().
-     * @param[out] mems Supported memory types.
-     * @param[out] params Default plugin parameters.
-     * @return NIXL_SUCCESS, NIXL_ERR_INVALID_PARAM for an empty or whitespace-only name,
-     *         or NIXL_ERR_NOT_FOUND for an ambiguous or unavailable plugin.
-     */
     [[nodiscard]] nixl_status_t
     getBackendParams(const nixl_backend_t &type,
                      nixl_mem_list_t &mems,
                      nixl_b_params_t &params) const;
 
-    /**
-     * @brief Find an already loaded backend plugin.
-     * @param plugin_name Requested name, using the rules of canonicalBackendName().
-     * @return Loaded handle, or nullptr for an empty, ambiguous or unloaded name.
-     */
+    // Get a backend plugin handle
     std::shared_ptr<const nixlBackendPluginHandle>
     getBackendPlugin(const nixl_backend_t &plugin_name);
 
@@ -201,12 +165,9 @@ public:
     std::vector<nixl_backend_t>
     getLoadedBackendPluginNames();
 
-    /**
-     * @brief List the distinct spellings available for backend name resolution.
-     * @return Loaded plugin names followed by additional directory and plugin-list names.
-     */
+    // Get all available backend plugin names (loaded + discovered on disk)
     std::vector<nixl_backend_t>
-    getAvailBackendPluginNames() const;
+    getAvailBackendPluginNames();
 
     // Get all loaded telemetry plugin names
     std::vector<nixl_telemetry_plugin_t>
@@ -229,9 +190,8 @@ private:
     std::map<nixl_telemetry_plugin_t, std::shared_ptr<const nixlTelemetryPluginHandle>>
         loaded_telemetry_plugins_;
     std::map<std::string, std::shared_ptr<const nixlTracePluginHandle>> loaded_trace_plugins_;
-    // Standard filenames seen during discovery, by plugin name and directory. An entry from
-    // the plugin list may have no directory.
-    std::map<nixl_backend_t, std::set<std::filesystem::path>> discovered_backend_plugins_;
+    // Plugins discovered on disk but not yet dlopen'd
+    std::set<nixl_backend_t> discovered_backend_plugins_;
     // Explicit paths from the plugin list file (name -> .so path)
     std::map<nixl_backend_t, std::string> explicit_plugin_paths_;
     std::vector<std::string> plugin_dirs_;
@@ -256,7 +216,7 @@ private:
 
     // Discover helper functions
     void
-    discoverBackendPlugin(const std::filesystem::directory_entry &entry);
+    discoverBackendPlugin(const std::string &filename);
 
     void
     discoverTelemetryPlugin(const std::string &filename);
