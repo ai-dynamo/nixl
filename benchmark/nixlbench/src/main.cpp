@@ -117,18 +117,18 @@ static int processBatchSizes(xferBenchWorker &worker,
          !worker.signaled() &&
              batch_size <= xferBenchConfig::max_batch_size;
          batch_size *= 2) {
+        size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
+        auto local_trans_lists =
+            createTransferDescLists(worker, iov_lists, block_size, effective_batch, num_threads);
+
+        if (worker.isTarget() && xferBenchConfig::isStorageBackend()) {
+            std::cerr << "storage backend should be always an initiator" << std::endl;
+            return EXIT_FAILURE;
+        }
+
         for (int repeat = 0; !worker.signaled() && repeat < xferBenchConfig::batch_repeat;
              ++repeat) {
-            size_t effective_batch = batch_size * xferBenchConfig::pipeline_depth;
-            auto local_trans_lists = createTransferDescLists(
-                worker, iov_lists, block_size, effective_batch, num_threads);
-
             if (worker.isTarget()) {
-                if (xferBenchConfig::isStorageBackend()) {
-                    std::cerr << "storage backend should be always an initiator" << std::endl;
-                    return EXIT_FAILURE;
-                }
-
                 worker.exchangeIOV(local_trans_lists, block_size);
                 worker.poll(block_size);
 
