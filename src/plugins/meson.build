@@ -33,6 +33,10 @@ if enabled_plugins.get('REDIS')
     subdir('redis')
 endif
 
+if enabled_plugins.get('VALKEY')
+    subdir('valkey')
+endif
+
 if 'DAOS' in static_plugins and not enabled_plugins.get('DAOS')
     error('DAOS listed in static_plugins must also be enabled')
 endif
