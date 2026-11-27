@@ -30,6 +30,7 @@
 #include <thread>
 #include <ostream>
 #include <stack>
+#include <cstddef>
 
 #include "nixl.h"
 #include "backend/backend_aux.h"
@@ -42,9 +43,12 @@ class nixlLibfabricConnection;
 /**
  * @brief Request structure for libfabric operations
  *
+ * Every operation passes &ctx as its libfabric context, and a completion maps op_context back to
+ * the request with a plain cast (nixlLibfabricRail::findRequestFromContext()). ctx must therefore
+ * stay the first member; the static_assert after the struct enforces it.
  */
 struct nixlLibfabricReq {
-    fi_context ctx; ///< Libfabric context for operation tracking
+    fi_context ctx; ///< Libfabric context for operation tracking; must stay the first member
     size_t rail_id; ///< Rail ID that owns this request
     size_t pool_index; ///< Index in the pool for deque compatibility
     uint32_t xfer_id; ///< Pre-assigned globally unique transfer ID
@@ -83,6 +87,16 @@ struct nixlLibfabricReq {
     }
 };
 
+// The std::function member makes nixlLibfabricReq non-standard-layout, where offsetof is only
+// conditionally supported. GCC and Clang support it for classes without virtual bases but warn,
+// so the warning is suppressed for this check alone.
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Winvalid-offsetof"
+static_assert(offsetof(nixlLibfabricReq, ctx) == 0,
+              "ctx must be the first member of nixlLibfabricReq: completions cast op_context "
+              "back to the request");
+#pragma GCC diagnostic pop
+
 /** Thread-safe request pool with O(1) allocation/release */
 class RequestPool {
 public:
@@ -95,10 +109,6 @@ public:
     /** Release request back to the pool */
     virtual void
     release(nixlLibfabricReq *req) const;
-
-    /** Find request by libfabric context pointer */
-    nixlLibfabricReq *
-    findByContext(void *context) const;
 
     /** Get count of currently active requests */
     size_t

@@ -124,22 +124,6 @@ RequestPool::release(nixlLibfabricReq *req) const {
     free_indices_.push(idx);
 }
 
-nixlLibfabricReq *
-RequestPool::findByContext(void *context) const {
-    std::lock_guard<std::mutex> lock(pool_mutex_);
-
-    if (!context) {
-        return nullptr;
-    }
-
-    // Since fi_context2 ctx is the first member of nixlLibfabricReq,
-    // we can directly cast the context pointer to the request pointer
-    nixlLibfabricReq *req = reinterpret_cast<nixlLibfabricReq *>(context);
-
-    NIXL_TRACE << "From context the request xfer_id is : " << req->xfer_id;
-    return req;
-}
-
 size_t
 RequestPool::getActiveRequestCount() const {
     std::lock_guard<std::mutex> lock(pool_mutex_);
@@ -2110,18 +2094,12 @@ nixlLibfabricRail::findRequestFromContext(void *context) const {
         NIXL_ERROR << "Null context provided to findRequestFromContext on rail " << rail_id;
         return nullptr;
     }
-    // Try control pool first
-    nixlLibfabricReq *req = control_request_pool_.findByContext(context);
-    if (req) {
-        return req;
-    }
-    // Try data pool
-    req = data_request_pool_.findByContext(context);
-    if (req) {
-        return req;
-    }
-    NIXL_ERROR << "No request found for context " << context << " on rail " << rail_id;
-    return nullptr;
+    // Every request is posted with &req->ctx as its context, and ctx is the first member of
+    // nixlLibfabricReq (static_assert in libfabric_rail.h), so the context is the request itself.
+    // Neither pool needs to be consulted or locked.
+    nixlLibfabricReq *req = reinterpret_cast<nixlLibfabricReq *>(context);
+    NIXL_TRACE << "From context the request xfer_id is : " << req->xfer_id;
+    return req;
 }
 
 fi_info *
