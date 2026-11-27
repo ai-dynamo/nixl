@@ -49,6 +49,10 @@ if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugin
     nixl_lib_deps += [ doca_memos_backend_interface ]
 endif
 
+if 'WQS' in static_plugins
+    nixl_lib_deps += [ wqs_backend_interface ]
+endif
+
 if 'DAOS' in static_plugins
     nixl_lib_deps += [ daos_backend_interface ]
 endif
