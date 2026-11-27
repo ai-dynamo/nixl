@@ -53,7 +53,8 @@ public:
            std::string_view value,
            condition_t condition = condition_t::DEFAULT) const;
 
-    // Set the RMA rails unless they differ from the UCX default
+    // Set the RMA rails under the DEFAULT condition, keeping the rails of the GPU buffers whose
+    // NICs UCX assigns
     void
     modifyMaxRmaRails(unsigned rails) const;
 
@@ -75,10 +76,9 @@ private:
     [[nodiscard]] static dumped_values_t
     dumpValues(const ucp_config_t &config);
 
-    // The variable name and value that modify() keeps under the condition, if any. With an
-    // expected value, also keep any other value.
+    // The variable name and value that modify() keeps under the condition, if any
     [[nodiscard]] std::optional<std::pair<std::string, std::string>>
-    keptValue(std::string_view key, condition_t condition, std::string_view expected = {}) const;
+    keptValue(std::string_view key, condition_t condition) const;
 
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
                                                                           &ucp_config_release};

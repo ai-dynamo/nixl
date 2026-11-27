@@ -310,25 +310,25 @@ TEST_F(UcxConfigTest, ModifyMaxRmaRailsKeepsEnvValue) {
     }
 }
 
-TEST_F(UcxConfigTest, ModifyMaxRmaRailsKeepsAliasValue) {
-    env_.addVar("UCX_MAX_RMA_LANES", "4");
-    EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", "4"));
-}
-
 TEST_F(UcxConfigDeathTest, ModifyMaxRmaRailsKeepsConfigFileValue) {
-    // As a platform section of ucx.conf sets 4 rails
+    // As a platform section of ucx.conf sets 4 rails. A UCX version that dumps a value from a
+    // configuration file as a default one does not tell it from a default value, so then the
+    // value is modified
     EXPECT_EXIT(
         {
             addConfigFileLine("UCX_MAX_RMA_RAILS=4");
             const auto rails = getPrintedValue("MAX_RMA_RAILS", "4");
-            if (getValue(nixl::ucx::config(), "MAX_RMA_RAILS") != rails) {
+            const nixl::ucx::config initial;
+            if (getValue(initial, "MAX_RMA_RAILS") != rails) {
                 std::cerr << "The UCX configuration file is not applied" << std::endl;
                 std::_Exit(1);
             }
 
+            const bool reported = !getDumpLine(initial, "MAX_RMA_RAILS").starts_with("# ");
+            const auto expected = reported ? rails : getPrintedValue("MAX_RMA_RAILS", "2");
             const auto value = modifyMaxRmaRails();
-            std::cerr << "MAX_RMA_RAILS=" << value << ", expected " << rails << std::endl;
-            std::_Exit((value == rails) ? 0 : 1);
+            std::cerr << "MAX_RMA_RAILS=" << value << ", expected " << expected << std::endl;
+            std::_Exit((value == expected) ? 0 : 1);
         },
         ::testing::ExitedWithCode(0),
         "");

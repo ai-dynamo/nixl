@@ -95,7 +95,7 @@ config::modify(std::string_view key, std::string_view value, condition_t conditi
 }
 
 std::optional<std::pair<std::string, std::string>>
-config::keptValue(std::string_view key, condition_t condition, std::string_view expected) const {
+config::keptValue(std::string_view key, condition_t condition) const {
     if (condition == condition_t::ALWAYS) {
         return std::nullopt;
     }
@@ -113,7 +113,7 @@ config::keptValue(std::string_view key, condition_t condition, std::string_view 
     }
 
     const auto &[initial_value, is_default] = it->second;
-    if (!is_default || (!expected.empty() && (initial_value != expected))) {
+    if (!is_default) {
         return std::make_pair("UCX_" + std::string(key), initial_value);
     }
 
@@ -123,24 +123,16 @@ config::keptValue(std::string_view key, condition_t condition, std::string_view 
 void
 config::modifyMaxRmaRails(unsigned rails) const {
     auto value = std::to_string(rails);
-    std::string_view ucx_default = "1";
 
     // Since openucx/ucx#12325 the UCX default is "1,assigned:auto", dumped as
     // "default:1,assigned:auto": 1 rail, except for the GPU buffers whose NICs UCX assigns,
-    // which get every lane of their NICs
+    // which get every lane of their NICs. Keep that exception.
     const auto it = initialValues_.find("MAX_RMA_RAILS");
     if ((it != initialValues_.end()) && it->second.value.starts_with("default:")) {
         value += ",assigned:auto";
-        ucx_default = "default:1,assigned:auto";
     }
 
-    // Some UCX versions dump a configuration file value as a default one, and UCX dumps a value
-    // set by the MAX_RMA_LANES alias as a default one, so keep any value other than the default
-    if (const auto kept = keptValue("MAX_RMA_RAILS", condition_t::DEFAULT, ucx_default)) {
-        NIXL_DEBUG << "UCX config already set: " << kept->first << "=" << kept->second;
-    } else {
-        modify("MAX_RMA_RAILS", value, condition_t::ALWAYS);
-    }
+    modify("MAX_RMA_RAILS", value);
 }
 
 void
