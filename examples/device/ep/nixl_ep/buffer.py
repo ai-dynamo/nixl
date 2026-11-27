@@ -209,6 +209,7 @@ class Buffer:
             num_max_dispatch_tokens_per_rank: the maximum number of tokens to dispatch, all the ranks must hold the same value.
                 The number of ranks represented in the dispatch layout multiplied by
                 `num_max_dispatch_tokens_per_rank` must be a multiple of 4 for TMA alignment.
+                Keep it fixed across calls unless `low_latency_layout` was set at initialization.
             num_experts: total physical expert capacity used for the dispatch layout.
                 It must cover all active experts and defaults to the active expert count.
             cumulative_local_expert_recv_stats: a cumulative expert count tensor for statistics, which should have shape
@@ -419,11 +420,18 @@ class Buffer:
             num_max_dispatch_tokens_per_rank, hidden, layout_range.size(1)
         )
 
+    @property
+    def has_fixed_low_latency_layout(self) -> bool:
+        """Whether this buffer supports changing the capacity of successive dispatches."""
+        return self.runtime.has_fixed_low_latency_layout
+
     def update_memory_buffers(
         self,
         num_ranks: int,
         num_experts_per_rank: int,
         num_rdma_bytes: int,
+        *,
+        low_latency_layout: Optional[Tuple[int, int]] = None,
     ):
         """
         Allocate remote memory for the communication buffer.
@@ -432,12 +440,19 @@ class Buffer:
             num_ranks: rank capacity used to size the communication buffers.
             num_experts_per_rank: the number of experts per rank.
             num_rdma_bytes: the buffer size for RDMA communication.
+            low_latency_layout: fixed (tokens per rank, hidden size) used to lay out
+                both low-latency RDMA slots. Pass the same pair on all ranks when
+                dispatch capacity can vary between calls. Each dispatch uses at most
+                the reserved tokens per rank and the specified hidden size.
         """
+        self.runtime.update_memory_buffers(
+            num_ranks,
+            num_experts_per_rank,
+            num_rdma_bytes,
+            low_latency_layout,
+        )
         self.group_size = num_ranks
         self.num_rdma_bytes = num_rdma_bytes
-        self.runtime.update_memory_buffers(
-            num_ranks, num_experts_per_rank, num_rdma_bytes
-        )
 
     def set_tcp_store_group(self, tcp_store_group: Optional[dist.TCPStore]) -> None:
         """

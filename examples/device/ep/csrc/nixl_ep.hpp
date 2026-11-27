@@ -46,6 +46,7 @@
 #include <optional>
 #include <string>
 #include <tuple>
+#include <utility>
 #include <vector>
 
 #ifndef TORCH_EXTENSION_NAME
@@ -93,6 +94,9 @@ private:
     // RDMA Buffer
     int64_t num_rdma_bytes;
     void* rdma_buffer_ptr = nullptr;
+    std::optional<std::pair<int, int>> low_latency_layout_shape;
+
+    EPLayout get_low_latency_layout(int dispatch_capacity, int hidden) const;
 
     int *mask_buffer_ptr = nullptr;
     int *sync_buffer_ptr = nullptr;
@@ -163,7 +167,10 @@ private:
 public:
     Buffer(int rank, bool explicitly_destroy, int timeout_ms);
 
-    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes);
+    void update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes,
+                               std::optional<std::pair<int, int>> low_latency_layout = std::nullopt);
+
+    bool has_fixed_low_latency_layout() const { return low_latency_layout_shape.has_value(); }
 
     void connect_ranks(const std::vector<int>& remote_ranks_list, const std::optional<std::vector<nixl_blob_t>>& remote_mds = std::nullopt, bool activate = true);
 

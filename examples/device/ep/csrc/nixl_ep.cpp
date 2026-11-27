@@ -206,14 +206,38 @@ query_mask_buffer_py(const nixl_ep::Buffer &self, const pybind11::object &mask_s
 
 namespace nixl_ep {
 
-void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes)
+void Buffer::update_memory_buffers(int num_ranks, int num_experts_per_rank, int64_t num_rdma_bytes,
+                                   std::optional<std::pair<int, int>> low_latency_layout)
 {
     if (!available) {
+        if (low_latency_layout) {
+            const auto [capacity, hidden] = *low_latency_layout;
+            EP_HOST_ASSERT(num_ranks > 0 and num_experts_per_rank > 0);
+            EP_HOST_ASSERT(num_experts_per_rank <= std::numeric_limits<int>::max() / num_ranks);
+            EP_HOST_ASSERT(capacity > 0 and hidden > 0 and hidden % 128 == 0);
+            const EPLayout layout(nullptr, capacity, hidden, num_ranks, num_ranks * num_experts_per_rank);
+            EP_HOST_ASSERT(num_rdma_bytes > 0 and layout.total_bytes <= static_cast<size_t>(num_rdma_bytes));
+        }
         init(num_ranks, num_experts_per_rank, num_rdma_bytes);
+        low_latency_layout_shape = low_latency_layout;
         available = true;
     } else {
         throw std::runtime_error("Multiple calls to update_memory_buffers are not supported");
     }
+}
+
+EPLayout Buffer::get_low_latency_layout(int dispatch_capacity, int hidden) const {
+    int layout_capacity = dispatch_capacity;
+    if (low_latency_layout_shape) {
+        const auto [reserved_capacity, reserved_hidden] = *low_latency_layout_shape;
+        EP_HOST_ASSERT(dispatch_capacity > 0 and dispatch_capacity <= reserved_capacity);
+        EP_HOST_ASSERT(hidden == reserved_hidden);
+        // Successive operations can overlap in time on different slots.
+        layout_capacity = reserved_capacity;
+    }
+    EPLayout layout(rdma_buffer_ptr, layout_capacity, hidden, max_num_ranks, max_num_ranks * num_experts_per_rank);
+    EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
+    return layout;
 }
 
 Buffer::Buffer(int rank, bool explicitly_destroy, int timeout_ms):
@@ -590,9 +614,7 @@ Buffer::dispatch(const torch::stable::Tensor &x, const torch::stable::Tensor &to
     auto num_topk = static_cast<int>(topk_idx.size(1));
 
     // Buffer control
-    int max_num_experts = max_num_ranks * num_experts_per_rank;
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
-    EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
+    auto layout = get_low_latency_layout(num_max_dispatch_tokens_per_rank, hidden);
     auto buffer = layout.buffers[buffer_idx];
     auto next_buffer = layout.buffers[buffer_idx ^= 1];
 
@@ -725,9 +747,7 @@ Buffer::combine(const torch::stable::Tensor& x, const torch::stable::Tensor& top
     auto num_combined_tokens = static_cast<int>(topk_weights.size(0));
 
     // Buffer control
-    int max_num_experts = max_num_ranks * num_experts_per_rank;
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
-    EP_HOST_ASSERT(layout.total_bytes <= num_rdma_bytes);
+    auto layout = get_low_latency_layout(num_max_dispatch_tokens_per_rank, hidden);
     auto buffer = layout.buffers[buffer_idx];
     auto next_buffer = layout.buffers[buffer_idx ^= 1];
 
@@ -793,8 +813,7 @@ torch::stable::Tensor
 Buffer::get_next_combine_buffer(int num_max_dispatch_tokens_per_rank, int hidden,
                                 int rank_bound) const {
     EP_HOST_ASSERT(rank_bound >= active_rank_bound and rank_bound <= max_num_ranks);
-    int max_num_experts = max_num_ranks * num_experts_per_rank;
-    EPLayout layout(rdma_buffer_ptr, num_max_dispatch_tokens_per_rank, hidden, max_num_ranks, max_num_experts);
+    auto layout = get_low_latency_layout(num_max_dispatch_tokens_per_rank, hidden);
 
     auto buffer = layout.buffers[buffer_idx];
     constexpr auto dtype_elem_size = sizeof(uint16_t);
@@ -1077,7 +1096,10 @@ PYBIND11_MODULE(TORCH_EXTENSION_NAME, m) {
 
     pybind11::class_<nixl_ep::Buffer>(m, "Buffer")
         .def(pybind11::init<int, bool, int>())
-        .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers)
+        .def("update_memory_buffers", &nixl_ep::Buffer::update_memory_buffers,
+             pybind11::arg("num_ranks"), pybind11::arg("num_experts_per_rank"), pybind11::arg("num_rdma_bytes"),
+             pybind11::arg("low_latency_layout") = std::nullopt)
+        .def_property_readonly("has_fixed_low_latency_layout", &nixl_ep::Buffer::has_fixed_low_latency_layout)
         .def("barrier", &nixl_ep::Buffer::barrier)
         .def("connect_ranks", [](nixl_ep::Buffer &buffer, const std::vector<int>& remote_ranks, const std::optional<std::vector<pybind11::bytes>>& remote_mds, bool activate) {
             buffer.connect_ranks(remote_ranks, nixl_ep::convert_mds(remote_mds), activate);
