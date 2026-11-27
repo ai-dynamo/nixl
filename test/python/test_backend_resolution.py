@@ -13,6 +13,12 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+"""Backend-name handling of the Python wrapper, against mock bindings.
+
+Names stay exact; a near miss in case or padding only gets a spelling hint.
+Needs neither a built NIXL nor any plugin.
+"""
+
 import logging
 import sys
 from importlib.util import module_from_spec, spec_from_file_location
@@ -35,8 +41,11 @@ class BindingInvalidParamError(RuntimeError):
 def api():
     """Import this checkout's wrapper without importing or replacing an installed nixl."""
     package = ModuleType("_nixl_backend_resolution_test")
+    # Attributes the wrapper reads at import or call time are preset: a bare
+    # Mock would hand back a Mock instead of an exception class.
     package._bindings = Mock(
         DEFAULT_COMM_PORT=0,
+        nixlNotFoundError=BindingNotFoundError,
         nixlInvalidParamError=BindingInvalidParamError,
         nixlAgent=None,
     )
@@ -59,14 +68,10 @@ def make_agent(api, monkeypatch):
     def make(plugins, configured=(), num_threads=0):
         binding = Mock()
         binding.getAvailPlugins.return_value = list(plugins)
-        created = set()
 
         def create_backend(name, params):
             if name not in plugins:
                 raise BindingNotFoundError(name)
-            if name in created:
-                raise BindingInvalidParamError(name)
-            created.add(name)
             return plugins[name]
 
         binding.createBackend.side_effect = create_backend
@@ -83,110 +88,107 @@ def make_agent(api, monkeypatch):
     return make
 
 
-@pytest.mark.parametrize("name", ["ucx", "UCX", " \tUcX\r\n"])
-def test_create_and_query_use_the_canonical_backend(make_agent, name):
+def warnings_of(caplog):
+    return [r.getMessage() for r in caplog.records if r.levelno == logging.WARNING]
+
+
+def test_configured_backend_keeps_exact_names_and_suggests_the_spelling(
+    make_agent, caplog
+):
+    agent = make_agent(
+        {"LIBFABRIC": 11, "UCX": 12}, ["libfabric", "UCX", "missing"], num_threads=2
+    )
+    agent.agent.createBackend.assert_called_once_with("UCX", {"num_threads": "2"})
+    assert agent.backends == {"UCX": 12}
+    assert warnings_of(caplog) == [
+        "Skipping backend registration libfabric due to the missing plugin."
+        " Did you mean 'LIBFABRIC'?",
+        "Skipping backend registration missing due to the missing plugin.",
+    ]
+
+
+def test_create_backend_not_found_suggests_the_plugin_spelling(make_agent, caplog):
     agent = make_agent({"UCX": 11})
-    agent.create_backend(name)
-    agent.agent.createBackend.assert_called_once_with("UCX", {})
-    with pytest.raises(BindingInvalidParamError):
-        agent.create_backend("UCX")
-    assert agent.backends == {"UCX": 11}
-    assert agent.get_backend_params(name) == {"option": "1"}
-    assert agent.get_backend_mem_types(name) == ["DRAM"]
-    assert agent.get_plugin_params(name) == {"default": "0"}
-    assert agent.get_plugin_mem_types(name) == ["DRAM"]
-    agent.agent.getPluginParams.assert_called_once_with("UCX")
-    agent.query_memory("descs", name)
+    with pytest.raises(BindingNotFoundError):
+        agent.create_backend(" ucx ")
+    agent.agent.createBackend.assert_called_once_with(" ucx ", {})
+    assert agent.backends == {}
+    assert warnings_of(caplog) == [
+        "Backend plugin  ucx  not found. Did you mean 'UCX'?"
+    ]
+
+    caplog.clear()
+    with pytest.raises(BindingNotFoundError):
+        agent.create_backend("missing")
+    assert warnings_of(caplog) == []
+
+
+def test_plugin_and_backend_queries_suggest_the_spelling(make_agent, caplog):
+    agent = make_agent({"UCX": 11, "ucx": 12, "POSIX": 13}, ["UCX"])
+    assert agent.get_plugin_params("Ucx") == {}
+    assert agent.get_plugin_mem_types("Ucx") == []
+    assert agent.get_backend_params("ucx") == {}
+    assert agent.get_backend_mem_types("ucx") == []
+    agent.agent.getPluginParams.assert_not_called()
+    assert warnings_of(caplog) == [
+        "Plugin Ucx is not available to get its parameters."
+        " Did you mean 'UCX' or 'ucx'?",
+        "Plugin Ucx is not available to get its supported mem types."
+        " Did you mean 'UCX' or 'ucx'?",
+        "Backend ucx not instantiated to get its parameters. Did you mean 'UCX'?",
+        "Backend ucx not instantiated to get its supported mem types."
+        " Did you mean 'UCX'?",
+    ]
+
+
+@pytest.mark.parametrize(
+    "use",
+    [
+        lambda agent, names: agent.register_memory("descs", backends=names),
+        lambda agent, names: agent.deregister_memory("descs", backends=names),
+        lambda agent, names: agent.make_connection("peer", backends=names),
+        lambda agent, names: agent.get_new_notifs(backends=names),
+    ],
+)
+def test_unknown_backend_name_is_a_readable_key_error(make_agent, use):
+    agent = make_agent({"UCX": 11, "POSIX": 22}, ["UCX", "POSIX"])
+    with pytest.raises(KeyError) as excinfo:
+        use(agent, ["POSIX", "ucx"])
+    assert str(excinfo.value) == (
+        "Backend 'ucx' not found. Available backends: ['UCX', 'POSIX']."
+        " Did you mean 'UCX'?"
+    )
+    with pytest.raises(KeyError) as excinfo:
+        use(agent, ["missing"])
+    assert str(excinfo.value).endswith("Available backends: ['UCX', 'POSIX'].")
+
+
+def test_query_memory_suggests_the_spelling(make_agent):
+    agent = make_agent({"UCX": 11}, ["UCX"])
+    with pytest.raises(ValueError, match=r"not found.*Did you mean 'UCX'\?"):
+        agent.query_memory("descs", "ucx")
+    agent.agent.queryMem.assert_not_called()
+    agent.query_memory("descs", "UCX")
     agent.agent.queryMem.assert_called_once_with("descs", 11)
 
 
-def test_backend_lists_register_each_handle_once_in_request_order(make_agent):
+def test_backend_lists_pass_each_handle_once_in_request_order(make_agent):
     agent = make_agent(
-        {"UCX": 11, "POSIX": 22, "SECOND_NAME": 11},
-        ["ucx", " UCX ", "POSIX", "SECOND_NAME"],
+        {"UCX": 11, "POSIX": 22, "SECOND_NAME": 11}, ["UCX", "POSIX", "SECOND_NAME"]
     )
-    assert agent.agent.createBackend.call_args_list == [
-        call("UCX", {}),
-        call("POSIX", {}),
-        call("SECOND_NAME", {}),
-    ]
-    assert (
-        agent.register_memory(
-            "descs", backends=[" posix ", "ucx", " UCX ", "SECOND_NAME"]
-        )
-        == "descs"
-    )
+    agent.register_memory("descs", backends=["POSIX", "UCX", "POSIX", "SECOND_NAME"])
     agent.agent.registerMem.assert_called_once_with("descs", [22, 11])
-    agent.deregister_memory("descs", backends=["UCX", "posix", " ucx "])
+    agent.deregister_memory("descs", backends=["UCX", "POSIX", "UCX"])
     agent.agent.deregisterMem.assert_called_once_with("descs", [11, 22])
+    agent.make_connection("peer", backends=["UCX", "UCX"])
+    agent.agent.makeConnection.assert_called_once_with("peer", [11])
 
 
-def test_notification_uses_the_resolved_handle_list(make_agent):
+def test_notification_passes_a_handle_list(make_agent):
     agent = make_agent({"UCX": 11}, ["UCX"])
     agent.send_notif("peer", b"hello")
-    agent.send_notif("peer", b"hello", backend=" ucx ")
+    agent.send_notif("peer", b"hello", backend="UCX")
     assert agent.agent.genNotif.call_args_list == [
         call("peer", b"hello"),
         call("peer", b"hello", [11]),
     ]
-
-
-def test_mooncake_alias_forwards_thread_count(make_agent):
-    agent = make_agent({"MOONCAKE": 11}, [" mooncake "], num_threads=3)
-    agent.agent.createBackend.assert_called_once_with("MOONCAKE", {"num_threads": "3"})
-
-
-@pytest.mark.parametrize("first, second", [("UCX", "ucx"), ("ucx", "UCX")])
-def test_ambiguous_even_if_only_one_spelling_is_created(make_agent, first, second):
-    agent = make_agent({first: 11, second: 22}, [first])
-    error = "Ambiguous backend name 'Ucx': UCX, ucx"
-    with pytest.raises(ValueError, match=error):
-        agent.create_backend(" Ucx ")
-    with pytest.raises(ValueError, match=error):
-        agent.register_memory("descs", backends=[first, "Ucx"])
-    agent.agent.registerMem.assert_not_called()
-    agent.agent.createBackend.assert_called_once_with(first, {})
-    with pytest.raises(KeyError):
-        agent.register_memory("descs", backends=[second])
-
-    agent.create_backend(" " + second)
-    agent.register_memory("descs", backends=[second, first])
-    agent.agent.registerMem.assert_called_once_with("descs", [22, 11])
-    with pytest.raises(ValueError, match=error):
-        agent.query_memory("descs", "Ucx")
-    agent.agent.queryMem.assert_not_called()
-
-
-def test_newly_available_spelling_is_considered_before_an_alias_is_used(make_agent):
-    plugins = {"UCX": 11}
-    agent = make_agent(plugins, ["UCX"])
-    plugins["ucx"] = 22
-    agent.agent.getAvailPlugins.return_value = list(plugins)
-    with pytest.raises(ValueError, match="UCX, ucx"):
-        agent.query_memory("descs", "Ucx")
-    agent.create_backend(" ucx ")
-    assert agent.backends == {"UCX": 11, "ucx": 22}
-
-
-@pytest.mark.parametrize("unknown", ["missing", "ß", "\u00a0UCX\u00a0"])
-def test_not_found_and_ascii_only_matching(make_agent, unknown):
-    agent = make_agent({"UCX": 11, "SS": 22}, ["UCX", "SS"])
-    with pytest.raises(BindingNotFoundError):
-        agent.create_backend(" " + unknown + " ")
-    agent.agent.createBackend.assert_called_with(unknown, {})
-    assert agent.get_plugin_params(unknown) == {}
-    assert agent.get_backend_mem_types(unknown) == []
-    with pytest.raises(KeyError):
-        agent.register_memory("descs", backends=["UCX", unknown])
-    with pytest.raises(ValueError, match="not found"):
-        agent.query_memory("descs", unknown)
-    agent.agent.registerMem.assert_not_called()
-    agent.agent.queryMem.assert_not_called()
-
-
-@pytest.mark.parametrize("name", ["", " \t\r\n\f\v"])
-def test_empty_name_is_invalid(make_agent, name):
-    agent = make_agent({"UCX": 11})
-    with pytest.raises(BindingInvalidParamError, match="Empty backend name"):
-        agent.create_backend(name)
-    agent.agent.createBackend.assert_not_called()

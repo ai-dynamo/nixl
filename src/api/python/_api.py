@@ -18,8 +18,7 @@ from __future__ import annotations
 import pickle
 import sys
 from enum import Enum
-from string import ascii_lowercase, ascii_uppercase
-from typing import TYPE_CHECKING, Optional, Union
+from typing import TYPE_CHECKING, Iterable, Optional, Union
 
 import numpy as np
 
@@ -45,7 +44,25 @@ def _is_torch_tensor(obj: object) -> bool:
 
 
 DEFAULT_COMM_PORT = nixlBind.DEFAULT_COMM_PORT
-_ASCII_UPPER = str.maketrans(ascii_lowercase, ascii_uppercase)
+
+
+def _spelling_hint(name: str, known: Iterable[str]) -> str:
+    """Suggest the known names that differ from name only in case or padding.
+
+    Backend names stay exact; this only makes a near miss easier to spot.
+    """
+    folded = name.strip().upper()
+    matches = sorted({k for k in known if k != name and k.upper() == folded})
+    if not matches:
+        return ""
+    return " Did you mean " + " or ".join(f"'{m}'" for m in matches) + "?"
+
+
+class _UnknownBackendError(KeyError):
+    """KeyError for a backend name that was not created, with a readable message."""
+
+    def __str__(self) -> str:
+        return str(self.args[0])
 
 
 class nixl_prepped_dlist_handle:
@@ -220,13 +237,6 @@ class nixl_agent:
         agent_name: Name of the agent, should be unique for clarity.
         nixl_conf: Optional configuration for the agent, described in nixl_agent_config.
         instantiate_all: Whether to instantiate all available backend plugins.
-
-    Raises:
-        nixlInvalidParamError: An entry in nixl_conf.backends is empty after
-            trimming ASCII whitespace.
-        ValueError: An entry in nixl_conf.backends is ambiguous. The C++ methods
-            nixlAgent::createBackend and nixlAgent::getPluginParams return
-            NIXL_ERR_NOT_FOUND for the same name.
     """
 
     def __init__(
@@ -279,26 +289,23 @@ class nixl_agent:
             nixl_conf.backends = self.plugin_list
 
         for bknd in nixl_conf.backends:
-            bknd = self._canonical_backend_name(bknd)
-            if bknd in self.backends:
-                continue
             if bknd not in self.plugin_list:
                 logger.warning(
-                    "Skipping backend registration %s due to the missing plugin.",
+                    "Skipping backend registration %s due to the missing plugin.%s",
                     bknd,
+                    _spelling_hint(bknd, self.plugin_list),
                 )
             else:
                 # TODO: improve population of init from nixl_conf
                 init: dict[str, str] = {}
                 if nixl_conf.num_threads > 0:
-                    bknd_upper = bknd.translate(_ASCII_UPPER)
-                    if bknd_upper in ("UCX", "OBJ", "LIBFABRIC", "MOONCAKE"):
+                    if bknd in ("UCX", "OBJ", "LIBFABRIC", "MOONCAKE"):
                         init["num_threads"] = str(nixl_conf.num_threads)
-                    elif bknd_upper == "GDS_MT":
+                    elif bknd == "GDS_MT":
                         init["thread_count"] = str(nixl_conf.num_threads)
-                    elif bknd_upper == "UCCL":
+                    elif bknd == "UCCL":
                         init["num_cpus"] = str(nixl_conf.num_threads)
-                self._create_backend(bknd, init)
+                self.create_backend(bknd, init)
 
         self.nixl_mems = {
             "DRAM": nixlBind.DRAM_SEG,
@@ -358,12 +365,13 @@ class nixl_agent:
         Returns:
             List of supported memory types.
         """
-        backend = self._canonical_backend_name(backend)
         if backend not in self.plugin_mem_types:
             self._load_plugin_params(backend)
         if backend not in self.plugin_mem_types:
             logger.warning(
-                "Plugin %s is not available to get its supported mem types.", backend
+                "Plugin %s is not available to get its supported mem types.%s",
+                backend,
+                _spelling_hint(backend, self.plugin_list),
             )
             return []
         return self.plugin_mem_types[backend]
@@ -378,11 +386,14 @@ class nixl_agent:
         Returns:
             Dictionary of plugin parameters, described above.
         """
-        backend = self._canonical_backend_name(backend)
         if backend not in self.plugin_b_options:
             self._load_plugin_params(backend)
         if backend not in self.plugin_b_options:
-            logger.warning("Plugin %s is not available to get its parameters.", backend)
+            logger.warning(
+                "Plugin %s is not available to get its parameters.%s",
+                backend,
+                _spelling_hint(backend, self.plugin_list),
+            )
             return {}
         return self.plugin_b_options[backend]
 
@@ -398,12 +409,13 @@ class nixl_agent:
         Returns:
             List of supported memory types.
         """
-        backend = self._canonical_backend_name(backend)
         if backend in self.backend_mems:
             return self.backend_mems[backend]
         else:
             logger.warning(
-                "Backend %s not instantiated to get its supported mem types.", backend
+                "Backend %s not instantiated to get its supported mem types.%s",
+                backend,
+                _spelling_hint(backend, self.backends),
             )
             return []
 
@@ -419,47 +431,28 @@ class nixl_agent:
         Returns:
             Dictionary of backend parameters, described in get_plugin_params.
         """
-        backend = self._canonical_backend_name(backend)
         if backend in self.backend_options:
             return self.backend_options[backend]
         else:
             logger.warning(
-                "Backend %s not instantiated to get its parameters.", backend
+                "Backend %s not instantiated to get its parameters.%s",
+                backend,
+                _spelling_hint(backend, self.backends),
             )
             return {}
 
-    def _canonical_backend_name(self, backend: str) -> str:
-        """Resolve a name across available and created backends.
-
-        An exact spelling wins. Otherwise, use a unique ASCII case-insensitive
-        match or raise ValueError if multiple spellings match. Return the trimmed
-        name for the native loader if there is no match.
-        """
-        name = backend.strip(" \t\n\r\f\v")
-        if not name:
-            raise nixlBind.nixlInvalidParamError("Empty backend name")
-        if name in self.backends or name in self.plugin_list:
-            return name
-
-        # Another agent can load a plugin after this agent took its initial inventory.
-        self.plugin_list = self.agent.getAvailPlugins()
-        folded = name.translate(_ASCII_UPPER)
-        matches = sorted(
-            candidate
-            for candidate in self.backends.keys() | self.plugin_list
-            if candidate.translate(_ASCII_UPPER) == folded
-        )
-        if name in matches:
-            return name
-        if len(matches) > 1:
-            raise ValueError(f"Ambiguous backend name '{name}': {', '.join(matches)}")
-        return matches[0] if matches else name
-
     def _backend_handle(self, backend: str) -> nixl_backend_handle:
-        return self.backends[self._canonical_backend_name(backend)]
+        """The handle of a created backend; the error suggests a near-miss name."""
+        try:
+            return self.backends[backend]
+        except KeyError:
+            raise _UnknownBackendError(
+                f"Backend '{backend}' not found. Available backends: "
+                f"{list(self.backends)}.{_spelling_hint(backend, self.backends)}"
+            ) from None
 
     def _backend_handles(self, backends: list[str]) -> list[nixl_backend_handle]:
-        """Pass each resolved handle to the binding once, in first-occurrence order."""
+        """Each named backend's handle once, in first-occurrence order."""
         return list(dict.fromkeys(self._backend_handle(name) for name in backends))
 
     def create_backend(self, backend: str, initParams: dict[str, str] = {}):
@@ -468,17 +461,15 @@ class nixl_agent:
         Args:
             backend: Name of the backend.
             initParams: Dictionary of initialization parameters.
-
-        Raises:
-            nixlInvalidParamError: The name is empty after trimming ASCII whitespace,
-                or the backend has already been created.
-            ValueError: The name has no exact match and matches multiple plugin
-                spellings when ASCII case is ignored.
         """
-        self._create_backend(self._canonical_backend_name(backend), initParams)
-
-    def _create_backend(self, backend: str, init_params: dict[str, str]):
-        self.backends[backend] = self.agent.createBackend(backend, init_params)
+        try:
+            handle = self.agent.createBackend(backend, initParams)
+        except nixlBind.nixlNotFoundError:
+            hint = _spelling_hint(backend, self.agent.getAvailPlugins())
+            if hint:
+                logger.warning("Backend plugin %s not found.%s", backend, hint)
+            raise
+        self.backends[backend] = handle
 
         (backend_options, mem_types) = self.agent.getBackendParams(
             self.backends[backend]
@@ -498,9 +489,9 @@ class nixl_agent:
         Args:
             reg_list: List of either memory regions, tensors, or nixlRegDList to register.
             mem_type: Optional memory type, necessary if specifying a list of memory regions.
-            backends: Optional list of backend names for registration. Each resolved handle is
-                used once, in first-occurrence order. With no names, NIXL tries all backends
-                that support this memory type.
+            backends: Optional list of backend names for registration, otherwise NIXL will try to
+                register with all backends that support this memory type. Each backend is used
+                once, in first-occurrence order.
 
         Returns:
             nixlRegDList for the registered memory, can be used with deregister_memory.
@@ -541,10 +532,10 @@ class nixl_agent:
         reg_descs = self.get_reg_descs(reg_list, mem_type)
 
         # Get the backend handle
-        backend = self._canonical_backend_name(backend)
         if backend not in self.backends:
             raise ValueError(
-                f"Backend '{backend}' not found. Available backends: {list(self.backends)}"
+                f"Backend '{backend}' not found. Available backends: "
+                f"{list(self.backends)}.{_spelling_hint(backend, self.backends)}"
             )
 
         return self.agent.queryMem(reg_descs, self.backends[backend])
@@ -953,7 +944,7 @@ class nixl_agent:
             remote_agent_name: Name of the remote agent.
             notif_msg: Message to send, it will be received as bytes.
                 notif_msg should be bytes, as that is what will be returned to the target, but will work with str too.
-            backend: Optional backend name to use for the notification.
+            backends: Optional a backend name to use to send the notifications.
         """
         if backend is None:
             self.agent.genNotif(remote_agent_name, notif_msg)
