@@ -26,6 +26,7 @@
 #include <stdexcept>
 #include <string>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "common.h"
@@ -34,13 +35,33 @@ namespace {
 
 using namespace std::chrono_literals;
 
-const auto ignore = [](std::string_view, std::string_view) {};
+template<typename functionType> class functionCallback final : public nixlNotifCallback {
+public:
+    explicit functionCallback(functionType function) : function_(std::move(function)) {}
+
+    void
+    received(std::string_view remote_agent, std::string_view message) override {
+        function_(remote_agent, message);
+    }
+
+private:
+    functionType function_;
+};
+
+template<typename functionType>
+std::shared_ptr<nixlNotifCallback>
+makeCallback(functionType function) {
+    return std::make_shared<functionCallback<functionType>>(std::move(function));
+}
+
+// Shared by all registrations that use it, which is allowed.
+const auto ignore = makeCallback([](std::string_view, std::string_view) {});
 
 TEST(NotifCallbacks, ValidatesAndReusesPrefixes) {
     nixlAgentConfig cfg;
     nixlAgent agent("notification-receiver", cfg);
 
-    EXPECT_EQ(agent.registerNotifCallback("prefix", {}), NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(agent.registerNotifCallback("prefix", nullptr), NIXL_ERR_INVALID_PARAM);
     ASSERT_EQ(agent.registerNotifCallback("prefix", ignore), NIXL_SUCCESS);
     EXPECT_EQ(agent.registerNotifCallback("pre", ignore), NIXL_ERR_INVALID_PARAM);
     EXPECT_EQ(agent.registerNotifCallback("prefix:", ignore), NIXL_ERR_INVALID_PARAM);
@@ -60,20 +81,17 @@ TEST(NotifCallbacks, MatchingCallbackOwnsNotificationEvenWhenItThrows) {
     const std::string_view prefix("bin\0", 4);
     const std::string_view payload("bin\0ary", 7);
     int binary_calls = 0;
-    ASSERT_EQ(dispatcher.add(prefix,
-                             [&](std::string_view sender, std::string_view message) {
-                                 EXPECT_EQ(sender, "remote");
-                                 EXPECT_EQ(message, payload);
-                                 ++binary_calls;
-                             }),
-              NIXL_SUCCESS);
-    ASSERT_EQ(dispatcher.add("bad",
-                             [](std::string_view, std::string_view) {
-                                 throw std::runtime_error("callback failure");
-                             }),
-              NIXL_SUCCESS);
-    ASSERT_EQ(dispatcher.add("odd", [](std::string_view, std::string_view) { throw 7; }),
-              NIXL_SUCCESS);
+    const auto binary = makeCallback([&](std::string_view sender, std::string_view message) {
+        EXPECT_EQ(sender, "remote");
+        EXPECT_EQ(message, payload);
+        ++binary_calls;
+    });
+    const auto failing = makeCallback(
+        [](std::string_view, std::string_view) { throw std::runtime_error("callback failure"); });
+    const auto odd = makeCallback([](std::string_view, std::string_view) { throw 7; });
+    ASSERT_EQ(dispatcher.add(prefix, binary), NIXL_SUCCESS);
+    ASSERT_EQ(dispatcher.add("bad", failing), NIXL_SUCCESS);
+    ASSERT_EQ(dispatcher.add("odd", odd), NIXL_SUCCESS);
 
     EXPECT_TRUE(dispatcher.dispatch("remote", payload));
     EXPECT_EQ(binary_calls, 1);
@@ -92,13 +110,13 @@ TEST(NotifCallbacks, DefaultRequiresDeregistrationBeforeReplacement) {
     int first_calls = 0;
     int second_calls = 0;
     int prefix_calls = 0;
-    const auto first = [&](std::string_view, std::string_view) { ++first_calls; };
-    const auto second = [&](std::string_view, std::string_view) { ++second_calls; };
+    const auto first = makeCallback([&](std::string_view, std::string_view) { ++first_calls; });
+    const auto second = makeCallback([&](std::string_view, std::string_view) { ++second_calls; });
+    const auto prefixed = makeCallback([&](std::string_view, std::string_view) { ++prefix_calls; });
 
     ASSERT_EQ(dispatcher.add("", first), NIXL_SUCCESS);
     EXPECT_EQ(dispatcher.add("", second), NIXL_ERR_INVALID_PARAM);
-    ASSERT_EQ(dispatcher.add("kv:", [&](std::string_view, std::string_view) { ++prefix_calls; }),
-              NIXL_SUCCESS);
+    ASSERT_EQ(dispatcher.add("kv:", prefixed), NIXL_SUCCESS);
     EXPECT_TRUE(dispatcher.dispatch("remote", "unmatched"));
     EXPECT_TRUE(dispatcher.dispatch("remote", "kv:matched"));
 
@@ -146,28 +164,27 @@ TEST(NotifCallbacks, ConcurrentRegistrationAndDispatchAreSafe) {
 }
 
 TEST(NotifCallbacks, AgentDestructionReleasesCallbacks) {
-    const auto resource = std::make_shared<int>(1);
-    const auto baseline = resource.use_count();
+    std::weak_ptr<nixlNotifCallback> registered;
     {
         nixlAgentConfig cfg;
         nixlAgent agent("notification-draining", cfg);
-        const auto use = [resource](std::string_view, std::string_view) { (void)*resource; };
-        ASSERT_EQ(agent.registerNotifCallback("cleanup", use), NIXL_SUCCESS);
-        EXPECT_GT(resource.use_count(), baseline);
+        auto callback = makeCallback([](std::string_view, std::string_view) {});
+        registered = callback;
+        ASSERT_EQ(agent.registerNotifCallback("cleanup", std::move(callback)), NIXL_SUCCESS);
+        EXPECT_FALSE(registered.expired());
     }
-    EXPECT_EQ(resource.use_count(), baseline);
+    EXPECT_TRUE(registered.expired());
 }
 
 TEST(NotifCallbacks, DeregistrationWaitsForRunningCallback) {
     nixlNotifDispatcher dispatcher;
     std::promise<void> entered, unblock, removing;
     const auto unblock_signal = unblock.get_future();
-    ASSERT_EQ(dispatcher.add("prefix",
-                             [&](std::string_view, std::string_view) {
-                                 entered.set_value();
-                                 unblock_signal.wait();
-                             }),
-              NIXL_SUCCESS);
+    const auto blocking = makeCallback([&](std::string_view, std::string_view) {
+        entered.set_value();
+        unblock_signal.wait();
+    });
+    ASSERT_EQ(dispatcher.add("prefix", blocking), NIXL_SUCCESS);
     auto receiving =
         std::async(std::launch::async, [&] { return dispatcher.dispatch("remote", "prefix"); });
     const auto entry_status = entered.get_future().wait_for(5s);
@@ -217,12 +234,11 @@ TEST(NotifCallbacks, UcxRoutesMatchesAndFallsBackAfterDeregistration) {
         return pending[name];
     };
 
-    ASSERT_EQ(agent.registerNotifCallback("prefix:",
-                                          [&](std::string_view sender, std::string_view message) {
-                                              EXPECT_EQ(sender, name);
-                                              delivered.set_value(std::string(message));
-                                          }),
-              NIXL_SUCCESS);
+    const auto deliver = makeCallback([&](std::string_view sender, std::string_view message) {
+        EXPECT_EQ(sender, name);
+        delivered.set_value(std::string(message));
+    });
+    ASSERT_EQ(agent.registerNotifCallback("prefix:", deliver), NIXL_SUCCESS);
     ASSERT_EQ(agent.genNotif(name, "prefix:callback"), NIXL_SUCCESS);
     ASSERT_EQ(delivery.wait_for(5s), std::future_status::ready);
     EXPECT_EQ(delivery.get(), "prefix:callback");

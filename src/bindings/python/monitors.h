@@ -156,6 +156,23 @@ private:
     bool closed_ = false;
 };
 
+// Queues one subscription's notifications, tagged with the subscribed agent's name.
+class InboxCallback final : public nixlNotifCallback {
+public:
+    InboxCallback(std::shared_ptr<NotificationInbox> inbox, std::string local)
+        : inbox_(std::move(inbox)),
+          local_(std::move(local)) {}
+
+    void
+    received(std::string_view remote_agent, std::string_view message) override {
+        inbox_->push(local_, remote_agent, message);
+    }
+
+private:
+    const std::shared_ptr<NotificationInbox> inbox_;
+    const std::string local_;
+};
+
 // A Python notification monitor: its queue plus the agent subscriptions that fill it.
 // The monitor, its callbacks and any running wait share the queue. The Python wrapper
 // keeps each subscribed agent alive until its subscriptions are removed. close()
@@ -178,10 +195,7 @@ public:
         // Allocate first, so recording a successful registration cannot fail.
         std::string owned_prefix(prefix);
         subscriptions_.reserve(subscriptions_.size() + 1);
-        auto deliver = [inbox = inbox_, local = std::move(local)](std::string_view remote,
-                                                                  std::string_view message) {
-            inbox->push(local, remote, message);
-        };
+        auto deliver = std::make_shared<InboxCallback>(inbox_, std::move(local));
         const auto status = agent.registerNotifCallback(prefix, std::move(deliver));
         if (status == NIXL_SUCCESS) {
             subscriptions_.push_back({&agent, std::move(owned_prefix)});

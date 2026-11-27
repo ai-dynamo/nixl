@@ -1150,6 +1150,12 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    class ignoreNotifs final : public nixlNotifCallback {
+    public:
+        void
+        received(std::string_view, std::string_view) override {}
+    };
+
     class singleAgentSessionFixture : public testing::Test {
     protected:
         std::unique_ptr<agentHelper> agent_helper_;
@@ -1163,7 +1169,7 @@ namespace agent {
     };
 
     TEST_F(singleAgentSessionFixture, NotifCallbacksWarnAboutUnsupportedBackends) {
-        const auto ignore = [](std::string_view, std::string_view) {};
+        const auto ignore = std::make_shared<ignoreNotifs>();
         // Registration before any backend is loaded is silent.
         ASSERT_EQ(agent_->registerNotifCallback("early:", ignore), NIXL_SUCCESS);
         {
@@ -1187,9 +1193,8 @@ namespace agent {
         ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
 
         const gtest::LogMessageCounter warning("no loaded backend supports it");
-        ASSERT_EQ(
-            agent_->registerNotifCallback("prefix:", [](std::string_view, std::string_view) {}),
-            NIXL_SUCCESS);
+        ASSERT_EQ(agent_->registerNotifCallback("prefix:", std::make_shared<ignoreNotifs>()),
+                  NIXL_SUCCESS);
         EXPECT_EQ(warning.count(), 0u);
     }
 
@@ -1204,9 +1209,8 @@ namespace agent {
         // A storage-like backend cannot deliver notifications, so a callback backend
         // may still be added later.
         const gtest::LogMessageCounter warning("no loaded backend supports it");
-        ASSERT_EQ(
-            agent_->registerNotifCallback("prefix:", [](std::string_view, std::string_view) {}),
-            NIXL_SUCCESS);
+        ASSERT_EQ(agent_->registerNotifCallback("prefix:", std::make_shared<ignoreNotifs>()),
+                  NIXL_SUCCESS);
         EXPECT_EQ(warning.count(), 0u);
     }
 

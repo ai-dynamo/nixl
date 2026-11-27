@@ -178,7 +178,7 @@ CI jobs, crash debugging, GPU RDMA setup, tests, Conda builds, AWS testing, and 
 Public C++ headers and Python modules for agents, descriptors, backends, telemetry, and logging.
 - [nixlAgent (nixl.h)](../../src/api/cpp/nixl.h): Declares nixlAgent for backends, memory registration, transfers, memory views, notifications, and peer and etcd metadata.
 - [Descriptors (nixl_descriptors.h)](../../src/api/cpp/nixl_descriptors.h): Declares nixlBasicDesc, nixlStrideDesc, nixlBlobDesc, nixlRemoteDesc, nixlDescList, and descriptor-list aliases.
-- [Notification callbacks (nixl_notif.h)](../../src/api/cpp/nixl_notif.h): Declares nixl_notif_callback_t, the callback type for notifications routed by byte prefix.
+- [Notification callbacks (nixl_notif.h)](../../src/api/cpp/nixl_notif.h): Declares nixlNotifCallback, the interface that receives notifications routed by byte prefix.
 - [nixlAgentConfig (nixl_params.h)](../../src/api/cpp/nixl_params.h): Declares nixlAgentConfig for progress and listener threads, synchronization, telemetry, and etcd.
 - [Core types (nixl_types.h)](../../src/api/cpp/nixl_types.h): Declares nixl_mem_t, nixl_xfer_op_t, nixl_status_t, nixl_thread_sync_t, nixlAgentOptionalArgs, nixlMemViewH, and nixlXferTelemetry.
 - [Backend auxiliary types (backend_aux.h)](../../src/api/cpp/backend/backend_aux.h): Declares nixlBackendInitParams, nixlBackendOptionalArgs, nixlBackendReqH, nixlBackendMD, nixlMetaDesc, and nixlMetaStrideDescList.

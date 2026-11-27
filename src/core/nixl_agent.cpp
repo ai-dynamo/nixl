@@ -1643,7 +1643,8 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
 }
 
 nixl_status_t
-nixlAgent::registerNotifCallback(std::string_view prefix, nixl_notif_callback_t callback) {
+nixlAgent::registerNotifCallback(std::string_view prefix,
+                                 std::shared_ptr<nixlNotifCallback> callback) {
     const auto status = data->notifDispatcher_.add(prefix, std::move(callback));
     if (status != NIXL_SUCCESS) {
         return status;

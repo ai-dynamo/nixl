@@ -17,7 +17,7 @@
 #ifndef NIXL_SRC_CORE_NOTIF_DISPATCHER_H
 #define NIXL_SRC_CORE_NOTIF_DISPATCHER_H
 
-#include <optional>
+#include <memory>
 #include <shared_mutex>
 #include <string>
 #include <vector>
@@ -32,7 +32,7 @@
 class nixlNotifDispatcher final : public nixlBackendNotifSink {
 public:
     [[nodiscard]] nixl_status_t
-    add(std::string_view prefix, nixl_notif_callback_t callback);
+    add(std::string_view prefix, std::shared_ptr<nixlNotifCallback> callback);
 
     [[nodiscard]] nixl_status_t
     remove(std::string_view prefix) noexcept;
@@ -47,12 +47,12 @@ public:
 private:
     struct Entry {
         std::string prefix;
-        nixl_notif_callback_t callback;
+        std::shared_ptr<nixlNotifCallback> callback;
     };
 
     mutable std::shared_mutex mutex_;
     std::vector<Entry> entries_; // Nonempty, disjoint prefixes.
-    std::optional<nixl_notif_callback_t> default_; // The empty prefix.
+    std::shared_ptr<nixlNotifCallback> default_; // The empty prefix, if registered.
 };
 
 #endif

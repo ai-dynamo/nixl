@@ -37,7 +37,7 @@ logCallbackFailure(std::string_view remote_agent, const char *reason) noexcept {
 } // namespace
 
 nixl_status_t
-nixlNotifDispatcher::add(std::string_view prefix, nixl_notif_callback_t callback) {
+nixlNotifDispatcher::add(std::string_view prefix, std::shared_ptr<nixlNotifCallback> callback) {
     if (!callback) {
         return NIXL_ERR_INVALID_PARAM;
     }
@@ -45,8 +45,8 @@ nixlNotifDispatcher::add(std::string_view prefix, nixl_notif_callback_t callback
     const auto overlaps = [prefix](const Entry &existing) {
         return prefix.starts_with(existing.prefix) || existing.prefix.starts_with(prefix);
     };
-    // Declared before the lock, so a rejected or failed insertion destroys the callback, and
-    // anything it owns, after the lock is released.
+    // Declared before the lock, so a rejected or failed insertion can only destroy the
+    // callback after the lock is released.
     Entry entry{std::string(prefix), std::move(callback)};
 
     const std::unique_lock lock(mutex_);
@@ -66,15 +66,14 @@ nixlNotifDispatcher::add(std::string_view prefix, nixl_notif_callback_t callback
 
 nixl_status_t
 nixlNotifDispatcher::remove(std::string_view prefix) noexcept {
-    // Destroyed after the lock is released, so the callback's captures cannot deadlock on it.
-    nixl_notif_callback_t removed;
+    // Released after the lock, so a callback destroyed here cannot deadlock on it.
+    std::shared_ptr<nixlNotifCallback> removed;
     const std::unique_lock lock(mutex_);
     if (prefix.empty()) {
         if (!default_) {
             return NIXL_ERR_NOT_FOUND;
         }
-        removed = std::move(*default_);
-        default_.reset();
+        removed = std::move(default_);
         return NIXL_SUCCESS;
     }
     const auto it = std::find_if(entries_.begin(), entries_.end(), [prefix](const Entry &entry) {
@@ -96,15 +95,14 @@ nixlNotifDispatcher::dispatch(std::string_view remote_agent,
         return message.starts_with(entry.prefix);
     };
     const auto it = std::find_if(entries_.begin(), entries_.end(), matches);
-    const nixl_notif_callback_t *callback =
-        it != entries_.end() ? &it->callback : (default_ ? &*default_ : nullptr);
+    nixlNotifCallback *const callback = it != entries_.end() ? it->callback.get() : default_.get();
     if (!callback) {
         return false;
     }
     // A user exception must never unwind through the transport's receive handler. The
     // notification matched, so it does not go to getNotifs() either.
     try {
-        (*callback)(remote_agent, message);
+        callback->received(remote_agent, message);
     }
     catch (const std::exception &e) {
         logCallbackFailure(remote_agent, e.what());
