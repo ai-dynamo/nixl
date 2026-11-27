@@ -132,7 +132,9 @@ def check_variable_dispatch_capacity(
         zero_copy = capacity == 4
         if zero_copy:
             combine_buffer.copy_(recv_x)
-        combined, _, _ = buffer.combine(recv_x, ids, weights, handle, zero_copy=zero_copy)
+        combined, _, _ = buffer.combine(
+            recv_x, ids, weights, handle, zero_copy=zero_copy
+        )
         outputs.append((combined, x))
 
     for combined, x in outputs:
