@@ -193,14 +193,15 @@ private:
     buildNumaDistanceMap();
 };
 
-nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold)
+nixlLibfabricRailManager::nixlLibfabricRailManager(size_t striping_threshold,
+                                                   const nixl_b_params_t &custom_params)
     : striping_threshold_(striping_threshold),
       runtime_(FI_HMEM_CUDA) {
     NIXL_DEBUG << "Creating rail manager with striping threshold: " << striping_threshold_
                << " bytes";
 
     // Initialize topology system
-    topology = std::make_unique<nixlLibfabricTopology>();
+    topology = std::make_unique<nixlLibfabricTopology>(custom_params);
 
     // Determine system runtime type once at initialization
     if (topology->getNumNvidiaAccel() > 0) {

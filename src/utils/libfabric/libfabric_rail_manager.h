@@ -76,9 +76,11 @@ public:
     /** Initialize rail manager with topology discovery and create rails based on available
      * network devices
      * @param striping_threshold Size threshold for enabling multi-rail striping
+     * @param custom_params Backend parameters read during topology discovery
      * @throws std::runtime_error if initialization fails
      */
-    nixlLibfabricRailManager(size_t striping_threshold);
+    nixlLibfabricRailManager(size_t striping_threshold,
+                             const nixl_b_params_t &custom_params = nixl_b_params_t());
     /** Destroy rail manager and cleanup all resources */
     ~nixlLibfabricRailManager();
 

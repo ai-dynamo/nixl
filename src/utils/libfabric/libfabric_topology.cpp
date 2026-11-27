@@ -23,6 +23,7 @@
 #include <fstream>
 #include <sstream>
 #include <algorithm>
+#include <cctype>
 #include <set>
 #include <map>
 #include <cmath>
@@ -38,7 +39,7 @@
 #endif
 #endif
 
-nixlLibfabricTopology::nixlLibfabricTopology()
+nixlLibfabricTopology::nixlLibfabricTopology(const nixl_b_params_t &custom_params)
     : num_aws_accel(0),
       num_nvidia_accel(0),
       num_amd_accel(0),
@@ -50,6 +51,11 @@ nixlLibfabricTopology::nixlLibfabricTopology()
       avg_nic_speed(0),
       avg_nic_upstream_speed(0),
       has_pcie_devices_(false) {
+
+    // NOTE: corresponding env var is NIXL_LIBFABRIC_NICS, and it overrides the custom parameter
+    LibfabricUtils::getCustomStringParam(custom_params, "nics", nics_);
+    std::transform(
+        nics_.begin(), nics_.end(), nics_.begin(), [](unsigned char c) { return std::tolower(c); });
 
     NIXL_TRACE << "Starting automatic topology discovery";
 
@@ -854,6 +860,8 @@ nixlLibfabricTopology::buildNicInfoMap() {
         }
     }
 
+    selectNics();
+
     // now compute the capacity limit of each NUMA node and some other topology metrics
     markNumaNearestNics();
     buildNumaSpeedMap();
@@ -1392,6 +1400,58 @@ nixlLibfabricTopology::pathDistance(hwloc_obj_t from, hwloc_obj_t to, hwloc_obj_
         }
     }
     return -1;
+}
+
+void
+nixlLibfabricTopology::selectNics() {
+    const bool set_by_user = !nics_.empty();
+    if (nics_ != "rdma" && nics_ != "converged") {
+        if (set_by_user) {
+            NIXL_WARN << "Unknown nics value \"" << nics_
+                      << "\"; expected rdma|converged. Falling back to rdma.";
+        }
+        nics_ = "rdma";
+    }
+    // A first grouping pass tells the two kinds apart: the devices it maps to an accelerator
+    // are RDMA devices, and the rest converged ones. discoverTopology() groups the
+    // devices that stay.
+    if ((num_nvidia_accel == 0 && num_amd_accel == 0) || buildAccelToEfaMapping() != NIXL_SUCCESS ||
+        pci_to_efa_devices.empty()) {
+        if (set_by_user) {
+            NIXL_WARN << "nics=" << nics_ << " needs NVIDIA or AMD accelerators mapped to EFA "
+                      << "devices. Using every EFA device.";
+        }
+        return;
+    }
+    std::set<std::string> rdma_nics;
+    for (const auto &entry : pci_to_efa_devices) {
+        rdma_nics.insert(entry.second.begin(), entry.second.end());
+    }
+    const bool keep_rdma = nics_ == "rdma";
+    std::vector<std::string> left_out;
+    for (const auto &entry : nic_info_map) {
+        if ((rdma_nics.count(entry.first) != 0) != keep_rdma) {
+            left_out.push_back(entry.first);
+        }
+    }
+    if (left_out.size() == nic_info_map.size()) {
+        NIXL_WARN << "No converged EFA device found; nics=converged uses the RDMA devices";
+        return;
+    }
+    for (const auto &name : left_out) {
+        NIXL_INFO << "EFA device " << name << " is " << (keep_rdma ? "a converged" : "an RDMA")
+                  << " device, left out by nics=" << nics_;
+        const auto pcie = libfabric_to_pcie_map.find(name);
+        if (pcie != libfabric_to_pcie_map.end()) {
+            pcie_to_libfabric_map.erase(pcie->second);
+            nic_speed_map.erase(pcie->second);
+            libfabric_to_pcie_map.erase(pcie);
+        }
+        nic_info_map.erase(name);
+        all_devices.erase(std::remove(all_devices.begin(), all_devices.end(), name),
+                          all_devices.end());
+    }
+    num_devices = all_devices.size();
 }
 
 void

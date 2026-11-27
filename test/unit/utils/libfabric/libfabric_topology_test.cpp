@@ -316,8 +316,8 @@ struct DmabufMappingInfo {
     // verdict is a property of the device rather than of the selection. On a platform
     // carrying both routes the rows below also state which route an accelerator's NICs take.
     std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
-    // Devices nearest to no accelerator, which serve host memory only. Every other device on
-    // the node is expected in some accelerator's list above.
+    // Devices nearest to no accelerator, which the default nics=rdma leaves out. Every
+    // other device on the node is expected in some accelerator's list above.
     std::vector<std::string> host_only_devices;
 };
 
@@ -391,18 +391,11 @@ static const DmabufMappingInfo dmabuf_mapping_topologies[] = {
      .nic_count = 16,
      .nic_line_speed = 400,
      .expect_pcie_mapping = true,
-     .default_mapping_exceptions = {"rdmap54s0",
-                                    "rdmap55s0",
-                                    "rdmap76s0",
-                                    "rdmap77s0",
-                                    "rdmap169s0",
-                                    "rdmap170s0",
-                                    "rdmap191s0",
-                                    "rdmap192s0"},
+     .default_mapping_exceptions = {},
      .expect_grouping_skipped = false,
      // Every GPU takes the two EFA devices under its PCIe switch, which are nearer than the
      // ones it meets at its Package and need the PCIe (BAR1) mapping. The other eight are
-     // nearest to no GPU and serve host memory.
+     // nearest to no GPU, and the default nics=rdma leaves them out.
      .accel_efa_devices = {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0"}},
                            {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0"}},
                            {"0000:9c:00.0", {"rdmap154s0", "rdmap155s0"}},
@@ -514,6 +507,10 @@ testDmabufMappingTopologies();
 static int
 testDmabufMappingTopology(const DmabufMappingInfo &mapping_info);
 
+// test the "nics" setting, which keeps the RDMA or the converged EFA devices
+static int
+testNicsSetting();
+
 int
 main(int argc, char *argv[]) {
     if (argc > 1) {
@@ -570,7 +567,12 @@ main(int argc, char *argv[]) {
         return res;
     }
 
-    return testDmabufMappingTopologies();
+    res = testDmabufMappingTopologies();
+    if (res != 0) {
+        return res;
+    }
+
+    return testNicsSetting();
 }
 
 int
@@ -1835,9 +1837,10 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
     const nixlLibfabricTopology &topology = *topology_holder;
 
     const std::vector<std::string> &devices = topology.getAllDevices();
-    if (devices.size() != mapping_info.nic_count) {
+    const size_t kept_count = mapping_info.nic_count - mapping_info.host_only_devices.size();
+    if (devices.size() != kept_count) {
         NIXL_ERROR << "Invalid EFA NIC count for " << mapping_info.instance_type << ", expected "
-                   << mapping_info.nic_count << ", got " << devices.size();
+                   << kept_count << ", got " << devices.size();
         return 2;
     }
 
@@ -1909,15 +1912,17 @@ testDmabufMappingTopology(const DmabufMappingInfo &mapping_info) {
             }
         }
 
-        const auto &host_only = mapping_info.host_only_devices;
         for (const auto &device : devices) {
-            const bool expected =
-                std::find(host_only.begin(), host_only.end(), device) == host_only.end();
-            if ((selectable.find(device) != selectable.end()) != expected) {
+            if (selectable.find(device) == selectable.end()) {
                 NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
-                           << (expected ? " is reachable by no accelerator" :
-                                          " was expected to serve host memory only, but an "
-                                          "accelerator selects it");
+                           << " is reachable by no accelerator";
+                rc = 8;
+            }
+        }
+        for (const auto &device : mapping_info.host_only_devices) {
+            if (std::find(devices.begin(), devices.end(), device) != devices.end()) {
+                NIXL_ERROR << "EFA device " << device << " on " << mapping_info.instance_type
+                           << " was expected to be left out by nics=rdma";
                 rc = 8;
             }
         }
@@ -1953,4 +1958,176 @@ testDmabufMappingTopologies() {
 
     NIXL_INFO << "=== Test completed successfully! ===";
     return 0;
+}
+
+int
+testNicsSetting() {
+    NIXL_INFO << "=== Testing the nics setting on captured topologies ===";
+
+    // On the p6e-gb200 capture each GPU's two local devices are RDMA devices, and the other
+    // eight are converged devices. Every device on the p5en capture is an RDMA device, and c5n
+    // carries no GPU.
+    const std::vector<std::string> gb200_rdma = {"rdmap39s0",
+                                                 "rdmap40s0",
+                                                 "rdmap61s0",
+                                                 "rdmap62s0",
+                                                 "rdmap154s0",
+                                                 "rdmap155s0",
+                                                 "rdmap176s0",
+                                                 "rdmap177s0"};
+    const std::vector<std::string> gb200_converged = {"rdmap54s0",
+                                                      "rdmap55s0",
+                                                      "rdmap76s0",
+                                                      "rdmap77s0",
+                                                      "rdmap169s0",
+                                                      "rdmap170s0",
+                                                      "rdmap191s0",
+                                                      "rdmap192s0"};
+
+    struct NicsCase {
+        const char *instance_type;
+        const char *topo_file;
+        size_t nic_count; // feeds the fi_getinfo mock
+        size_t nic_line_speed; // feeds the fi_getinfo mock
+        const char *param; // "nics" custom parameter, or nullptr
+        const char *env; // NIXL_LIBFABRIC_NICS, or nullptr
+        std::vector<std::string> expected_devices; // empty: every device
+        bool expect_pcie_mapping;
+        std::vector<std::pair<std::string, std::vector<std::string>>> accel_efa_devices;
+    };
+
+    const NicsCase cases[] = {
+        // the default keeps the RDMA devices
+        {"p6e-gb200.36xl",
+         "p6e-gb200.36xl-topo.xml",
+         16,
+         400,
+         nullptr,
+         nullptr,
+         gb200_rdma,
+         true,
+         {}},
+        {"p6e-gb200.36xl",
+         "p6e-gb200.36xl-topo.xml",
+         16,
+         400,
+         "rdma",
+         nullptr,
+         gb200_rdma,
+         true,
+         {{"0000:29:00.0", {"rdmap39s0", "rdmap40s0"}},
+          {"0000:3f:00.0", {"rdmap61s0", "rdmap62s0"}},
+          {"0000:9c:00.0", {"rdmap154s0", "rdmap155s0"}},
+          {"0000:b2:00.0", {"rdmap176s0", "rdmap177s0"}}}},
+        {"p6e-gb200.36xl",
+         "p6e-gb200.36xl-topo.xml",
+         16,
+         400,
+         "converged",
+         nullptr,
+         gb200_converged,
+         false,
+         {{"0000:29:00.0", {"rdmap54s0", "rdmap55s0"}},
+          {"0000:3f:00.0", {"rdmap76s0", "rdmap77s0"}},
+          {"0000:9c:00.0", {"rdmap169s0", "rdmap170s0"}},
+          {"0000:b2:00.0", {"rdmap191s0", "rdmap192s0"}}}},
+        // the environment variable overrides the custom parameter, and case does not matter
+        {"p6e-gb200.36xl",
+         "p6e-gb200.36xl-topo.xml",
+         16,
+         400,
+         "rdma",
+         "Converged",
+         gb200_converged,
+         false,
+         {}},
+        {"p5en.48xl", "p5en.48xl-topo.xml", 16, 200, "rdma", nullptr, {}, true, {}},
+        // no converged device, or an unknown value, which falls back to rdma: every device stays
+        {"p5en.48xl", "p5en.48xl-topo.xml", 16, 200, "converged", nullptr, {}, true, {}},
+        {"p5en.48xl", "p5en.48xl-topo.xml", 16, 200, "both", nullptr, {}, true, {}},
+        // no GPU to tell the two kinds apart: every device stays
+        {"c5n.18xl", "c5n.18xl-topo.xml", 1, 0, "converged", nullptr, {}, false, {}},
+    };
+
+    int rc = 0;
+    for (const auto &test_case : cases) {
+        const char *value = test_case.env ? test_case.env : test_case.param;
+        const std::string label =
+            std::string(test_case.instance_type) + " nics=" + (value ? value : "(default)");
+        TopologyInfo dummy = {.enable = true,
+                              .instance_type = test_case.instance_type,
+                              .topo_file = test_case.topo_file,
+                              .numa_node_count = 0,
+                              .nic_count = test_case.nic_count,
+                              .nic_line_speed = test_case.nic_line_speed,
+                              .nic_upstream_link_speed = 0,
+                              .switch_count = 0,
+                              .numa_capacity = 0,
+                              .numa_rail_count = 0,
+                              .test_scenarios = {},
+                              .rail_partition = {}};
+        curr_topology = &dummy;
+        setTesting();
+        setenv("HWLOC_XMLFILE", test_case.topo_file, 1);
+        if (test_case.env) {
+            setenv("NIXL_LIBFABRIC_NICS", test_case.env, 1);
+        }
+
+        struct TestEnvGuard {
+            ~TestEnvGuard() {
+                clearTesting();
+                unsetenv("HWLOC_XMLFILE");
+                unsetenv("NIXL_LIBFABRIC_NICS");
+                curr_topology = nullptr;
+            }
+        } env_guard;
+
+        nixl_b_params_t params;
+        if (test_case.param) {
+            params["nics"] = test_case.param;
+        }
+        std::optional<nixlLibfabricTopology> topology_holder;
+        try {
+            topology_holder.emplace(params);
+        }
+        catch (const std::runtime_error &e) {
+            NIXL_ERROR << "Unexpected topology-discovery failure for " << label << ": " << e.what();
+            rc = 1;
+            continue;
+        }
+        const nixlLibfabricTopology &topology = *topology_holder;
+
+        std::vector<std::string> devices = topology.getAllDevices();
+        std::sort(devices.begin(), devices.end());
+        std::vector<std::string> expected = test_case.expected_devices;
+        std::sort(expected.begin(), expected.end());
+        if (expected.empty() ? devices.size() != test_case.nic_count : devices != expected) {
+            NIXL_ERROR << "Wrong EFA devices for " << label << ": got [" << joinDevices(devices)
+                       << "]";
+            rc = 2;
+        }
+        for (const auto &device : devices) {
+            if (topology.nicSharesPcieSwitchWithAccel(device) != test_case.expect_pcie_mapping) {
+                NIXL_ERROR << "Wrong dmabuf mapping decision for EFA device " << device << " on "
+                           << label;
+                rc = 3;
+            }
+        }
+        for (const auto &[accel_pci, expected_efa_devices] : test_case.accel_efa_devices) {
+            std::vector<std::string> actual = topology.getEfaDevicesForPci(accel_pci);
+            std::vector<std::string> expected_accel = expected_efa_devices;
+            std::sort(actual.begin(), actual.end());
+            std::sort(expected_accel.begin(), expected_accel.end());
+            if (actual != expected_accel) {
+                NIXL_ERROR << "Wrong EFA devices for accelerator " << accel_pci << " on " << label
+                           << ": expected [" << joinDevices(expected_accel) << "], got ["
+                           << joinDevices(actual) << "]";
+                rc = 4;
+            }
+        }
+        if (rc == 0) {
+            NIXL_INFO << "   SUCCESS: " << label << " keeps " << devices.size() << " EFA device(s)";
+        }
+    }
+    return rc;
 }

@@ -141,6 +141,9 @@ private:
     size_t avg_nic_upstream_speed; // average NIC upstream link speed
     bool has_pcie_devices_;
 
+    // Kind of EFA device the "nics" setting keeps: "rdma" (the default) or "converged"
+    std::string nics_;
+
     // NIXL topology-aware grouping algorithm methods
     nixl_status_t
     buildTopologyAwareGrouping();
@@ -150,6 +153,13 @@ private:
     groupNicsWithAccel(const std::vector<NicInfo> &discovered_nics,
                        const std::vector<AccelInfo> &discovered_accel,
                        std::vector<NicGroup> &nic_groups);
+
+    // Leaves out the EFA devices of the kind the "nics" setting does not keep, rdma by default.
+    // RDMA devices are local to an accelerator, the ones accelerator grouping maps to it, and
+    // converged devices are local to none of the accelerators; converged keeps the RDMA devices
+    // when there is no converged device.
+    void
+    selectNics();
 
     // Clears NicInfo::numa_nearest of the NICs farther from their NUMA node than another.
     void
@@ -217,7 +227,8 @@ private:
     calcAvgNicUpstreamBandwidth();
 
 public:
-    nixlLibfabricTopology(); // Automatically discovers topology
+    // Automatically discovers topology. custom_params may carry "nics" (see selectNics()).
+    explicit nixlLibfabricTopology(const nixl_b_params_t &custom_params = nixl_b_params_t());
     ~nixlLibfabricTopology();
 
     // Accelerator-based queries (main interface)
