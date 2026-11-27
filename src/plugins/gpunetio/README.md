@@ -106,7 +106,11 @@ A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
 call completes or fails. A supplied status can be polled in any order. It can be
 reused once its request is final: polled to a terminal result, completed by a
 flush, or on a failed channel; reusing it earlier returns
-`NIXL_ERR_REPOST_ACTIVE`. Every CQE is checked in FIFO order, including those
+`NIXL_ERR_REPOST_ACTIVE`. Until getXferStatus has returned a terminal result for
+a status, polling it or passing it to `get` reads the state of the channel that
+accepted the request, so the engine that owns the channel must still exist.
+After that engine is torn down, reset the status (`xferStatusH{}`) before using
+it again. Every CQE is checked in FIFO order, including those
 from requests without a status. Completed requests stay complete if a later
 request fails; the failed channel rejects new work until teardown.
 

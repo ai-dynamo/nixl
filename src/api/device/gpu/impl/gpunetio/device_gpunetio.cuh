@@ -199,7 +199,8 @@ submitGet(const memViewElem &local,
             return NIXL_ERR_INVALID_PARAM;
         }
         // A request completed by a flush, or on a failed channel, is final even if its
-        // handle was never polled; only a still-outstanding request blocks reuse.
+        // handle was never polled; only a still-outstanding request blocks reuse. Like
+        // pollStatus, this reads old->lane: the engine that accepted it must still exist.
         const auto *old = statusPayload(status);
         if (status->mode == exec_mode_t::GPUNETIO_DIRECT && old->initialized &&
             old->cached_status == NIXL_IN_PROG && old->lane &&
