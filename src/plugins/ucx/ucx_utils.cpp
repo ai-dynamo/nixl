@@ -78,9 +78,9 @@ defaultErrHandlingMode() {
     if (failover && sglRequestedFromConfig()) {
         NIXL_DEBUG << "UCX failover error handling is not supported with SGL offload,"
                    << " defaulting to peer error handling";
-        return UCP_ERR_HANDLING_MODE_PEER;
+        return nixl_ucx_default_err_handling_mode;
     }
-    return failover.value_or(UCP_ERR_HANDLING_MODE_PEER);
+    return failover.value_or(nixl_ucx_default_err_handling_mode);
 }
 
 bool
