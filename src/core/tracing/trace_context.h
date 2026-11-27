@@ -74,6 +74,12 @@ struct TraceContext {
     operator==(const TraceContext &) const noexcept = default;
 };
 
+struct TraceIdentity {
+    TraceContext context;
+    std::uint64_t requestId = 0;
+    std::uint64_t execution = 0;
+};
+
 [[nodiscard]] std::optional<TraceContext>
 parseTraceparent(std::string_view value);
 

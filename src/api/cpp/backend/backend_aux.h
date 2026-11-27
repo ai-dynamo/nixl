@@ -29,6 +29,7 @@ class nixlBackendTraceSink;
 
 namespace nixl::trace {
 struct TraceContext;
+struct TraceIdentity;
 }
 
 // Might be removed to be decided by backend, or changed to high
@@ -48,6 +49,7 @@ struct nixlBackendOptionalArgs {
     const nixl::trace::TraceContext *traceContext = nullptr;
     std::uint64_t traceRequestId = 0;
     std::uint64_t traceExecution = 0;
+    const nixl::trace::TraceIdentity *traceIdentity = nullptr;
 };
 
 using nixl_opt_b_args_t = nixlBackendOptionalArgs;
