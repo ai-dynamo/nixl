@@ -19,7 +19,11 @@
 #define NIXL_SRC_UTILS_UCX_CONFIG_H
 
 #include <memory>
+#include <optional>
+#include <string>
 #include <string_view>
+#include <unordered_map>
+#include <utility>
 
 extern "C" {
 #include <ucp/api/ucp.h>
@@ -28,6 +32,15 @@ extern "C" {
 namespace nixl::ucx {
 class config {
 public:
+    // When modify() changes a key
+    enum class condition_t {
+        // Neither NIXL_UCX_<key> nor UCX_<key> is set in the environment, and the key is not
+        // set in a UCX configuration file
+        DEFAULT,
+        // Always
+        ALWAYS
+    };
+
     config() = default;
 
     [[nodiscard]] ucp_config_t *
@@ -35,23 +48,42 @@ public:
         return config_.get();
     }
 
-    // Modify the config if neither NIXL_UCX_<key> nor UCX_<key> is set in the environment
     void
-    modify(std::string_view key, std::string_view value) const;
+    modify(std::string_view key,
+           std::string_view value,
+           condition_t condition = condition_t::DEFAULT) const;
 
-    // Modify the config always
+    // Set the RMA rails under the DEFAULT condition, keeping the rails of the GPU buffers whose
+    // NICs UCX assigns
     void
-    modifyAlways(std::string_view key, std::string_view value) const;
+    modifyMaxRmaRails(unsigned rails) const;
 
     void
     validateTlsCudaSupport() const;
 
 private:
+    struct dumpedValue {
+        std::string value;
+        bool isDefault;
+    };
+
+    // By UCX key without the UCX_ prefix
+    using dumped_values_t = std::unordered_map<std::string, dumpedValue>;
+
     [[nodiscard]] static ucp_config_t *
     readUcpConfig();
 
+    [[nodiscard]] static dumped_values_t
+    dumpValues(const ucp_config_t &config);
+
+    // The variable name and value that modify() keeps under the condition, if any
+    [[nodiscard]] std::optional<std::pair<std::string, std::string>>
+    keptValue(std::string_view key, condition_t condition) const;
+
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
                                                                           &ucp_config_release};
+    // The values of config_ as read, before any modification: initialized after config_
+    const dumped_values_t initialValues_{dumpValues(*config_)};
 };
 } // namespace nixl::ucx
 

@@ -570,11 +570,15 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
             devs_str += dev + ":1,";
         }
         devs_str.pop_back(); // to remove odd comma after the last device
-        config.modifyAlways("NET_DEVICES", devs_str.c_str());
+        config.modify("NET_DEVICES", devs_str.c_str(), nixl::ucx::config::condition_t::ALWAYS);
     }
 
     config.modify("RNDV_THRESH", "inf");
-    config.modify("MAX_RMA_RAILS", "2");
+
+    // TODO: Stop setting MAX_RMA_RAILS in NIXL and change the UCX default instead, after a
+    // performance evaluation
+    config.modifyMaxRmaRails(2);
+
     config.modify("IB_PCI_RELAXED_ORDERING", "try");
     config.modify("CUDA_IPC_ENABLE_GET_ZCOPY", "on");
 

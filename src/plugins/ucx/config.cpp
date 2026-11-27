@@ -18,8 +18,12 @@
 
 #include <algorithm>
 #include <array>
+#include <cstdio>
+#include <cstdlib>
+#include <memory>
 #include <mutex>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <string_view>
@@ -68,21 +72,26 @@ tlsEnablesCudaSupport(std::string_view tls) {
     return deny_list ? !has_cuda_support : has_cuda_support;
 }
 
+// A deleter type for a FILE stream: decltype(&fclose) would drop the attributes that glibc
+// declares fclose() with, which GCC reports as an error with -Werror
+struct fileCloser {
+    void
+    operator()(FILE *stream) const noexcept {
+        fclose(stream);
+    }
+};
+
 } // namespace
 
 namespace nixl::ucx {
 
 void
-config::modify(std::string_view key, std::string_view value) const {
-    if (const auto env_var = findUcxEnvVar(key)) {
-        NIXL_DEBUG << "UCX env var already set: " << env_var->first << "=" << env_var->second;
-    } else {
-        modifyAlways(key, value);
+config::modify(std::string_view key, std::string_view value, condition_t condition) const {
+    if (const auto kept = keptValue(key, condition)) {
+        NIXL_DEBUG << "UCX config already set: " << kept->first << "=" << kept->second;
+        return;
     }
-}
 
-void
-config::modifyAlways(std::string_view key, std::string_view value) const {
     std::string key_str(key);
     std::string value_str(value);
     const auto status = ucp_config_modify(config_.get(), key_str.c_str(), value_str.c_str());
@@ -92,6 +101,47 @@ config::modifyAlways(std::string_view key, std::string_view value) const {
     } else {
         NIXL_DEBUG << "Modified UCX config: " << key_str << "=" << value_str;
     }
+}
+
+std::optional<std::pair<std::string, std::string>>
+config::keptValue(std::string_view key, condition_t condition) const {
+    if (condition == condition_t::ALWAYS) {
+        return std::nullopt;
+    }
+
+    // The UCX config dump shows a NIXL_UCX_<key> value as a default one, so check the
+    // environment first
+    if (auto env_var = findUcxEnvVar(key)) {
+        return env_var;
+    }
+
+    // The UCX config dump has only the UCP keys
+    const auto it = initialValues_.find(std::string(key));
+    if (it == initialValues_.end()) {
+        return std::nullopt;
+    }
+
+    const auto &[initial_value, is_default] = it->second;
+    if (!is_default) {
+        return std::make_pair("UCX_" + std::string(key), initial_value);
+    }
+
+    return std::nullopt;
+}
+
+void
+config::modifyMaxRmaRails(unsigned rails) const {
+    auto value = std::to_string(rails);
+
+    // Since openucx/ucx#12325 the UCX default is "1,assigned:auto", dumped as
+    // "default:1,assigned:auto": 1 rail, except for the GPU buffers whose NICs UCX assigns,
+    // which get every lane of their NICs. Keep that exception.
+    const auto it = initialValues_.find("MAX_RMA_RAILS");
+    if ((it != initialValues_.end()) && it->second.value.starts_with("default:")) {
+        value += ",assigned:auto";
+    }
+
+    modify("MAX_RMA_RAILS", value);
 }
 
 void
@@ -131,5 +181,49 @@ config::readUcpConfig() {
                                  std::string(ucs_status_string(status)));
     }
     return config;
+}
+
+config::dumped_values_t
+config::dumpValues(const ucp_config_t &config) {
+    char *buf = nullptr;
+    size_t size = 0;
+    {
+        const std::unique_ptr<FILE, fileCloser> stream(open_memstream(&buf, &size));
+        if (!stream) {
+            NIXL_PDEBUG << "Failed to open a memory stream for the UCX config";
+            return {};
+        }
+
+        ucp_config_print(&config,
+                         stream.get(),
+                         nullptr,
+                         static_cast<ucs_config_print_flags_t>(UCS_CONFIG_PRINT_CONFIG |
+                                                               UCS_CONFIG_PRINT_COMMENT_DEFAULT));
+    }
+
+    const std::unique_ptr<char, decltype(&free)> buf_guard(buf, &free);
+
+    // The lines are "UCX_<key>=<value>", commented out by "# " for a default value
+    constexpr std::string_view default_prefix = "# ";
+    constexpr std::string_view ucx_prefix = "UCX_";
+    dumped_values_t values;
+    std::istringstream dump(std::string(buf, size));
+    for (std::string line; std::getline(dump, line);) {
+        std::string_view entry = line;
+        const bool is_default = entry.starts_with(default_prefix);
+        if (is_default) {
+            entry.remove_prefix(default_prefix.size());
+        }
+
+        const auto pos = entry.find('=');
+        if (!entry.starts_with(ucx_prefix) || (pos == std::string_view::npos)) {
+            continue;
+        }
+
+        values.try_emplace(std::string(entry.substr(ucx_prefix.size(), pos - ucx_prefix.size())),
+                           dumpedValue{std::string(entry.substr(pos + 1)), is_default});
+    }
+
+    return values;
 }
 } // namespace nixl::ucx
