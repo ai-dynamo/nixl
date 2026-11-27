@@ -172,6 +172,7 @@ private:
     std::unordered_map<std::string, nixlDocaConnection> remoteConnMap;
     std::unordered_map<std::string, struct nixlDocaRdmaQp *> qpMap;
     std::unique_ptr<nixlDocaRdmaQp> retainedQp_;
+    bool qpRollbackFailed_ = false;
     std::unordered_map<std::string, int> connMap;
     std::unordered_map<std::string, struct nixlDocaNotif *> notifMap;
 

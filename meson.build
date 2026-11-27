@@ -29,7 +29,7 @@ if enable_plugins_opt != '' and disable_plugins_opt != ''
     error('Cannot specify both enable_plugins and disable_plugins options')
 endif
 
-all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'GDS', 'GDS_MT', 'AIS', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
+all_plugins = ['UCX', 'LIBFABRIC', 'POSIX', 'OBJ', 'REDIS', 'DAOS', 'GDS', 'GDS_MT', 'AIS', 'MOONCAKE', 'HF3FS', 'GUSLI', 'GPUNETIO', 'UCCL', 'AZURE_BLOB', 'INFINIA', 'TELEMETRY_DOCA', 'DOCA_MEMOS']
 
 enabled_plugins = {}
 
@@ -339,26 +339,19 @@ if cuda_dep.found()
     endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
-    if nvcc.version().version_compare('>=12.8')
-        doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
-    else
-        warning('GPUNETIO plugin not supported in CUDA version: ' + nvcc.version())
-        doca_gpunetio_dep = disabler()
-    endif
+    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
 
     # Set the Python CUDA-specific wheel directory
     cuda_version_major = nvcc.version().split('.')[0]
-    if cuda_version_major == '12'
-        cuda_wheel_dir = 'nixl_cu12'
-    elif cuda_version_major == '13'
+    if cuda_version_major == '13'
         cuda_wheel_dir = 'nixl_cu13'
     else
-        error('Unsupported CUDA version: ' + cuda_version_major)
+        error('Unsupported CUDA version: ' + cuda_version_major + ' (NIXL requires CUDA 13)')
     endif
 else
     warning('CUDA not found. UCX backend will be built without CUDA support, and some plugins will be disabled.')
     doca_gpunetio_dep = disabler()
-    cuda_wheel_dir = 'nixl_cu12'
+    cuda_wheel_dir = 'nixl_cu13'
 endif
 
 # Allow callers (e.g. ROCm CI/Dockerfile) to override the wheel variant suffix
@@ -404,6 +397,38 @@ if rocm_path != ''
         include_directories : rocm_inc,
     )
     message('ROCm/HIP enabled; toolchain path: ' + rocm_path)
+
+    # A ROCm-only build names its Python package after the ROCm release
+    # (nixl_rocm<X>_<Y>) so that wheels for different ROCm versions can coexist.
+    if wheel_variant == '' and not cuda_dep.found()
+        rocm_version = ''
+        foreach rocm_version_file : [rocm_path / '.info' / 'version',
+                                     rocm_path / 'core' / '.info' / 'version']
+            if rocm_version == '' and fs.is_file(rocm_version_file)
+                # Format is X.Y.Z, optionally followed by -<build>.
+                rocm_version = fs.read(rocm_version_file).strip().split('-')[0]
+            endif
+        endforeach
+        if rocm_version == '' and cpp.has_header('rocm-core/rocm_version.h', include_directories : rocm_inc)
+            rocm_version = '.'.join([
+                cpp.get_define('ROCM_VERSION_MAJOR',
+                               prefix : '#include <rocm-core/rocm_version.h>',
+                               include_directories : rocm_inc),
+                cpp.get_define('ROCM_VERSION_MINOR',
+                               prefix : '#include <rocm-core/rocm_version.h>',
+                               include_directories : rocm_inc),
+            ])
+        endif
+        rocm_version_parts = rocm_version.split('.')
+        if rocm_version_parts.length() < 2 or rocm_version_parts[0] == '' or rocm_version_parts[1] == ''
+            error('Could not determine the ROCm version under ' + rocm_path +
+                  ' (tried .info/version, core/.info/version and include/rocm-core/rocm_version.h).' +
+                  ' Pass -Dwheel_variant=rocm<X>_<Y>, e.g. -Dwheel_variant=rocm10_2.')
+        endif
+        wheel_variant = 'rocm' + rocm_version_parts[0] + '_' + rocm_version_parts[1]
+        cuda_wheel_dir = 'nixl_' + wheel_variant
+        message('ROCm version ' + rocm_version + '; Python package: ' + cuda_wheel_dir)
+    endif
 
     # hipify-perl is shipped with ROCm and is required for all ROCm builds.
     hipify_cmd = find_program('hipify-perl')
@@ -632,6 +657,9 @@ utils_inc_dirs = include_directories('src/utils')
 nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
+if get_option('build_nixl_ep')
+  subdir('runtime/ep')
+endif
 if get_option('build_tests') and get_option('buildtype') != 'release'
   subdir('test')
 endif

@@ -92,6 +92,7 @@ gtest_sources = [
     'backend_name_canonicalization.cpp',
     'error_handling.cpp',
     'test_transfer.cpp',
+    'byte_buffer.cpp',
     'metadata_exchange.cpp',
     'md_manager.cpp',
     'metadata_worker.cpp',
@@ -129,8 +130,10 @@ endif
 
 if ucx_dep.found() and is_variable('ucx_backend_interface')
     gtest_sources += 'hw_warning_test.cpp'
+    gtest_sources += 'ucx_config_test.cpp'
     gtest_sources += 'ucx_trace_context_test.cpp'
     gtest_sources += 'ucx_request_release_test.cpp'
+    gtest_sources += 'ucx_notif_test.cpp'
     cpp_flags += '-DHAVE_UCX_BACKEND'
     ucx_hw_warning_dep = [ucx_backend_interface, ucx_dep]
 else

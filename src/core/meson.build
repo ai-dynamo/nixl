@@ -49,6 +49,10 @@ if is_variable('doca_memos_backend_interface') and 'DOCA_MEMOS' in static_plugin
     nixl_lib_deps += [ doca_memos_backend_interface ]
 endif
 
+if 'DAOS' in static_plugins
+    nixl_lib_deps += [ daos_backend_interface ]
+endif
+
 disable_gds_backend = get_option('disable_gds_backend')
 if not disable_gds_backend and 'GDS' in static_plugins
     nixl_lib_deps += [ gds_backend_interface, cuda_dep ]
@@ -88,7 +92,7 @@ nixl_lib_sources = [
     'nixl_p2p_metadata_backend.cpp',
     'nixl_etcd_metadata_backend.cpp',
     'nixl_tcpstore_metadata_backend.cpp',
-    'nixl_tcpstore_client.cpp',
+    'nixl_tcpstore_client_async.cpp',
     'nixl_plugin_manager.cpp',
     'telemetry/telemetry.cpp',
     'telemetry/telemetry_staging_queue.cpp',

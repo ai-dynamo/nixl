@@ -1,4 +1,5 @@
 # SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2026 Advanced Micro Devices, Inc. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -15,9 +16,34 @@
 
 import importlib
 import sys
+import warnings
 from typing import TYPE_CHECKING
 
-from nixl_meta_utils import detect_cuda_major, detect_rocm
+from nixl_meta_utils import (
+    detect_cuda_major,
+    detect_rocm,
+    detect_torch_cuda,
+    find_cuda_backends,
+    find_rocm,
+    find_rocm_backends,
+    load_rocm,
+)
+
+
+def _cuda_torch_with_rocm_backends_error() -> ImportError | None:
+    """The error for a CUDA PyTorch next to ROCm-only NIXL backends, if that applies."""
+    rocm_backends = find_rocm_backends()
+    if not rocm_backends or find_cuda_backends():
+        return None
+    torch_cuda = detect_torch_cuda()
+    if torch_cuda is None:
+        return None
+    return ImportError(
+        f"found a CUDA build of PyTorch (CUDA {torch_cuda}) but only ROCm NIXL "
+        f"backends are installed ({', '.join(rocm_backends)}). NIXL for ROCm "
+        "needs AMD's ROCm build of PyTorch, which is not on PyPI: install it "
+        "in place of the CUDA build"
+    )
 
 
 def _load_cuda_backend() -> str:
@@ -30,13 +56,51 @@ def _load_cuda_backend() -> str:
         except ModuleNotFoundError as e:
             if e.name != mod_name:
                 raise
+            wrong_torch = _cuda_torch_with_rocm_backends_error()
+            if wrong_torch is not None:
+                raise wrong_torch from e
             raise ImportError(
                 f"detected CUDA {cuda_major} but {pip_name} is not installed"
             ) from e
-    # No CUDA stack detected — use whatever backend is installed.
-    backends = ("nixl_cu13", "nixl_cu12", "nixl_rocm")
-    if detect_rocm():
-        backends = ("nixl_rocm", "nixl_cu13", "nixl_cu12")
+    # No CUDA stack detected: pick the backend matching the ROCm version, unless
+    # a CUDA backend is installed, which keeps the selection below unchanged.
+    cuda_backends = find_cuda_backends()
+    rocm = None if cuda_backends else find_rocm()
+    rocm_backends = [] if cuda_backends else find_rocm_backends()
+    if rocm is not None:
+        mod_name = "nixl_rocm{}_{}".format(*rocm.version)
+        if mod_name in rocm_backends:
+            # The backend's plugins find the HIP runtime by library name only:
+            # load it from the install the backend was selected for.
+            load_rocm(rocm)
+        try:
+            return importlib.import_module(mod_name).__name__
+        except ModuleNotFoundError as e:
+            if e.name != mod_name:
+                raise
+            if rocm_backends:
+                raise ImportError(
+                    "detected ROCm {0}.{1} from {2} but no NIXL backend for it "
+                    "is installed (backends installed: {3})".format(
+                        *rocm.version, rocm.source, ", ".join(rocm_backends)
+                    )
+                ) from e
+            # No nixl_rocm<X>_<Y> backend is installed, so none can mismatch:
+            # fall through to the legacy nixl_rocm package, whose name carries
+            # no ROCm version, or to the error below.
+    elif rocm_backends:
+        warnings.warn(
+            "could not tell which ROCm install to select the NIXL backend for: "
+            "found none, or several versions side by side (set ROCM_PATH to "
+            "the one to use). Using the backend for the newest ROCm version, "
+            f"{rocm_backends[0]}",
+            RuntimeWarning,
+        )
+    # ROCm version unknown, or only the legacy backend: use whatever backend is
+    # installed.
+    backends = ("nixl_cu13", *rocm_backends, "nixl_rocm")
+    if rocm is not None or detect_rocm():
+        backends = (*rocm_backends, "nixl_rocm", "nixl_cu13")
     for mod_name in backends:
         try:
             return importlib.import_module(mod_name).__name__
@@ -45,7 +109,7 @@ def _load_cuda_backend() -> str:
                 # Re-raise if the error is not about the module we're trying to import
                 raise
             continue
-    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_cu12, nixl_rocm)")
+    raise ImportError("No NIXL backend found (tried nixl_cu13, nixl_rocm)")
 
 
 _pkg = sys.modules[_load_cuda_backend()]
