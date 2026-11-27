@@ -99,15 +99,24 @@ class nixl_xfer_handle:
         value: Internal handle
     """
 
-    __slots__ = ("_handle", "_agent", "_released")
+    __slots__ = ("_handle", "_agent", "_released", "_monitor")
 
     def __init__(self, agent, value: int):
         self._handle = int(value)
         self._agent = agent
         self._released = False
+        self._monitor: Optional[nixl_completion_monitor] = None
 
     def __repr__(self) -> str:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
+
+    def _set_monitor(self, monitor: Optional[nixl_completion_monitor]) -> None:
+        # A handle is attached to one monitor at most, and keeps that monitor alive
+        if self._monitor is not None:
+            self._monitor._handles.pop(self._handle, None)
+        self._monitor = monitor
+        if monitor is not None:
+            monitor._handles[self._handle] = self
 
     def release(self):
         """Release the request; on refusal retain it for explicit polling and retry.
@@ -120,6 +129,7 @@ class nixl_xfer_handle:
         if not self._released:
             self._agent.agent.releaseXferReq(self._handle)
             self._released = True
+            self._set_monitor(None)
 
     def __del__(self):
         if not self._released:
@@ -200,13 +210,13 @@ class nixl_completion_monitor:
         return self._to_handles(self._monitor.waitAll(timeout_ms))
 
     def _to_handles(self, completions) -> list[tuple[nixl_xfer_handle, str]]:
-        return [
-            (
-                self._handles.pop(value),
-                "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR",
-            )
-            for value, status in completions
-        ]
+        result = []
+        for value, status in completions:
+            handle = self._handles[value]
+            handle._set_monitor(None)
+            state = "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR"
+            result.append((handle, state))
+        return result
 
 
 # Opaque handle for backend can be just int, as it's not passed to the user
@@ -764,8 +774,7 @@ class nixl_agent:
         status = self.agent.postXferReq(
             handle._handle, notif_msg, monitor._monitor if monitor is not None else None
         )
-        if monitor is not None:
-            monitor._handles[handle._handle] = handle
+        handle._set_monitor(monitor)
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
