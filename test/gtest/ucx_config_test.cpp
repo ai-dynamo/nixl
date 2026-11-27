@@ -269,38 +269,6 @@ TEST_F(UcxConfigTest, ModifyKeepsUctEnvValue) {
     }
 }
 
-TEST_F(UcxConfigTest, ModifyNotInEnvKeepsEnvValue) {
-    for (const auto prefix : ucx_env_var_prefixes) {
-        const auto var = std::string(prefix) + "MAX_EAGER_RAILS";
-        SCOPED_TRACE(var);
-        gtest::ScopedEnv env;
-        env.addVar(var, "3");
-
-        const nixl::ucx::config config;
-        config.modify("MAX_EAGER_RAILS", "2", condition_t::NOT_IN_ENV);
-        EXPECT_EQ(getValue(config, "MAX_EAGER_RAILS"), "3");
-    }
-}
-
-TEST_F(UcxConfigDeathTest, ModifyNotInEnvOverridesConfigFileValue) {
-    // As the engine config of the UCX backend does
-    EXPECT_EXIT(
-        {
-            addConfigFileLine("UCX_MAX_EAGER_RAILS=3");
-            const nixl::ucx::config config;
-            if (getValue(config, "MAX_EAGER_RAILS") != "3") {
-                std::cerr << "The UCX configuration file is not applied" << std::endl;
-                std::_Exit(1);
-            }
-
-            config.modify("MAX_EAGER_RAILS", "2", condition_t::NOT_IN_ENV);
-            std::cerr << "MAX_EAGER_RAILS=" << getValue(config, "MAX_EAGER_RAILS") << std::endl;
-            std::_Exit(0);
-        },
-        ::testing::ExitedWithCode(0),
-        "MAX_EAGER_RAILS=2");
-}
-
 TEST_F(UcxConfigTest, ModifyAlwaysOverridesEnvValue) {
     for (const auto prefix : ucx_env_var_prefixes) {
         const auto var = std::string(prefix) + "MAX_EAGER_RAILS";
@@ -314,7 +282,7 @@ TEST_F(UcxConfigTest, ModifyAlwaysOverridesEnvValue) {
     }
 }
 
-TEST_F(UcxConfigTest, ModifyEqualSetsDefaultValue) {
+TEST_F(UcxConfigTest, ModifyMaxRmaRailsSetsDefaultValue) {
     // Since openucx/ucx#12325 the UCX default is 1 rail, except for the GPU buffers whose NICs
     // UCX assigns: these buffers get every lane of their NICs
     const auto line = getDumpLine(nixl::ucx::config(), "MAX_RMA_RAILS");
@@ -330,7 +298,7 @@ TEST_F(UcxConfigTest, ModifyEqualSetsDefaultValue) {
     EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", rails));
 }
 
-TEST_F(UcxConfigTest, ModifyEqualKeepsEnvValue) {
+TEST_F(UcxConfigTest, ModifyMaxRmaRailsKeepsEnvValue) {
     for (const auto prefix : ucx_env_var_prefixes) {
         for (const std::string value : {"1", "4"}) {
             const auto var = std::string(prefix) + "MAX_RMA_RAILS";
@@ -342,12 +310,12 @@ TEST_F(UcxConfigTest, ModifyEqualKeepsEnvValue) {
     }
 }
 
-TEST_F(UcxConfigTest, ModifyEqualKeepsAliasValue) {
+TEST_F(UcxConfigTest, ModifyMaxRmaRailsKeepsAliasValue) {
     env_.addVar("UCX_MAX_RMA_LANES", "4");
     EXPECT_EQ(modifyMaxRmaRails(), getPrintedValue("MAX_RMA_RAILS", "4"));
 }
 
-TEST_F(UcxConfigDeathTest, ModifyEqualKeepsConfigFileValue) {
+TEST_F(UcxConfigDeathTest, ModifyMaxRmaRailsKeepsConfigFileValue) {
     // As a platform section of ucx.conf sets 4 rails
     EXPECT_EXIT(
         {

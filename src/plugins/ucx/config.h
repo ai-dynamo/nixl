@@ -32,7 +32,14 @@ extern "C" {
 namespace nixl::ucx {
 class config {
 public:
-    enum class condition_t { DEFAULT, NOT_IN_ENV, EQUAL, ALWAYS };
+    // When modify() changes a key
+    enum class condition_t {
+        // Neither NIXL_UCX_<key> nor UCX_<key> is set in the environment, and the key is not
+        // set in a UCX configuration file
+        DEFAULT,
+        // Always
+        ALWAYS
+    };
 
     config() = default;
 
@@ -41,13 +48,10 @@ public:
         return config_.get();
     }
 
-    // Modify the config if the condition holds, by default if neither NIXL_UCX_<key> nor
-    // UCX_<key> is set in the environment and the key is not set in a UCX configuration file
     void
     modify(std::string_view key,
            std::string_view value,
-           condition_t condition = condition_t::DEFAULT,
-           std::string_view expected = {}) const;
+           condition_t condition = condition_t::DEFAULT) const;
 
     // Set the RMA rails unless they differ from the UCX default
     void
@@ -71,9 +75,10 @@ private:
     [[nodiscard]] static dumped_values_t
     dumpValues(const ucp_config_t &config);
 
-    // The variable name and value that modify() keeps under the condition, if any
+    // The variable name and value that modify() keeps under the condition, if any. With an
+    // expected value, also keep any other value.
     [[nodiscard]] std::optional<std::pair<std::string, std::string>>
-    keptValue(std::string_view key, condition_t condition, std::string_view expected) const;
+    keptValue(std::string_view key, condition_t condition, std::string_view expected = {}) const;
 
     const std::unique_ptr<ucp_config_t, void (*)(ucp_config_t *)> config_{readUcpConfig(),
                                                                           &ucp_config_release};

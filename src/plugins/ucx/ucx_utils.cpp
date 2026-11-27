@@ -621,9 +621,7 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         size_t pos = elem_view.find('=');
 
         if (pos != std::string::npos) {
-            config.modify(elem_view.substr(0, pos),
-                          elem_view.substr(pos + 1),
-                          nixl::ucx::config::condition_t::NOT_IN_ENV);
+            config.modify(elem_view.substr(0, pos), elem_view.substr(pos + 1));
         }
     }
 
