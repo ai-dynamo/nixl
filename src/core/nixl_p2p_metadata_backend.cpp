@@ -48,7 +48,6 @@ constexpr auto receive_timeout = std::chrono::seconds(5);
 
 constexpr auto connection_retry_interval = std::chrono::seconds(1);
 constexpr auto max_connection_retry_count = 10;
-constexpr auto accept_retry_interval = std::chrono::milliseconds(50);
 
 constexpr auto module_prefix = "[P2P Metadata Backend]";
 } // namespace
@@ -536,7 +535,8 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx,
     : ctx_(ctx),
       ioContext_(io_context),
       acceptor_(io_context),
-      acceptRetryTimer_(io_context) {
+      acceptRetryTimer_(io_context),
+      acceptRetryInterval_(config.workerDelay) {
     if (config.useListenThread) {
         try {
             bindListener(asio::ip::tcp::endpoint(asio::ip::tcp::v6(), config.listenPort));
@@ -587,7 +587,12 @@ nixlP2PMetadataBackend::acceptPeers() {
         }
         if (error) {
             NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << error.message();
-            acceptPeers();
+            acceptRetryTimer_.expires_after(acceptRetryInterval_);
+            acceptRetryTimer_.async_wait([this](const asio::error_code &error) {
+                if (error != asio::error::operation_aborted) {
+                    acceptPeers();
+                }
+            });
             return;
         }
 

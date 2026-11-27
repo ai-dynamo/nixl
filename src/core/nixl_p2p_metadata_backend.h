@@ -24,6 +24,7 @@
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
 
+#include <chrono>
 #include <cstddef>
 #include <functional>
 #include <memory>
@@ -133,6 +134,7 @@ private:
     asio::ip::tcp::acceptor acceptor_;
     // The timer for retrying the accept operation.
     asio::steady_timer acceptRetryTimer_;
+    std::chrono::microseconds acceptRetryInterval_;
     // The map of peer addresses to their sessions.
     peer_session_map_t peerSessions_;
 
