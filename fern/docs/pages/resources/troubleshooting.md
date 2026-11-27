@@ -170,6 +170,7 @@ The remote agent became unreachable during the operation:
 2. Verify the remote agent process is still running
 3. Check firewall rules between the two hosts
 4. For RDMA backends, verify InfiniBand/RoCE connectivity with `ibv_devinfo`
+5. If the remote agent is still running, stop submitting transfers towards it, reposts of existing requests included, and release the existing transfer requests, keeping any that NIXL refuses to release along with their buffers and registrations. Then remove its metadata (`remove_remote_agent` in Python, `invalidateRemoteMD` in C++), add its full metadata again, and prepare descriptor lists and create transfer requests again. With the UCX backend, adding metadata again while the failed connection is still loaded fails with this error, so remove the metadata first.
 
 ## Backend-Specific Issues
 

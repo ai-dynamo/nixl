@@ -498,6 +498,10 @@ class nixl_agent:
         agent, or limit to the set of backends passed through the backends argument.
         This function is optional.
 
+        If a backend already knows that its connection to the agent has failed, this
+        raises nixlRemoteDisconnectError before connecting any backend;
+        remove_remote_agent describes how to reconnect.
+
         Args:
             backends: Optional list of backend names to limit the connections to specific backends
             remote_agent: Name of the remote agent.
@@ -952,6 +956,17 @@ class nixl_agent:
         """Add a remote agent using its metadata. After this call, current agent can
         initiate transfers towards the remote agent.
 
+        Adding an agent that is already added keeps the existing connections to it
+        and adds any new descriptors, so it cannot replace a connection that has
+        failed. If a backend already knows that its connection to the agent has
+        failed, this raises nixlRemoteDisconnectError before adding anything, whether
+        or not the metadata carries connection info. A failure that a backend only
+        detects while new descriptors are being added still removes the agent. If the
+        agent's connection info has changed, for example because it restarted, this
+        raises nixlNotAllowedError. A known failure is reported first, so adding a
+        restarted agent again can raise either error. In all these cases,
+        remove_remote_agent describes how to reconnect.
+
         Args:
             metadata: Metadata of the remote agent, received out-of-band in bytes.
 
@@ -965,6 +980,18 @@ class nixl_agent:
         """Remove a remote agent. After this call, current agent cannot initiate
         transfers towards the remote agent specified in the call anymore.
         This call will also result in a disconnect between the two agents.
+        To reconnect to an agent that is still running after its connection failed,
+        first stop submitting transfers towards it, reposts of existing handles
+        included, and release the existing transfer handles as release_xfer_handle
+        describes, keeping any that raise nixlRepostActiveError along with their
+        buffers and registrations: once the agent is removed, check_xfer_state raises
+        nixlNotFoundError for a transfer still in progress. Then remove the agent
+        (False here means that it is no longer added, for example because a failed add
+        already removed it) and add it again with metadata that has its connection
+        info and every descriptor you need, such as its full metadata from
+        get_agent_metadata; partial metadata without connection info cannot
+        reconnect. Descriptor lists prepared for the agent stay bound to the removed
+        metadata: release them, prepare new ones, and create transfer handles again.
 
         Args:
             agent: Name of the remote agent.

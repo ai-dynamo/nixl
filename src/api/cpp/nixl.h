@@ -151,6 +151,10 @@ class nixlAgent {
          *         towards the target agent. If a list of backends hints is provided
          *         (via extra_params), the connection is made for the specified backends.
          *
+         *         If a backend already knows that its connection to the agent has failed,
+         *         this returns NIXL_ERR_REMOTE_DISCONNECT before connecting any backend;
+         *         invalidateRemoteMD describes how to reconnect.
+         *
          * @param  remote_agent  Name of the remote agent
          * @return nixl_status_t Error code if call was not successful
          */
@@ -535,6 +539,18 @@ class nixlAgent {
          * @brief  Load other agent's metadata and unpack it internally. Now the local
          *         agent can initiate transfers towards the remote agent.
          *
+         *         Loading metadata for an agent that is already loaded keeps the existing
+         *         connections to it and adds any new descriptors, so it cannot replace a
+         *         connection that has failed. If a backend already knows that its
+         *         connection to the agent has failed, this returns NIXL_ERR_REMOTE_DISCONNECT
+         *         before loading anything, whether or not the metadata carries connection
+         *         info. A failure that a backend only detects while new descriptors are
+         *         being loaded still invalidates the agent's metadata. If the agent's
+         *         connection info has changed, for example because it restarted, this
+         *         returns NIXL_ERR_NOT_ALLOWED. A known failure is reported first, so
+         *         loading the metadata of a restarted agent can return either error. In all
+         *         these cases, invalidateRemoteMD describes how to reconnect.
+         *
          * @param  remote_metadata  Serialized metadata blob to be loaded
          * @param  agent_name [out] Agent name extracted from the loaded metadata blob
          * @return nixl_status_t    Error code if call was not successful
@@ -550,6 +566,20 @@ class nixlAgent {
          *         Existing transfer handles remain valid for polling completion
          *         status and must still be released after reaching a terminal
          *         status (releaseXferReq() refuses in-progress handles).
+         *
+         *         To reconnect to an agent that is still running after its connection
+         *         failed, first stop submitting transfers towards it, reposts of existing
+         *         requests included, and release the existing requests as releaseXferReq
+         *         describes, keeping any it refuses along with their buffers and
+         *         registrations: once the metadata is invalidated, getXferStatus returns
+         *         NIXL_ERR_NOT_FOUND for a request still in progress. Then invalidate the
+         *         agent's metadata (NIXL_ERR_NOT_FOUND here means that it is no longer
+         *         loaded, for example because a failed load already invalidated it) and
+         *         load it again with its connection info and every descriptor you need,
+         *         such as the agent's full metadata from getLocalMD; partial metadata
+         *         without connection info cannot reconnect. Descriptor lists prepared for
+         *         the agent stay bound to the invalidated metadata: release them, prepare
+         *         new ones, and create transfer requests again.
          *
          * @param  remote_agent  Remote agent name to invalidate its metadata blob
          * @return nixl_status_t Error code if call was not successful

@@ -116,6 +116,11 @@ namespace agent {
             return gmock_engine_;
         }
 
+        mocks::GMockBackendEngine &
+        getGMockEngine() {
+            return gmock_engine_;
+        }
+
         nixl_status_t
         createBackendWithGMock(nixl_b_params_t &params, nixlBackendH *&backend) {
             gmock_engine_.SetToParams(params);
@@ -1895,6 +1900,67 @@ namespace agent {
 
         EXPECT_EQ(local_agent_->makeConnection(remote_agent_name_out), NIXL_SUCCESS);
         EXPECT_EQ(remote_agent_->makeConnection(local_agent_name_out), NIXL_SUCCESS);
+    }
+
+    TEST_F(dualAgentBridgeFixture, ReloadReportsFailedConnection) {
+        const LogIgnoreGuard lig("knows that its connection to agent 'RemoteAgent' has failed");
+        auto &engine = local_agent_helper_->getGMockEngine();
+        ON_CALL(engine, capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::CONN_STATE));
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        const nixl_xfer_dlist_t no_descs(DRAM_SEG);
+        std::string name;
+
+        // While the backend reports no failure, reloading and connecting work as before.
+        EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->makeConnection(s.remote_agent_name), NIXL_SUCCESS);
+
+        // Once it reports the connection as failed, reloading the metadata in full or in part
+        // and connecting fail before anything changes: the new descriptor is not added and
+        // the agent is not invalidated.
+        ON_CALL(engine, checkConn(s.remote_agent_name))
+            .WillByDefault(testing::Return(NIXL_ERR_REMOTE_DISCONNECT));
+        blob extra_blob;
+        nixl_reg_dlist_t extra_reg(DRAM_SEG);
+        nixl_opt_args_t extra_params;
+        EXPECT_EQ(remote_agent_helper_->initAndRegisterMemory(
+                      extra_blob, extra_reg, extra_params, s.remote_backend),
+                  NIXL_SUCCESS);
+        std::string full_md, partial_md;
+        ASSERT_EQ(remote_agent_->getLocalMD(full_md), NIXL_SUCCESS);
+        ASSERT_EQ(remote_agent_->getLocalPartialMD(extra_reg, partial_md, nullptr), NIXL_SUCCESS);
+        EXPECT_CALL(engine, loadRemoteConnInfo).Times(0);
+        EXPECT_CALL(engine, loadRemoteMD).Times(0);
+        EXPECT_CALL(engine, connect).Times(0);
+        EXPECT_EQ(local_agent_->loadRemoteMD(full_md, name), NIXL_ERR_REMOTE_DISCONNECT);
+        EXPECT_EQ(local_agent_->loadRemoteMD(partial_md, name), NIXL_ERR_REMOTE_DISCONNECT);
+        EXPECT_EQ(local_agent_->makeConnection(s.remote_agent_name), NIXL_ERR_REMOTE_DISCONNECT);
+        EXPECT_EQ(local_agent_->checkRemoteMD(s.remote_agent_name, no_descs), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->checkRemoteMD(s.remote_agent_name, extra_reg.trim()),
+                  NIXL_ERR_NOT_FOUND);
+
+        testing::Mock::VerifyAndClearExpectations(&engine);
+
+        // With a new, healthy connection after invalidating, loading again succeeds and adds
+        // the new descriptor.
+        ON_CALL(engine, checkConn(s.remote_agent_name))
+            .WillByDefault(testing::Return(NIXL_SUCCESS));
+        EXPECT_EQ(local_agent_->invalidateRemoteMD(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->loadRemoteMD(full_md, name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->makeConnection(s.remote_agent_name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->checkRemoteMD(s.remote_agent_name, extra_reg.trim()), NIXL_SUCCESS);
+    }
+
+    // The core asks only backends that declare CONN_STATE, so plugins built before
+    // checkConn() existed are never called through it.
+    TEST_F(dualAgentBridgeFixture, CheckConnNeedsCapability) {
+        DualAgentSetup s(DRAM_SEG);
+        setupDualAgent(s);
+        EXPECT_CALL(local_agent_helper_->getGMockEngine(), checkConn).Times(0);
+        std::string name;
+        EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, name), NIXL_SUCCESS);
+        EXPECT_EQ(local_agent_->makeConnection(s.remote_agent_name), NIXL_SUCCESS);
     }
 
     TEST(agentMakeXferReq, MergeIndices) {

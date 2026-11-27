@@ -808,6 +808,15 @@ nixlAgent::makeConnection(const std::string &remote_agent,
             backend_set.insert(elm->engine->getType());
     }
 
+    // Check every backend first, so that none connects when another one already knows
+    // that its connection to the agent has failed.
+    for (const auto &backend : backend_set) {
+        const nixl_status_t status = data->checkConnLocked(remote_agent, backend);
+        if (status != NIXL_SUCCESS) {
+            return status;
+        }
+    }
+
     // For now trying to make all the connections, can become best effort,
     nixl_status_t ret = NIXL_SUCCESS;
     for (auto & backend: backend_set) {
@@ -1945,6 +1954,20 @@ nixlAgentData::loadRemoteMD(const nixl_blob_t &remote_metadata, std::string &out
 
     NIXL_DEBUG << "Loading remote metadata for agent: " << remote_agent;
 
+    // Loading metadata again for an agent keeps the backends' connections to it, so it
+    // cannot replace one that has failed. Report a failure that a backend already knows
+    // about before anything is loaded, whether or not the metadata carries connection
+    // info, so that the call changes nothing.
+    const auto loaded_it = remoteBackends_.find(remote_agent);
+    if (loaded_it != remoteBackends_.end()) {
+        for (const auto &[backend, loaded_conn_info] : loaded_it->second) {
+            ret = checkConnLocked(remote_agent, backend);
+            if (ret != NIXL_SUCCESS) {
+                return ret;
+            }
+        }
+    }
+
     size_t conn_cnt;
     ret = sd.getBuf("Conns", &conn_cnt, sizeof(conn_cnt));
     if (ret != NIXL_SUCCESS) {
@@ -2058,6 +2081,25 @@ nixlAgentData::invalidateRemoteMDLocked(const std::string &remote_agent) {
         remoteBackends_.erase(rb_it);
     }
     return ret;
+}
+
+nixl_status_t
+nixlAgentData::checkConnLocked(const std::string &remote_agent,
+                               const nixl_backend_t &backend) const {
+    const auto be_it = backendEngines_.find(backend);
+    if (be_it == backendEngines_.end()) {
+        return NIXL_SUCCESS;
+    }
+
+    const nixlBackendEngine &eng = *be_it->second;
+    if (!eng.supportsCapability(nixl_backend_capability_t::CONN_STATE) ||
+        (eng.checkConn(remote_agent) != NIXL_ERR_REMOTE_DISCONNECT)) {
+        return NIXL_SUCCESS;
+    }
+
+    NIXL_ERROR << "backend '" << backend << "' knows that its connection to agent '" << remote_agent
+               << "' has failed; invalidate the agent's metadata and load it again to reconnect";
+    return NIXL_ERR_REMOTE_DISCONNECT;
 }
 
 // Relocated from the former nixl_listener.cpp (shared cache helpers used by the

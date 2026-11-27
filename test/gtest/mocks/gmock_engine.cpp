@@ -81,6 +81,7 @@ GMockBackendEngine::setOptionalDefaults() {
     ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
         .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
     ON_CALL(*this, capabilities()).WillByDefault(Return(nixl_backend_capability_t::NONE));
+    ON_CALL(*this, checkConn(_)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
 }
 
 void

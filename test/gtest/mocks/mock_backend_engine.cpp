@@ -55,6 +55,12 @@ MockBackendEngine::disconnect(const std::string &remote_agent) {
 }
 
 nixl_status_t
+MockBackendEngine::checkConn(const std::string &remote_agent) const {
+    assert(sharedState > 0);
+    return gmock_backend_engine->checkConn(remote_agent);
+}
+
+nixl_status_t
 MockBackendEngine::unloadMD(nixlBackendMD *input) {
     sharedState++;
     return gmock_backend_engine->unloadMD(input);

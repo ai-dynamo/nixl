@@ -99,6 +99,7 @@ public:
     MOCK_METHOD(nixl_status_t, deregisterMem, (nixlBackendMD * meta), (override));
     MOCK_METHOD(nixl_status_t, connect, (const std::string &remote_agent), (override));
     MOCK_METHOD(nixl_status_t, disconnect, (const std::string &remote_agent), (override));
+    MOCK_METHOD(nixl_status_t, checkConn, (const std::string &remote_agent), (const, override));
     MOCK_METHOD(nixl_status_t, unloadMD, (nixlBackendMD * input), (override));
     MOCK_METHOD(nixl_status_t,
                 prepXfer,

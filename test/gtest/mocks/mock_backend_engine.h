@@ -56,6 +56,8 @@ public:
   nixl_status_t deregisterMem(nixlBackendMD *meta) override;
   nixl_status_t connect(const std::string &remote_agent) override;
   nixl_status_t disconnect(const std::string &remote_agent) override;
+  nixl_status_t
+  checkConn(const std::string &remote_agent) const override;
   nixl_status_t unloadMD(nixlBackendMD *input) override;
   nixl_status_t prepXfer(const nixl_xfer_op_t &operation,
                          const nixl_meta_dlist_t &local,
