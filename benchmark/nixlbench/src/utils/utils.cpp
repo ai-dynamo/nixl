@@ -1479,6 +1479,26 @@ allBytesAre(void *buffer, size_t size, uint8_t value) {
     return true; // All bytes match the value
 }
 
+/** Print where and by how much the @a data read back for @a iov differs from @a value. */
+static void
+printMismatch(const xferBenchIOV &iov, const void *data, uint8_t value) {
+    const uint8_t *bytes = static_cast<const uint8_t *>(data);
+    size_t first = 0, last = 0, count = 0;
+
+    for (size_t i = 0; i < iov.len; ++i) {
+        if (bytes[i] != value) {
+            if (count++ == 0) {
+                first = i;
+            }
+            last = i;
+        }
+    }
+    std::cerr << "  iov addr 0x" << std::hex << iov.addr << std::dec << " len " << iov.len << ": "
+              << count << " bytes differ, first at offset " << first << " (expected 0x" << std::hex
+              << (int)value << ", got 0x" << (int)bytes[first] << std::dec << "), last at offset "
+              << last << std::endl;
+}
+
 // Implement GUSLI device parser (declared in utils.h) so it can be reused by both utils and worker
 std::vector<GusliDeviceConfig>
 parseGusliDeviceList(const std::string &device_list,
@@ -1708,6 +1728,7 @@ xferBenchUtils::checkConsistency(std::vector<std::vector<xferBenchIOV>> &iov_lis
             rc = allBytesAre(addr, len, check_val);
             if (true != rc) {
                 std::cerr << "Consistency check failed for iov " << i << ":" << j << std::endl;
+                printMismatch(iov, addr, check_val);
                 pass_check_consistency = false;
             }
             // Free the addr only if is allocated here
