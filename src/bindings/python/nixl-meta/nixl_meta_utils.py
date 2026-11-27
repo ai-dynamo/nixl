@@ -22,6 +22,7 @@ import pathlib
 import pkgutil
 import re
 import sys
+import types
 from collections.abc import Iterator
 from typing import NamedTuple
 
@@ -38,7 +39,8 @@ def detect_cuda_major() -> int | None:
     importing a NIXL meta package does not itself pull in torch (a ~1s cost).
     If nothing CUDA is loaded yet, read torch's build version off disk (still
     torch-free); only if that fails do we import torch and use its official API
-    as a last resort.
+    as a last resort. A ROCm build of torch has no CUDA version to give, so it
+    is not imported for one.
     """
 
     def major(version: str | None) -> int | None:
@@ -70,6 +72,8 @@ def detect_cuda_major() -> int | None:
     version = major(_torch_cuda_version_from_disk())
     if version is not None:
         return version
+    if _torch_rocm_version_from_disk() is not None:
+        return None
 
     # Last resort: import torch and use its official API. Slow.
     try:
@@ -83,14 +87,16 @@ def detect_cuda_major() -> int | None:
 def detect_rocm() -> bool:
     """Whether the process uses a ROCm stack, to select the nixl_rocm backend.
 
-    Called after detect_cuda_major() returns None, by which point torch is
-    already imported if it is installed.
+    Never imports torch: a ROCm build that is installed but not imported
+    counts as well.
     """
     # torch already imported: use its official API.
     torch = sys.modules.get("torch")
     if torch is not None:
         if getattr(getattr(torch, "version", None), "hip", None) is not None:
             return True
+    elif _torch_rocm_version_from_disk() is not None:
+        return True
 
     # hip-python already imported: use it.
     return "rocm.bindings" in sys.modules or "hip" in sys.modules
@@ -130,9 +136,26 @@ def find_rocm() -> RocmInstall | None:
     4. ROCm installed from AMD's pip packages (rocm, rocm-sdk-core);
     5. /opt/rocm, if ROCM_PATH is not set.
 
-    Never imports torch: called after detect_cuda_major() returns None, by which
-    point torch is already imported if it is installed.
+    A ROCm build of PyTorch that is installed but not imported is imported only
+    if none of these finds an install: such a build bundles its ROCm, and
+    importing it is what loads that HIP runtime (1 and 2 then apply).
     """
+    install = _find_rocm()
+    if (
+        install is None
+        and "torch" not in sys.modules
+        and _torch_rocm_version_from_disk() is not None
+    ):
+        try:
+            importlib.import_module("torch")
+        except ImportError:
+            return None
+        install = _find_rocm()
+    return install
+
+
+def _find_rocm() -> RocmInstall | None:
+    """find_rocm() for the process as it is, without importing anything."""
     loaded = _loaded_hip_runtime()
     if loaded is not None:
         install = _rocm_install(loaded.parent.parent)
@@ -310,11 +333,29 @@ def _rocm_install(root: pathlib.Path) -> RocmInstall | None:
 
 
 def _torch_cuda_version_from_disk() -> str | None:
-    """Return torch's build CUDA version (e.g. "12.6") without full torch import.
+    """Return torch's build CUDA version (e.g. "12.6") without full torch import."""
+    return getattr(_torch_version_module_from_disk(), "cuda", None)
+
+
+def _torch_rocm_version_from_disk() -> str | None:
+    """Return torch's version if it is a ROCm build (e.g. "2.15.0+rocm10.2.0").
+
+    Without full torch import, as _torch_cuda_version_from_disk().
+    """
+    module = _torch_version_module_from_disk()
+    version = _rocm_tag(getattr(module, "__version__", None))
+    if version is None and getattr(module, "hip", None) is not None:
+        # A ROCm build without the tag: report what version there is.
+        version = str(getattr(module, "__version__", None) or "unknown")
+    return version
+
+
+def _torch_version_module_from_disk() -> types.ModuleType | None:
+    """Return torch's ``version`` module without full torch import.
 
     ``find_spec`` locates the package without running its ``__init__``, and the
     standalone module name keeps importlib from importing the torch package; we
-    then exec only the tiny ``version.py`` to read its ``cuda`` attribute.
+    then exec only the tiny ``version.py`` to read its attributes.
     """
     try:
         spec = importlib.util.find_spec("torch")
@@ -334,4 +375,4 @@ def _torch_cuda_version_from_disk() -> str | None:
         version_spec.loader.exec_module(module)
     except Exception:
         return None
-    return getattr(module, "cuda", None)
+    return module

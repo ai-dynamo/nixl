@@ -78,6 +78,8 @@ def env(monkeypatch, tmp_path):
     real_detect_cuda_major = utils.detect_cuda_major
     monkeypatch.setattr(utils, "detect_cuda_major", lambda: None)
     monkeypatch.setattr(utils, "_torch_cuda_version_from_disk", lambda: None)
+    real_torch_rocm_version_from_disk = utils._torch_rocm_version_from_disk
+    monkeypatch.setattr(utils, "_torch_rocm_version_from_disk", lambda: None)
     # No ROCm of the machine running the tests: not loaded, not from pip, and
     # not under the default root.
     real_loaded_library = utils._loaded_library
@@ -108,6 +110,7 @@ def env(monkeypatch, tmp_path):
         rocm=rocm,
         loaded=loaded,
         real_detect_cuda_major=real_detect_cuda_major,
+        real_torch_rocm_version_from_disk=real_torch_rocm_version_from_disk,
         real_loaded_library=real_loaded_library,
         real_pip_rocm_root=real_pip_rocm_root,
     )
@@ -179,6 +182,34 @@ def fake_torch(version, hip=None, cuda=None):
     torch.version = types.SimpleNamespace(cuda=cuda, hip=hip)
     # The env fixture restores the real torch; monkeypatch would delete it again.
     sys.modules["torch"] = torch
+
+
+def install_torch(env, monkeypatch, version, hip=None, importable=True):
+    """A PyTorch that is installed and not imported, found by the real detection.
+
+    Importing it records that in its "imported" attribute, or fails the test.
+    """
+    package = env.backends / "torch"
+    package.mkdir()
+    (package / "version.py").write_text(
+        f"__version__ = {version!r}\ncuda = None\nhip = {hip!r}\n"
+    )
+    body = "from . import version\n__version__ = version.__version__\nimported = True\n"
+    if not importable:
+        body = "raise AssertionError('torch was imported')\n"
+    (package / "__init__.py").write_text(body)
+    importlib.invalidate_caches()
+    monkeypatch.setattr(env.utils, "detect_cuda_major", env.real_detect_cuda_major)
+    monkeypatch.setattr(
+        env.utils,
+        "_torch_rocm_version_from_disk",
+        env.real_torch_rocm_version_from_disk,
+    )
+    monkeypatch.setattr(
+        env.utils,
+        "_torch_cuda_version_from_disk",
+        lambda: getattr(env.utils._torch_version_module_from_disk(), "cuda", None),
+    )
 
 
 def use_cuda_torch(env, monkeypatch):
@@ -711,6 +742,61 @@ def test_cuda_without_cuda_torch_keeps_upstream_error(env, monkeypatch):
     with pytest.raises(ImportError) as excinfo:
         selected_backend()
     assert str(excinfo.value) == "detected CUDA 13 but nixl-cu13 is not installed"
+
+
+@pytest.mark.parametrize(
+    "version, hip", [("2.15.0+rocm10.2.0", "10.2"), ("2.14.0", "7.14")]
+)
+def test_installed_rocm_torch_is_not_imported(env, monkeypatch, version, hip):
+    # AMD's PyTorch is what the rocm<X>.<Y> extra installs: selecting the
+    # backend from the ROCm install must not cost its import.
+    install_torch(env, monkeypatch, version, hip=hip, importable=False)
+    add_backend(env, "nixl_rocm10_1")
+    add_backend(env, "nixl_rocm10_2")
+    set_rocm_install(env, "10.2.0")
+    assert selected_backend() == "nixl_rocm10_2"
+    assert "torch" not in sys.modules
+    assert env.utils.detect_rocm()
+
+
+def test_rocm_path_beats_an_installed_rocm_torch(env, monkeypatch):
+    # $ROCM_PATH is an explicit choice: a ROCm there wins over the one a
+    # PyTorch that has not been imported would load.
+    install_torch(env, monkeypatch, "2.15.0+rocm10.2.0", hip="10.2", importable=False)
+    set_pip_rocm(env, monkeypatch, "10.2.0")
+    add_backend(env, "nixl_rocm10_1")
+    add_backend(env, "nixl_rocm10_2")
+    install = set_rocm_install(env, "10.1.0")
+    assert selected_backend() == "nixl_rocm10_1"
+    assert "torch" not in sys.modules
+    assert all(str(install) in path for path, _ in env.loaded)
+
+
+def test_installed_rocm_torch_without_rocm_install_is_imported(env, monkeypatch):
+    # No ROCm install to select by: this PyTorch bundles its ROCm, and only
+    # importing it loads that HIP runtime. Its tag then selects the backend.
+    install_torch(env, monkeypatch, "2.14.0+rocm10.1.0", hip="10.1")
+    add_backend(env, "nixl_rocm10_1")
+    add_backend(env, "nixl_rocm10_2")
+    assert selected_backend() == "nixl_rocm10_1"
+    assert sys.modules["torch"].imported
+
+
+def test_installed_rocm_torch_that_does_not_import_is_ignored(env, monkeypatch):
+    install_torch(env, monkeypatch, "2.14.0+rocm10.1.0", hip="10.1")
+    (env.backends / "torch" / "__init__.py").write_text("import _no_such_module\n")
+    add_backend(env, "nixl_rocm10_1")
+    add_backend(env, "nixl_rocm10_2")
+    with pytest.warns(RuntimeWarning, match="could not tell which ROCm install"):
+        assert selected_backend() == "nixl_rocm10_2"
+
+
+def test_installed_rocm_torch_with_cuda_backend_is_not_imported(env, monkeypatch):
+    install_torch(env, monkeypatch, "2.15.0+rocm10.2.0", hip="10.2", importable=False)
+    add_backend(env, "nixl_cu13")
+    add_backend(env, "nixl_rocm")
+    assert selected_backend() == "nixl_rocm"
+    assert "torch" not in sys.modules
 
 
 def test_no_torch_with_rocm_backend(env):
