@@ -28,16 +28,6 @@
 
 #include <numa.h>
 
-// Forward declaration for LibfabricUtils namespace
-namespace LibfabricUtils {
-uint16_t
-getNextXferId();
-uint8_t
-getNextSeqId();
-void
-resetSeqId();
-} // namespace LibfabricUtils
-
 // Static round-robin counter for rail selection
 static std::atomic<size_t> round_robin_counter{0};
 static const std::string NUM_RAILS_TAG{"num_rails"};
