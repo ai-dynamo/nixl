@@ -113,6 +113,49 @@ impl XferRequest {
             }
         }
     }
+
+    /// Gets the trace identity of this transfer request, as its trace records carry it
+    ///
+    /// # Returns
+    /// The request id (the NVTX payload and `nixl.xfer_request_id`), the execution number of
+    /// the latest accepted post (0 before any) and that post's W3C traceparent (the request's
+    /// before any post), or `None` if the request has no trace identity, such as when no
+    /// tracing backend was active at its creation
+    ///
+    /// # Errors
+    /// * `InvalidParam` - If the request handle is invalid
+    /// * `BackendError` - If there was an error retrieving the trace identity
+    pub fn get_trace_info(&self) -> Result<Option<XferTraceInfo>, NixlError> {
+        let mut info = bindings::nixl_capi_xfer_trace_info_s {
+            request_id: 0,
+            execution: 0,
+            traceparent: [0; 56],
+        };
+
+        let status = unsafe {
+            nixl_capi_get_xfer_trace_info(
+                self.agent.write().unwrap().handle.as_ptr(),
+                self.handle(),
+                &mut info,
+            )
+        };
+
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                let traceparent = unsafe { std::ffi::CStr::from_ptr(info.traceparent.as_ptr()) }
+                    .to_string_lossy()
+                    .into_owned();
+                Ok(Some(XferTraceInfo {
+                    request_id: info.request_id,
+                    execution: info.execution,
+                    traceparent,
+                }))
+            },
+            NIXL_CAPI_ERROR_NOT_FOUND => Ok(None),
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            _ => Err(NixlError::BackendError),
+        }
+    }
 }
 
 // SAFETY: XferRequest can be sent between threads safely
