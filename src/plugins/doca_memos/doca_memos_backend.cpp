@@ -16,6 +16,7 @@
  */
 
 #include "doca_memos_backend.h"
+#include "doca_memos_transfer_limit.h"
 
 #include "common/backend.h"
 #include "common/nixl_log.h"
@@ -140,6 +141,7 @@ nixl_b_params_t
 nixlDocaMemosEngine::getPluginParams() {
     return {{"device_name", ""},
             {"num_tasks", std::to_string(kDefaultNumTasks)},
+            {"chunk_size", "0"}, // Automatic transfer-limit discovery.
             {"nguid", kDefaultNguid},
             {"convert_key_to_128bit", "false"}};
 }
@@ -169,6 +171,7 @@ nixlDocaMemosEngine::parseInitParams(const nixl_b_params_t *params) {
 
     nguid_ = nixl::getBackendParamDefaulted(params, "nguid", std::string(kDefaultNguid));
     convertKeyTo128bit_ = nixl::getBackendParamDefaulted(params, "convert_key_to_128bit", false);
+    chunkSize_ = nixl::getBackendParamDefaulted<uint32_t>(params, "chunk_size", 0);
 
     if (!params || !params->count("nguid")) {
         NIXL_WARN << "Using default nguid (all zeros); set 'nguid' to override";
@@ -278,7 +281,20 @@ nixlDocaMemosEngine::initDocaDevice() {
         cleanupDocaResources();
         return NIXL_ERR_BACKEND;
     }
-    NIXL_INFO << "Device max value length: " << maxValueLen_ << " bytes";
+    const auto kernel_limit = nixlMemosKernelTransferLimit(deviceName_);
+    chunkSize_ = nixlMemosChunkSize(maxValueLen_, kernel_limit, chunkSize_);
+    if (chunkSize_ == 0) {
+        NIXL_ERROR << "Cannot determine NVMe-KV transfer limit; provide chunk_size explicitly "
+                      "and ensure the namespace maximum value length is nonzero";
+        cleanupDocaResources();
+        return NIXL_ERR_BACKEND;
+    }
+    if (kernel_limit == 0) {
+        NIXL_WARN << "Kernel transfer limit unavailable; using explicit chunk_size capped by MXVL";
+    }
+    NIXL_INFO << "Device max value length: " << maxValueLen_
+              << " bytes, kernel transfer limit: " << kernel_limit
+              << " bytes, effective chunk size: " << chunkSize_ << " bytes";
 
     return NIXL_SUCCESS;
 }
@@ -495,31 +511,45 @@ nixlDocaMemosEngine::prepXfer(const nixl_xfer_op_t &operation,
         return NIXL_ERR_INVALID_PARAM;
     }
 
-    auto req_h = std::make_unique<nixlDocaMemosBackendReqH>(desc_count);
-    req_h->valueIovecs_.resize(desc_count);
-    req_h->taskContexts_.resize(desc_count);
-
+    auto req_h = std::make_unique<nixlDocaMemosBackendReqH>(0);
+    // PoC: all writers/readers must use the same chunk size. No stored metadata.
+    const size_t chunk_size = chunkSize_;
     for (int i = 0; i < desc_count; i++) {
         const auto &local_desc = local[i];
-        req_h->valueIovecs_[i] = {reinterpret_cast<void *>(local_desc.addr), local_desc.len};
-    }
-
-    req_h->objectKeys_.clear();
-    req_h->objectKeys_.reserve(desc_count);
-
-    for (int i = 0; i < desc_count; i++) {
-        const auto &remote_desc = remote[i];
-        auto *kv_md = static_cast<nixlDocaMemosMetadata *>(remote_desc.metadataP);
+        if (local_desc.len > chunk_size && maxKeyLen_ < DOCA_MEMOS_MAX_OBJECT_KEY_LEN) {
+            return NIXL_ERR_INVALID_PARAM; // Continuations use full-width keys.
+        }
+        auto *kv_md = static_cast<nixlDocaMemosMetadata *>(remote[i].metadataP);
         if (!kv_md) {
-            NIXL_ERROR << "No metadata for remote descriptor at index " << i;
             return NIXL_ERR_INVALID_PARAM;
         }
-        req_h->objectKeys_.push_back(kv_md->objKey);
+        size_t offset = 0;
+        uint64_t chunk = 0;
+        do {
+            auto key = kv_md->objKey; // Keep chunk zero at the original key (EXIST).
+            if (chunk != 0) {
+                std::string input("nixl-memos-chunk-v1");
+                input.push_back(static_cast<char>(key.keyLen));
+                input.append(reinterpret_cast<const char *>(key.key), key.keyLen);
+                for (unsigned b = 0; b < 8; ++b) {
+                    input.push_back(static_cast<char>((chunk >> (8 * b)) & 0xff));
+                }
+                if (!convertStringToBlake2Key(input, key)) {
+                    return NIXL_ERR_BACKEND;
+                }
+            }
+            const size_t length = std::min(chunk_size, local_desc.len - offset);
+            req_h->objectKeys_.push_back(key);
+            req_h->valueIovecs_.push_back(
+                {reinterpret_cast<void *>(local_desc.addr + offset), length});
+            offset += length;
+            ++chunk;
+        } while (offset < local_desc.len);
     }
-
+    req_h->taskContexts_.resize(req_h->valueIovecs_.size());
+    NIXL_DEBUG << "Prepared transfer: operation=" << operation << ", " << req_h->valueIovecs_.size()
+               << " tasks";
     handle = req_h.release();
-
-    NIXL_DEBUG << "Prepared transfer: operation=" << operation << ", " << desc_count << " tasks";
 
     return NIXL_SUCCESS;
 }

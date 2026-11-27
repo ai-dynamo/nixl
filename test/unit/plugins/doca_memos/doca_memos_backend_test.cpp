@@ -17,7 +17,9 @@
 
 #include <gtest/gtest.h>
 #include <array>
+#include "doca_memos_transfer_limit.h"
 #include <initializer_list>
+#include <algorithm>
 #include <memory>
 #include <string>
 #include <vector>
@@ -95,6 +97,8 @@ protected:
         backend_params_ = std::make_unique<nixl_b_params_t>();
         (*backend_params_)["device_name"] = device_name;
         (*backend_params_)["num_tasks"] = num_tasks;
+        // Mock devices have no real sysfs queue; specify the transport cap.
+        (*backend_params_)["chunk_size"] = "8388608";
 
         // Setup init params
         init_params_ = std::make_unique<nixlBackendInitParams>();
@@ -304,10 +308,12 @@ TEST_F(DocMemosBackendTest, ConstructorInvalidNumTasks) {
 
 TEST_F(DocMemosBackendTest, PluginParamsListAcceptedOptions) {
     const nixl_b_params_t params = nixlDocaMemosEngine::getPluginParams();
-    for (const char *name : {"device_name", "num_tasks", "nguid", "convert_key_to_128bit"}) {
+    for (const char *name :
+         {"device_name", "num_tasks", "chunk_size", "nguid", "convert_key_to_128bit"}) {
         EXPECT_EQ(params.count(name), 1u) << name;
     }
-    EXPECT_EQ(params.size(), 4u);
+    EXPECT_EQ(params.size(), 5u);
+    EXPECT_EQ(params.at("chunk_size"), "0");
 }
 
 TEST_F(DocMemosBackendTest, ConstructorDocaKvdevCreateFailure) {
@@ -497,17 +503,18 @@ TEST_F(DocMemosBackendTest, ResolveHashModeHexLookingStringIsHashedNotDecoded) {
 // post must succeed and produce a fresh round of submissions.
 TEST_F(DocMemosBackendTest, PostXferHandleReuse) {
     setupInitParams(false, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE);
+    (*backend_params_)["chunk_size"] = "4096";
     createEngine();
     auto &mock = DocaMockControl::instance();
     mock.auto_complete_tasks = true;
 
     nixl_meta_dlist_t local_dlist(DRAM_SEG), remote_dlist(OBJ_SEG);
     nixlMetaDesc local_desc, remote_desc;
-    local_desc.addr = reinterpret_cast<uintptr_t>(malloc(1024));
-    local_desc.len = 1024;
+    local_desc.addr = reinterpret_cast<uintptr_t>(malloc(12288));
+    local_desc.len = 12288;
     remote_desc.devId = 9101;
     remote_desc.addr = 0;
-    remote_desc.len = 1024;
+    remote_desc.len = 12288;
     remote_desc.metadataP = registerMemory(remote_desc.devId, "reuse_key");
     local_dlist.addDesc(local_desc);
     remote_dlist.addDesc(remote_desc);
@@ -1200,9 +1207,8 @@ TEST_F(DocMemosBackendTest, GetMaxValueLenFailure) {
     EXPECT_THROW(createEngine(), std::runtime_error);
 }
 
-// Value larger than the device's max value length is rejected host-side before
-// any DOCA submission, not with an opaque DOCA_ERROR_DRIVER from the device.
-TEST_F(DocMemosBackendTest, ValueExceedsDeviceMax) {
+// Values larger than the device maximum are split into supported physical values.
+TEST_F(DocMemosBackendTest, ValueExceedsDeviceMaxIsSplit) {
     DocaMockControl::instance().max_value_len = 4096; // 4 KiB device limit
     setupInitParams(false, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE);
     createEngine();
@@ -1234,7 +1240,15 @@ TEST_F(DocMemosBackendTest, ValueExceedsDeviceMax) {
     ASSERT_NE(handle, nullptr);
 
     status = engine_->postXfer(NIXL_WRITE, local_dlist, remote_dlist, "", handle);
-    EXPECT_EQ(status, NIXL_ERR_INVALID_PARAM);
+    EXPECT_EQ(status, NIXL_IN_PROG);
+    for (int i = 0; i < 100 && status == NIXL_IN_PROG; ++i) {
+        status = engine_->checkXfer(handle);
+    }
+    EXPECT_EQ(status, NIXL_SUCCESS);
+    ASSERT_EQ(mock.kv_store.size(), 2);
+    for (const auto &entry : mock.kv_store) {
+        EXPECT_EQ(entry.second.size(), 4096);
+    }
 
     engine_->releaseReqH(handle);
     engine_->deregisterMem(remote_desc.metadataP);
@@ -2235,4 +2249,317 @@ int
 main(int argc, char **argv) {
     ::testing::InitGoogleTest(&argc, argv);
     return RUN_ALL_TESTS();
+}
+
+// The split path must use physical task counts in both progress modes.
+class MemosSplitTest : public DocMemosBackendTest, public ::testing::WithParamInterface<bool> {
+protected:
+    void
+    SetUp() override {
+        DocMemosBackendTest::SetUp();
+        setupInitParams(GetParam());
+        (*backend_params_)["chunk_size"] = "8192";
+        (*backend_params_)["num_tasks"] = "2"; // Fewer task slots than physical chunks.
+        DocaMockControl::instance().max_value_len = 32768;
+        DocaMockControl::instance().auto_complete_tasks = true;
+        createEngine();
+    }
+
+    nixl_status_t
+    transfer(nixl_xfer_op_t op, std::vector<uint8_t> &buffer) {
+        nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
+        nixlMetaDesc src, dst;
+        src.addr = reinterpret_cast<uintptr_t>(buffer.data());
+        src.len = buffer.size();
+        dst.addr = 0;
+        dst.len = buffer.size();
+        dst.devId = 42;
+        dst.metadataP = registerMemory(42, "split_key");
+        local.addDesc(src);
+        remote.addDesc(dst);
+        nixlBackendReqH *handle = nullptr;
+        auto status = engine_->prepXfer(op, local, remote, "", handle);
+        if (status == NIXL_SUCCESS) {
+            status = engine_->postXfer(op, local, remote, "", handle);
+            for (int i = 0; i < 2000 && status == NIXL_IN_PROG; ++i) {
+                status = engine_->checkXfer(handle);
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+            }
+        }
+        if (handle) {
+            engine_->releaseReqH(handle);
+        }
+        engine_->deregisterMem(dst.metadataP);
+        return status;
+    }
+};
+
+TEST_P(MemosSplitTest, RoundTripHasOnlyPayloadSlices) {
+    std::vector<uint8_t> expected(20480);
+    for (size_t i = 0; i < expected.size(); ++i) {
+        expected[i] = (i / 4096 + i) % 251;
+    }
+    ASSERT_EQ(transfer(NIXL_WRITE, expected), NIXL_SUCCESS);
+    const auto &store = DocaMockControl::instance().kv_store;
+    ASSERT_EQ(store.size(), 3);
+    std::vector<size_t> lengths;
+    for (const auto &entry : store) {
+        lengths.push_back(entry.second.size());
+    }
+    std::sort(lengths.begin(), lengths.end());
+    EXPECT_EQ(lengths, (std::vector<size_t>{4096, 8192, 8192}));
+    std::vector<uint8_t> actual(expected.size(), 0);
+    ASSERT_EQ(transfer(NIXL_READ, actual), NIXL_SUCCESS);
+    EXPECT_EQ(actual, expected);
+    std::fill(expected.begin(), expected.end(), 0x53);
+    ASSERT_EQ(transfer(NIXL_WRITE, expected), NIXL_SUCCESS);
+    ASSERT_EQ(transfer(NIXL_READ, actual), NIXL_SUCCESS);
+    EXPECT_EQ(actual, expected);
+    EXPECT_EQ(store.size(), 3); // Overwrites reuse the same keys.
+}
+
+TEST_P(MemosSplitTest, MissingContinuationFailsButExistChecksOnlyFirst) {
+    std::vector<uint8_t> value(20480, 0x37);
+    ASSERT_EQ(transfer(NIXL_WRITE, value), NIXL_SUCCESS);
+    auto &store = DocaMockControl::instance().kv_store;
+    const std::string first = "split_key";
+    auto continuation = std::find_if(
+        store.begin(), store.end(), [&](const auto &entry) { return entry.first != first; });
+    ASSERT_NE(continuation, store.end());
+    store.erase(continuation);
+
+    nixl_reg_dlist_t descs(OBJ_SEG);
+    nixlBlobDesc desc;
+    desc.devId = 42;
+    desc.metaInfo = hexKey(first);
+    desc.len = value.size();
+    descs.addDesc(desc);
+    std::vector<nixl_query_resp_t> responses;
+    ASSERT_EQ(engine_->queryMem(descs, responses), NIXL_SUCCESS);
+    ASSERT_EQ(responses.size(), 1);
+    EXPECT_TRUE(responses[0].has_value());
+    EXPECT_EQ(transfer(NIXL_READ, value), NIXL_ERR_BACKEND);
+}
+
+TEST_P(MemosSplitTest, MissingReadsHaveSameStatusForSplitAndUnsplitObjects) {
+    for (size_t length : {size_t{1024}, size_t{20480}}) {
+        DocaMockControl::instance().kv_store.clear();
+        std::vector<uint8_t> value(length, 0x37);
+        EXPECT_EQ(transfer(NIXL_READ, value), NIXL_ERR_BACKEND);
+    }
+}
+
+TEST_P(MemosSplitTest, ContinuationsRequireFullWidthKeys) {
+    engine_.reset();
+    DocaMockControl::instance().max_key_len = 15;
+    createEngine();
+    std::vector<uint8_t> small(1024, 0x37), split(20480, 0x37);
+    EXPECT_EQ(transfer(NIXL_WRITE, small), NIXL_SUCCESS);
+    EXPECT_EQ(transfer(NIXL_WRITE, split), NIXL_ERR_INVALID_PARAM);
+}
+
+TEST_P(MemosSplitTest, CancelPartiallySubmittedObjectAndReuseHandle) {
+    auto &mock = DocaMockControl::instance();
+    constexpr size_t submitted_bytes = 2 * 8192;
+    for (auto op : {NIXL_READ, NIXL_WRITE}) {
+        SCOPED_TRACE(op == NIXL_READ ? "READ" : "WRITE");
+        std::vector<uint8_t> original(4 * 8192 + 4096, 0x37); // Five chunks.
+        ASSERT_EQ(transfer(NIXL_WRITE, original), NIXL_SUCCESS);
+        std::vector<uint8_t> buffer(original.size(), op == NIXL_READ ? 0xa5 : 0x53);
+        nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
+        nixlMetaDesc src, dst;
+        src.addr = reinterpret_cast<uintptr_t>(buffer.data());
+        src.len = buffer.size();
+        dst.addr = 0;
+        dst.len = buffer.size();
+        dst.devId = 42;
+        dst.metadataP = registerMemory(42, "split_key");
+        local.addDesc(src);
+        remote.addDesc(dst);
+        {
+            auto lk = DocaMockControl::lock();
+            mock.auto_complete_tasks = false;
+            mock.task_alloc_call_count = 0;
+            mock.task_alloc_fail_after_n = 2;
+            mock.task_alloc_fail_error = DOCA_ERROR_FULL;
+        }
+        nixlBackendReqH *handle = nullptr;
+        ASSERT_EQ(engine_->prepXfer(op, local, remote, "", handle), NIXL_SUCCESS);
+        ASSERT_EQ(engine_->postXfer(op, local, remote, "", handle), NIXL_IN_PROG);
+        for (int i = 0; i < 1000 && taskAllocCallCount() < 3; ++i) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        ASSERT_GE(taskAllocCallCount(), 3); // Two submitted, three pending.
+        ASSERT_EQ(submittedTaskCount(), 2u);
+        EXPECT_EQ(engine_->releaseReqH(handle), NIXL_ERR_REPOST_ACTIVE);
+        EXPECT_EQ(engine_->releaseReqH(handle), NIXL_ERR_REPOST_ACTIVE);
+        {
+            auto lk = DocaMockControl::lock();
+            mock.auto_complete_tasks = true;
+        }
+        ASSERT_EQ(waitForCompletion(handle), NIXL_ERR_CANCELED);
+        EXPECT_EQ(submittedTaskCount(), 0u);
+        if (op == NIXL_READ) {
+            EXPECT_TRUE(std::all_of(buffer.begin(),
+                                    buffer.begin() + submitted_bytes,
+                                    [](uint8_t b) { return b == 0x37; }));
+            EXPECT_TRUE(std::all_of(buffer.begin() + submitted_bytes, buffer.end(), [](uint8_t b) {
+                return b == 0xa5;
+            }));
+        } else {
+            auto lk = DocaMockControl::lock();
+            size_t changed = 0;
+            ASSERT_EQ(mock.kv_store.size(), 5u);
+            for (const auto &entry : mock.kv_store) {
+                if (std::all_of(entry.second.begin(), entry.second.end(), [](uint8_t b) {
+                        return b == 0x53;
+                    })) {
+                    ++changed;
+                }
+            }
+            EXPECT_EQ(changed, 2u); // Only submitted chunks were written.
+        }
+        {
+            auto lk = DocaMockControl::lock();
+            mock.task_alloc_fail_after_n = -1;
+        }
+        // Retain the cancelled handle and buffer; reuse only after its I/O drains.
+        nixl_status_t status = NIXL_ERR_REPOST_ACTIVE;
+        for (int i = 0; i < 1000 && status == NIXL_ERR_REPOST_ACTIVE; ++i) {
+            status = engine_->postXfer(op, local, remote, "", handle);
+            if (status == NIXL_ERR_REPOST_ACTIVE) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(1));
+            }
+        }
+        ASSERT_TRUE(status == NIXL_IN_PROG || status == NIXL_SUCCESS);
+        ASSERT_EQ(waitForCompletion(handle), NIXL_SUCCESS);
+        ASSERT_EQ(releaseWhenDrained(handle), NIXL_SUCCESS);
+        engine_->deregisterMem(dst.metadataP);
+        if (op == NIXL_WRITE) {
+            std::vector<uint8_t> readback(buffer.size(), 0);
+            ASSERT_EQ(transfer(NIXL_READ, readback), NIXL_SUCCESS);
+            EXPECT_EQ(readback, buffer);
+        } else {
+            EXPECT_EQ(buffer, original);
+        }
+    }
+}
+
+TEST_P(MemosSplitTest, PartialSubmissionFailureFailsWholeWrite) {
+    auto &mock = DocaMockControl::instance();
+    mock.task_submit_fail_after_n = 1;
+    mock.task_submit_fail_error = DOCA_ERROR_BAD_STATE;
+    std::vector<uint8_t> value(20480, 0x37);
+    EXPECT_EQ(transfer(NIXL_WRITE, value), NIXL_ERR_BACKEND);
+}
+
+INSTANTIATE_TEST_SUITE_P(ProgressModes, MemosSplitTest, ::testing::Bool());
+
+// A missing child must not mask a hard failure in another child.
+class MemosReadErrorPriorityTest : public DocMemosBackendTest,
+                                   public ::testing::WithParamInterface<bool> {};
+
+TEST_P(MemosReadErrorPriorityTest, HardFailureOverridesMissingChild) {
+    setupInitParams(false);
+    (*backend_params_)["chunk_size"] = "8192";
+    createEngine();
+    auto &mock = DocaMockControl::instance();
+    mock.auto_complete_tasks = false;
+    if (GetParam()) {
+        mock.task_submit_fail_after_n = 1;
+        mock.task_submit_fail_error = DOCA_ERROR_FULL;
+    }
+
+    std::vector<uint8_t> buffer(20480);
+    nixl_meta_dlist_t local(DRAM_SEG), remote(OBJ_SEG);
+    nixlMetaDesc src, dst;
+    src.addr = reinterpret_cast<uintptr_t>(buffer.data());
+    src.len = buffer.size();
+    dst.addr = 0;
+    dst.len = buffer.size();
+    dst.devId = 42;
+    dst.metadataP = registerMemory(42, "error_key");
+    local.addDesc(src);
+    remote.addDesc(dst);
+    nixlBackendReqH *handle = nullptr;
+    ASSERT_EQ(engine_->prepXfer(NIXL_READ, local, remote, "", handle), NIXL_SUCCESS);
+    ASSERT_EQ(engine_->postXfer(NIXL_READ, local, remote, "", handle), NIXL_IN_PROG);
+
+    auto completeError = [&](doca_error_t error) {
+        auto *task = mock.submitted_tasks.front();
+        mock.submitted_tasks.erase(mock.submitted_tasks.begin());
+        mock.submitted_task_user_data.erase(mock.submitted_task_user_data.begin());
+        task->status = error;
+        mock.retrieve_error_cb(static_cast<doca_kv_io_task_retrieve *>(task), task->user_data, {});
+    };
+    ASSERT_FALSE(mock.submitted_tasks.empty());
+    completeError(DOCA_ERROR_NOT_FOUND);
+    if (GetParam()) {
+        // Retry a previously FULL submission, now with a fatal submission error.
+        mock.task_submit_fail_error = DOCA_ERROR_BAD_STATE;
+    } else {
+        EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
+        ASSERT_EQ(mock.submitted_tasks.size(), 2u);
+        completeError(DOCA_ERROR_IO_FAILED);
+        EXPECT_EQ(engine_->checkXfer(handle), NIXL_IN_PROG);
+        completeError(DOCA_ERROR_NOT_FOUND);
+    }
+    EXPECT_EQ(engine_->checkXfer(handle), NIXL_ERR_BACKEND);
+    EXPECT_TRUE(mock.submitted_tasks.empty());
+    engine_->releaseReqH(handle);
+    engine_->deregisterMem(dst.metadataP);
+}
+
+INSTANTIATE_TEST_SUITE_P(FailureModes, MemosReadErrorPriorityTest, ::testing::Bool());
+
+TEST(MemosTransferLimitTest, DiscoveryAndOverride) {
+    const auto root =
+        std::filesystem::path(::testing::TempDir()) / ("memos-sysfs-" + std::to_string(getpid()));
+    const auto queue = root / "block/nvme987n1/queue";
+    std::filesystem::create_directories(queue);
+    const auto attr = queue / "max_hw_sectors_kb";
+    {
+        std::ofstream out(attr);
+        out << "16384\n";
+    }
+    const auto limit = nixlMemosKernelTransferLimit("/dev/ng987n1", root);
+    EXPECT_EQ(limit, 16u * 1024 * 1024);
+    EXPECT_EQ(nixlMemosKernelTransferLimit("/dev/nvme987n1", root), limit);
+    EXPECT_EQ(nixlMemosChunkSize(32u << 20, limit, 0), 16u << 20);
+    EXPECT_EQ(nixlMemosChunkSize(32u << 20, limit, 4u << 20), 4u << 20);
+    EXPECT_EQ(nixlMemosChunkSize(32u << 20, limit, 64u << 20), 16u << 20);
+    EXPECT_EQ(nixlMemosChunkSize(8u << 20, limit, 0), 8u << 20);
+    EXPECT_EQ(nixlMemosChunkSize(32u << 20, 0, 0), 0u);
+    EXPECT_EQ(nixlMemosChunkSize(32u << 20, 0, 4u << 20), 4u << 20);
+    EXPECT_EQ(nixlMemosChunkSize(0, limit, 0), 0u);
+    EXPECT_EQ(nixlMemosKernelTransferLimit("/dev/unknown", root), 0u);
+    {
+        std::ofstream out(attr);
+        out << "invalid\n";
+    }
+    EXPECT_EQ(nixlMemosKernelTransferLimit("/dev/ng987n1", root), 0u);
+    std::filesystem::remove_all(root);
+    EXPECT_EQ(nixlMemosKernelTransferLimit("/dev/ng987n1", root), 0u);
+}
+
+TEST_F(DocMemosBackendTest, UnknownTransferLimitRequiresOverride) {
+    for (bool advertised_default : {false, true}) {
+        setupInitParams(
+            false, nixl_thread_sync_t::NIXL_THREAD_SYNC_NONE, "/dev/nixl-mock-without-sysfs");
+        if (advertised_default) {
+            (*backend_params_)["chunk_size"] =
+                nixlDocaMemosEngine::getPluginParams().at("chunk_size");
+        } else {
+            backend_params_->erase("chunk_size");
+        }
+        try {
+            createEngine();
+            FAIL() << "Automatic sizing must fail without a discoverable kernel limit";
+        }
+        catch (const std::runtime_error &error) {
+            // Both omitted and advertised zero must reach device discovery,
+            // rather than reject zero as an invalid parameter.
+            EXPECT_STREQ(error.what(), "DOCA_MEMOS: failed to initialize DOCA device");
+        }
+    }
 }

@@ -52,6 +52,7 @@ The DOCA_MEMOS plugin enables high-performance key-value operations (store, retr
 | Parameter | Description | Default |
 |-----------|-------------|---------|
 | `num_tasks` | Maximum number of concurrent tasks in the DOCA task pool (clamped to `doca_kv_io_cap_get_max_tasks()`) | `8192` |
+| `chunk_size` | Chunk bytes; zero selects automatic discovery. Nonzero overrides are capped by discovered limits. | `0` |
 | `nguid` | 32-character hex NVMe namespace NGUID passed to `doca_kv_dev_create_attr_set_nguid()` | all zeros |
 | `convert_key_to_128bit` | When `true`, non-empty `OBJ_SEG` `metaInfo` strings are converted to a 16-byte unkeyed Blake2b digest instead of being parsed as hex | `false` |
 
@@ -293,6 +294,7 @@ The `num_tasks` parameter controls the DOCA task pool size:
 
 ## Limitations
 
+- **Chunking key collisions**: Application keys and derived 128-bit continuation keys share the physical key space. The chunking PoC assumes independently generated random application keys and accepts negligible accidental collision risk at the intended workload scale. It does not protect against a caller deliberately choosing an application key equal to a continuation key; such a write can overwrite another object's chunk and cause a successful read to return mixed data. See [the chunking format and assumptions](../../../docs/doca_memos_split_poc.md). No key-format change or repopulation is required for this accepted use case.
 - **No notifications**: The plugin does not support NIXL's notification mechanism
 - **Single progress engine**: All operations share one progress engine, which may limit scalability under extreme concurrency
 

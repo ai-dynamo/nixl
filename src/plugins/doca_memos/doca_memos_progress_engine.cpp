@@ -456,7 +456,7 @@ nixlDocaMemosProgressEngine::trySubmitRequest(nixlDocaMemosBackendReqH *req_h,
         return false;
     }
 
-    const size_t desc_count = static_cast<size_t>(local.descCount());
+    const size_t desc_count = req_h->valueIovecs_.size();
     for (size_t i = req_h->nextDescriptorIndex_; i < desc_count; i++) {
         const docaMemosKey &object_key = req_h->objectKeys_[i];
 
@@ -569,7 +569,7 @@ nixlNoThreadProgressEngine::postXfer(nixlDocaMemosBackendReqH *req_h,
                                      const nixl_meta_dlist_t &remote) const {
     NIXL_LOCK_GUARD(lock_);
 
-    req_h->totalTasks_ = static_cast<size_t>(local.descCount());
+    req_h->totalTasks_ = req_h->valueIovecs_.size();
     req_h->submittedTasks_ = 0;
     req_h->completedTasks_ = 0;
     req_h->nextDescriptorIndex_ = 0;
@@ -851,7 +851,7 @@ nixlThreadedProgressEngine::postXfer(nixlDocaMemosBackendReqH *req_h,
             return NIXL_ERR_REPOST_ACTIVE;
         }
 
-        req_h->totalTasks_ = static_cast<size_t>(local.descCount());
+        req_h->totalTasks_ = req_h->valueIovecs_.size();
         req_h->submittedTasks_ = 0;
         req_h->completedTasks_ = 0;
         req_h->nextDescriptorIndex_ = 0;
