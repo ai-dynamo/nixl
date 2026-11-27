@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import pickle
 import sys
-import weakref
 from enum import Enum
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -100,18 +99,12 @@ class nixl_xfer_handle:
         value: Internal handle
     """
 
-    __slots__ = ("_handle", "_agent", "_released", "__weakref__")
-
-    # Live handles by their internal value. An entry disappears with its handle
-    _by_value: weakref.WeakValueDictionary[int, nixl_xfer_handle] = (
-        weakref.WeakValueDictionary()
-    )
+    __slots__ = ("_handle", "_agent", "_released")
 
     def __init__(self, agent, value: int):
         self._handle = int(value)
         self._agent = agent
         self._released = False
-        nixl_xfer_handle._by_value[self._handle] = self
 
     def __repr__(self) -> str:
         return f"nixl_xfer_handle(0x{self._handle:x}, released={self._released})"
@@ -161,10 +154,12 @@ class nixl_completion_monitor:
         agent: Agent that posts the transfers attached to this monitor.
     """
 
-    __slots__ = ("_monitor",)
+    __slots__ = ("_monitor", "_handles")
 
     def __init__(self, agent: nixl_agent):
         self._monitor = nixlBind.nixlCompletionMonitor(agent.agent)
+        # Attached handles: they stay alive until a wait returns them
+        self._handles: dict[int, nixl_xfer_handle] = {}
 
     def fd(self) -> int:
         """Event file descriptor for poll, epoll or an event loop.
@@ -203,11 +198,10 @@ class nixl_completion_monitor:
         """
         return self._to_handles(self._monitor.waitAll(timeout_ms))
 
-    @staticmethod
-    def _to_handles(completions) -> list[tuple[nixl_xfer_handle, str]]:
+    def _to_handles(self, completions) -> list[tuple[nixl_xfer_handle, str]]:
         return [
             (
-                nixl_xfer_handle._by_value[value],
+                self._handles.pop(value),
                 "DONE" if status == nixlBind.NIXL_SUCCESS else "ERR",
             )
             for value, status in completions
@@ -769,6 +763,8 @@ class nixl_agent:
         status = self.agent.postXferReq(
             handle._handle, notif_msg, monitor._monitor if monitor is not None else None
         )
+        if monitor is not None:
+            monitor._handles[handle._handle] = handle
         if status == nixlBind.NIXL_SUCCESS:
             return "DONE"
         elif status == nixlBind.NIXL_IN_PROG:
