@@ -26,6 +26,7 @@
 #include <span>
 
 #include "nixl.h"
+#include "monitors.h"
 #include "serdes/serdes.h"
 
 namespace py = pybind11;
@@ -142,6 +143,32 @@ throw_nixl_exception(const nixl_status_t &status) {
 
 namespace {
 
+// Wait without the GIL. When a signal interrupts poll, run the Python signal handlers,
+// which may raise, and otherwise resume waiting until the original deadline.
+std::vector<nixl::python::Notification>
+waitForNotifications(nixl::python::NotificationInbox &inbox, int timeout_ms) {
+    using Inbox = nixl::python::NotificationInbox;
+    if (timeout_ms < -1) {
+        throw std::invalid_argument("timeout_ms must be nonnegative or -1");
+    }
+    const Inbox::Deadline deadline = timeout_ms < 0 ?
+        Inbox::Deadline() :
+        Inbox::Deadline(Inbox::Clock::now() + std::chrono::milliseconds(timeout_ms));
+    for (;;) {
+        std::optional<std::vector<nixl::python::Notification>> batch;
+        {
+            const py::gil_scoped_release release;
+            batch = inbox.waitAny(deadline);
+        }
+        if (batch) {
+            return std::move(*batch);
+        }
+        if (PyErr_CheckSignals() != 0) {
+            throw py::error_already_set();
+        }
+    }
+}
+
 // Builds a compressed (strided) descriptor list from an Nx5 numpy array, where each row is a run
 // of `count` blocks of `len` bytes with consecutive block starts spaced `stride` bytes apart:
 // (addr, len, dev_id, stride, count). A dense run has stride == len.
@@ -218,6 +245,8 @@ prep_mem_view(const nixlAgent &agent, const DlistT &dlist, const std::vector<uin
 
 PYBIND11_MODULE(_bindings, m) {
 
+    using nixl::python::NotificationMonitor;
+
     // TODO: each nixl class and/or function can be documented in place
     m.doc() = "pybind11 NIXL plugin: Implements NIXL descriptors and lists, as well as bindings of "
               "NIXL CPP APIs";
@@ -225,6 +254,37 @@ PYBIND11_MODULE(_bindings, m) {
     m.attr("NIXL_INIT_AGENT") = NIXL_INIT_AGENT;
 
     m.attr("DEFAULT_COMM_PORT") = default_comm_port;
+
+    py::class_<NotificationMonitor>(
+        m, "_NotificationMonitor", "Wait on notifications routed by an agent's byte prefixes.")
+        .def(py::init<>())
+        .def("fd",
+             &NotificationMonitor::fd,
+             "Borrow the eventfd for poll or an event loop. When it becomes readable, "
+             "drain the monitor with wait_any(timeout_ms=0) instead of reading it. "
+             "Raises RuntimeError after close().")
+        .def("fileno", &NotificationMonitor::fd, "Same as fd(), for select and asyncio.")
+        .def("close",
+             &NotificationMonitor::close,
+             py::call_guard<py::gil_scoped_release>(),
+             "Remove all subscriptions, discard queued notifications, wake a waiter with "
+             "RuntimeError, and release the eventfd. Closing twice is allowed.")
+        .def(
+            "wait_any",
+            [](const NotificationMonitor &monitor, int timeout_ms) {
+                const auto inbox = monitor.inbox();
+                py::list notifications;
+                for (const auto &event : waitForNotifications(*inbox, timeout_ms)) {
+                    notifications.append(
+                        py::make_tuple(event.local, event.remote, py::bytes(event.message)));
+                }
+                return notifications;
+            },
+            py::arg("timeout_ms") = -1,
+            "Return all queued (local_agent, remote_agent, message) tuples. Waits until at "
+            "least one notification is queued. timeout_ms=0 drains without blocking, -1 "
+            "waits indefinitely, and a timeout returns an empty list. Raises RuntimeError "
+            "when the monitor is closed. Use one consumer per monitor.");
 
     // Whether NIXL was built against a UCX with the GPU device API, which the
     // prepMemView/releaseMemView path requires. Mirrors the meson
@@ -946,6 +1006,28 @@ PYBIND11_MODULE(_bindings, m) {
                 return ret;
             },
             py::call_guard<py::gil_scoped_release>())
+        .def(
+            "addNotifMonitor",
+            [](nixlAgent &agent,
+               NotificationMonitor &monitor,
+               std::string local,
+               py::bytes prefix) {
+                const std::string native_prefix = prefix;
+                const py::gil_scoped_release release;
+                throw_nixl_exception(monitor.subscribe(agent, std::move(local), native_prefix));
+            },
+            py::arg("monitor"),
+            py::arg("local_agent"),
+            py::arg("prefix"))
+        .def(
+            "removeNotifMonitor",
+            [](nixlAgent &agent, NotificationMonitor &monitor, py::bytes prefix) {
+                const std::string native_prefix = prefix;
+                const py::gil_scoped_release release;
+                return monitor.unsubscribe(agent, native_prefix);
+            },
+            py::arg("monitor"),
+            py::arg("prefix"))
         .def(
             "getNotifs",
             [](nixlAgent &agent,

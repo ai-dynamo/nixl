@@ -55,6 +55,7 @@ The key/value parameters are a map of strings to byte arrays that are passed fro
 * supportsCapability(): Indicates if the backend has a capability from `nixl_backend_capability_t`. A backend passes its capabilities, combined with `|`, to the `nixlBackendEngine` constructor; none are set by default
   * `LOCAL`, `REMOTE`, `NOTIF`: the values that supportsLocal(), supportsRemote() and supportsNotif() return by default, so a backend does not need to override these methods
   * `TRACE_CONTEXT`: the backend carries a request's trace context to its peer. Only in-tree plugins can implement it, since the trace context type is internal
+  * `NOTIF_CALLBACK`: the backend dispatches received notifications through the agent's notification sink
 
 Based on the first 3 methods (supports*), the required methods to be implemented change. For instance, UCX backend implements all as it supports all scenarios, while GDS backend only has supportsLocal, detailed more in Example implementations. Note that a network backend must have supportsRemote and supportsNotif to be set to true, and preferably supportsLocal also to true, so another backend doesn't need to be involved for local transfers. For a storage backend, it should have supportsLocal and supportsNotif is optional.
 
@@ -109,6 +110,12 @@ Release does not cancel or wait for an active transfer. Core returns `NIXL_ERR_R
 
 * getNotifs(): Gets notifications received from remote agents (or local in case of loopback). The output is a map from remote agent name to a list (vector) of notifications, in the form of byte array.
 * genNotif(): Generates a notification to a remote agent, used for control or dummy notifications.
+
+Backends that advertise `NOTIF_CALLBACK` call `deliverNotif(remote_agent, message)` when
+they receive a notification. If it returns false, the backend queues the original notification
+for `getNotifs()`. The base engine uses the agent's `notifSink` from the initialization
+parameters. The sink stays valid for the backend's lifetime and sees callbacks registered after
+backend creation. The `notifSink` initialization parameter is part of backend plugin API version 4.
 
 Note that getNotifs does not know which agent it should look for to receive the notification. So there should be a method to extract the agent name from the notification received, corresponding to a transfer. genNotif generates a notification which is not bound to any transfers, and does not provide any ordering guarantees. If a backend does not set supportsNotifications, these two methods are not needed.
 

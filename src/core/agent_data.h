@@ -20,6 +20,7 @@
 #include "mem_section.h"
 #include "nixl_md_manager.h"
 #include "nixl_metadata_context.h"
+#include "notif_dispatcher.h"
 #include "telemetry.h"
 #include "tracing/trace.h"
 #include "tracing/trace_context.h"
@@ -50,6 +51,10 @@ class nixlAgentData final : public nixlMetadataContext {
 
         // some handle that can be used to instantiate an object from the lib
         std::map<std::string, void*> backendLibs;
+
+        // Notification callback registry. Declared before backendEngines_, so it outlives
+        // the backends that use it as their notifSink.
+        nixlNotifDispatcher notifDispatcher_;
 
         // Bookkeeping from backend type and memory type to backend engine
         backend_list_t                         notifEngines;

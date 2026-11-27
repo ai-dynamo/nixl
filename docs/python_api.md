@@ -10,6 +10,7 @@ The Python bindings provide access to the full NIXL API including:
 - **Agent Management**: Create and configure NIXL agents
 - **Memory Registration**: Register and deregister memory/storage
 - **Transfer Operations**: Create and manage data transfers
+- **Notification Monitors**: Wait for incoming notifications
 - **QueryMem API**: Query memory/storage information and accessibility
 - **Backend Management**: Create and configure different backends (UCX, GDS, etc.)
 
@@ -31,6 +32,50 @@ To build from source, follow the main build instructions in the README.md, then 
 # From the root nixl directory
 pip install .
 ```
+
+## Waiting for notifications
+
+On Linux, notification monitors expose a pollable file descriptor. You can
+register a monitor before creating any backend. Delivery depends on the receiving
+backend's callback support and progress. `wait_any()` waits on the monitor
+queue. For a backend that relies on application-driven progress, use an agent
+call that progresses receives, such as `get_new_notifs()` with UCX.
+
+```python
+from nixl import nixl_notification_monitor
+
+# After exchanging metadata, with background progress on the target:
+with nixl_notification_monitor() as incoming:
+    target.add_notif_monitor(incoming, b"kv:")
+    source.send_notif(target.name, b"kv:ready")
+
+    for local_agent, remote_agent, message in incoming.wait_any(timeout_ms=5000):
+        print(local_agent, remote_agent, message)
+```
+
+- `wait_any()` returns all queued notifications once at least one arrives.
+  `timeout_ms=0` drains without blocking and `-1` waits indefinitely. A timed wait
+  returns an empty list if no notification arrives. Use one consumer per monitor.
+- A notification monitor can subscribe to multiple agents and byte prefixes.
+  Nonempty prefixes for an agent must be disjoint. An empty prefix receives
+  messages with no matching nonempty prefix, and an agent has at most one.
+  Adding a prefix that overlaps an existing subscription of that agent, or a
+  second default, raises `nixlInvalidParamError`. Call
+  `agent.remove_notif_monitor(monitor, prefix)` first to replace a subscription.
+  It returns whether the monitor had that subscription. Already queued messages
+  remain available.
+- Every message that matches a subscription goes to the monitor. Messages that
+  match none, and all notifications of backends without callback support, remain
+  available through `get_new_notifs()`. Like the agent's own notification queue,
+  the monitor's queue is unbounded. Queued messages stay in memory until
+  `wait_any()` returns them.
+- Use `fd()` or `fileno()` with poll or an event loop. The descriptor is borrowed.
+  When it becomes readable, call `wait_any(timeout_ms=0)` to drain the monitor.
+  Remove any external reader before closing the monitor. `close()`, including at
+  the end of a `with` block, wakes a blocking wait with `RuntimeError`, unregisters
+  all subscriptions, and releases the descriptor once no wait still uses it.
+  A monitor keeps each subscribed agent alive until its subscriptions are
+  removed with `remove_notif_monitor()` or the monitor is closed.
 
 ## Backend initialization parameters
 

@@ -24,6 +24,7 @@
 #include "nixl_types.h"
 #include "nixl_params.h"
 #include "nixl_descriptors.h"
+#include "nixl_notif.h"
 #include <chrono>
 #include <memory>
 #include <span>
@@ -469,6 +470,45 @@ class nixlAgent {
 
 
         /*** Notification Handling ***/
+
+        /**
+         * @brief Intercept received notifications on backends supporting notification callbacks.
+         *
+         * Prefixes are byte strings matched at the start of the notification. Nonempty
+         * prefixes cannot overlap. An empty prefix registers a default handler for messages
+         * with no matching prefix. Registration fails while an overlapping prefix, or another
+         * default, is registered; deregister it first to replace it.
+         * A matching notification always goes to its callback. Messages that match no
+         * registration remain available through getNotifs().
+         * Registration is allowed before a backend is created and affects future backends.
+         * Registration and deregistration wait for running callbacks of this agent.
+         * The agent owns its registrations and drops any that remain when it is destroyed.
+         * The same callback can be registered with several prefixes.
+         * Callbacks run on the receiving backend's progress thread when it has one. Otherwise
+         * they run inside the application's NIXL calls that drive progress, such as
+         * getNotifs() or transfer status checks.
+         * A callback must not call any NIXL agent function or wait for another thread that
+         * does, because that can deadlock. It must hand off any non-trivial, blocking or slow
+         * work to another thread, so that it does not stall the backend's progress. See
+         * nixlNotifCallback.
+         *
+         * @param  prefix    Notification prefix, copied by the agent
+         * @param  callback  Receives the matching notifications. The agent keeps a reference
+         *                   until the registration is removed or the agent is destroyed
+         * @return NIXL_ERR_INVALID_PARAM for an overlapping prefix, an existing default, or
+         *         a null callback
+         */
+        [[nodiscard]] nixl_status_t
+        registerNotifCallback(std::string_view prefix, std::shared_ptr<nixlNotifCallback> callback);
+
+        /**
+         * @brief Remove the registration with exactly this prefix after any running callbacks
+         *        of this agent finish.
+         *
+         * @return NIXL_ERR_NOT_FOUND if no callback is registered with this prefix
+         */
+        [[nodiscard]] nixl_status_t
+        deregisterNotifCallback(std::string_view prefix) noexcept;
 
         /**
          * @brief  Add entries to the input notifications list (can be non-empty), which is a map

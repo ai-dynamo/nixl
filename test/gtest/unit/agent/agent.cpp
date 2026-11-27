@@ -1150,6 +1150,12 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
+    class ignoreNotifs final : public nixlNotifCallback {
+    public:
+        void
+        received(std::string_view, std::string_view) override {}
+    };
+
     class singleAgentSessionFixture : public testing::Test {
     protected:
         std::unique_ptr<agentHelper> agent_helper_;
@@ -1161,6 +1167,52 @@ namespace agent {
             agent_ = agent_helper_->getAgent();
         }
     };
+
+    TEST_F(singleAgentSessionFixture, NotifCallbacksWarnAboutUnsupportedBackends) {
+        const auto ignore = std::make_shared<ignoreNotifs>();
+        // Registration before any backend is loaded is silent.
+        ASSERT_EQ(agent_->registerNotifCallback("early:", ignore), NIXL_SUCCESS);
+        {
+            const gtest::LogMessageCounter warning("does not support notification callbacks");
+            nixl_b_params_t params;
+            nixlBackendH *backend = nullptr;
+            ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+            EXPECT_EQ(warning.count(), 1u);
+        }
+
+        const gtest::LogMessageCounter warning("no loaded backend supports it");
+        ASSERT_EQ(agent_->registerNotifCallback("late:", ignore), NIXL_SUCCESS);
+        EXPECT_EQ(warning.count(), 1u);
+    }
+
+    TEST_F(singleAgentSessionFixture, NotifCallbacksDoNotWarnAboutSupportingBackend) {
+        ON_CALL(agent_helper_->getGMockEngine(), capabilities())
+            .WillByDefault(testing::Return(nixl_backend_capability_t::NOTIF_CALLBACK));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        const gtest::LogMessageCounter warning("no loaded backend supports it");
+        ASSERT_EQ(agent_->registerNotifCallback("prefix:", std::make_shared<ignoreNotifs>()),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(warning.count(), 0u);
+    }
+
+    TEST_F(singleAgentSessionFixture, NotifCallbacksIgnoreBackendsWithoutNotifications) {
+        auto &engine = agent_helper_->getGMockEngine();
+        ON_CALL(engine, supportsRemote()).WillByDefault(testing::Return(false));
+        ON_CALL(engine, supportsNotif()).WillByDefault(testing::Return(false));
+        nixl_b_params_t params;
+        nixlBackendH *backend = nullptr;
+        ASSERT_EQ(agent_helper_->createBackendWithGMock(params, backend), NIXL_SUCCESS);
+
+        // A storage-like backend cannot deliver notifications, so a callback backend
+        // may still be added later.
+        const gtest::LogMessageCounter warning("no loaded backend supports it");
+        ASSERT_EQ(agent_->registerNotifCallback("prefix:", std::make_shared<ignoreNotifs>()),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(warning.count(), 0u);
+    }
 
     TEST_F(singleAgentSessionFixture, ActiveReleaseRequiresDrain) {
         selfXferSetup setup;

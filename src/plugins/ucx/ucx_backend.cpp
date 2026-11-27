@@ -100,7 +100,8 @@ nixlUcxEngine::nixlUcxEngine(const nixlBackendInitParams &init_params, size_t nu
     : nixlBackendEngine(&init_params,
                         nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::LOCAL |
                             nixl_backend_capability_t::NOTIF |
-                            nixl_backend_capability_t::TRACE_CONTEXT),
+                            nixl_backend_capability_t::TRACE_CONTEXT |
+                            nixl_backend_capability_t::NOTIF_CALLBACK),
       errHandlingMode_(errHandlingModeFromParams(init_params.customParams)),
       sharedWorkerIndex_(1),
       sglEnabled_(sglEnabledFromConfig()),
@@ -811,7 +812,9 @@ nixlUcxEngine::notifAmCb(void *arg, const void *header,
                                         notif.traceExecution);
     }
 
-    engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    if (!engine->deliverNotif(notif.agent, notif.msg)) {
+        engine->appendNotif(std::move(notif.agent), std::move(notif.msg));
+    }
     return UCS_OK;
 }
 

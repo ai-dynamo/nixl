@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 
+#include <algorithm>
 #include <array>
 #include <bit>
 #include <chrono>
@@ -31,6 +32,7 @@
 #include "agent_data.h"
 #include "nixl_md_manager.h"
 #include "plugin_manager.h"
+#include "notif_dispatcher.h"
 #include "common/configuration.h"
 #include "common/nixl_log.h"
 #include "common/operators.h"
@@ -553,6 +555,7 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     init_params.pthrDelay = data->config_.pthrDelay;
     init_params.syncMode = data->config_.syncMode;
     init_params.enableTelemetry_ = (data->telemetry_ != nullptr);
+    init_params.notifSink = &data->notifDispatcher_;
 
     std::unique_ptr<nixlBackendTraceSink> trace_sink;
     if (data->tracer_ != nullptr) {
@@ -614,6 +617,14 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         // First time creating this backend handle, so unique
         // The order of creation sets the preference order
         data->memToBackend[elm].push_back(backend.get());
+    }
+
+    if (backend->supportsNotif() &&
+        !backend->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK) &&
+        data->notifDispatcher_.hasRegistrations()) {
+        NIXL_WARN << "Backend '" << type << "' of agent '" << data->name_
+                  << "' does not support notification callbacks; its notifications are "
+                     "only available through getNotifs()";
     }
 
     if (backend->supportsRemote()) {
@@ -1629,6 +1640,37 @@ nixlAgent::releasedDlistH (nixlDlistH* dlist_hndl) const {
     NIXL_LOCK_GUARD(data->lock);
     delete dlist_hndl;
     return NIXL_SUCCESS;
+}
+
+nixl_status_t
+nixlAgent::registerNotifCallback(std::string_view prefix,
+                                 std::shared_ptr<nixlNotifCallback> callback) {
+    const auto status = data->notifDispatcher_.add(prefix, std::move(callback));
+    if (status != NIXL_SUCCESS) {
+        return status;
+    }
+
+    // Registration stays silent until a backend that receives notifications is loaded,
+    // since the backend that will deliver them may be created later.
+    NIXL_SHARED_LOCK_GUARD(data->lock);
+    const auto &backends = data->backendEngines_;
+    const auto receives_notifs = [](const auto &backend) {
+        return backend.second->supportsNotif();
+    };
+    const auto supports_callback = [](const auto &backend) {
+        return backend.second->supportsCapability(nixl_backend_capability_t::NOTIF_CALLBACK);
+    };
+    if (std::any_of(backends.begin(), backends.end(), receives_notifs) &&
+        std::none_of(backends.begin(), backends.end(), supports_callback)) {
+        NIXL_WARN << "Agent '" << data->name_
+                  << "' registered a notification callback, but no loaded backend supports it";
+    }
+    return status;
+}
+
+nixl_status_t
+nixlAgent::deregisterNotifCallback(std::string_view prefix) noexcept {
+    return data->notifDispatcher_.remove(prefix);
 }
 
 nixl_status_t

@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pickle
 import sys
+import threading
 from enum import Enum
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -142,6 +143,68 @@ class nixl_xfer_handle:
 
 # Opaque handle for backend can be just int, as it's not passed to the user
 nixl_backend_handle = int
+
+
+class nixl_notification_monitor(nixlBind._NotificationMonitor):
+    """Wait on notifications that agents route to it by byte prefix.
+
+    Subscribe with nixl_agent.add_notif_monitor(), then drain with wait_any().
+    The queue is unbounded, like the agent's own notification queue. The
+    monitor keeps each subscribed agent alive until its subscriptions are
+    removed or the monitor is closed.
+    """
+
+    def __init__(self) -> None:
+        super().__init__()
+        # The native subscriptions refer to these agents. The lock pairs each
+        # native subscription change with its update here, since the native
+        # calls release the GIL.
+        self._lock = threading.Lock()
+        self._subscribed: dict[tuple[int, bytes], nixl_agent] = {}
+
+    def __enter__(self) -> nixl_notification_monitor:
+        return self
+
+    def __exit__(self, *exc_info) -> None:
+        self.close()
+
+    def __del__(self) -> None:
+        # Deregister while the subscribed agents are still referenced.
+        try:
+            self.close()
+        except Exception:
+            pass
+
+    def close(self) -> None:
+        """Remove all subscriptions and discard queued notifications.
+
+        Wakes a blocked wait_any() with RuntimeError and releases the eventfd.
+        Closing twice is allowed.
+        """
+        with self._lock:
+            super().close()
+            self._subscribed.clear()
+
+    def _subscribe(self, agent: nixl_agent, prefix: bytes) -> None:
+        key = (id(agent), bytes(prefix))
+        with self._lock:
+            # Keep the agent alive before the native subscription refers to it.
+            # A rejected duplicate keeps the existing subscription's entry.
+            tracked = key in self._subscribed
+            self._subscribed[key] = agent
+            try:
+                agent.agent.addNotifMonitor(self, agent.name, prefix)
+            except BaseException:
+                if not tracked:
+                    del self._subscribed[key]
+                raise
+
+    def _unsubscribe(self, agent: nixl_agent, prefix: bytes) -> bool:
+        with self._lock:
+            removed = agent.agent.removeNotifMonitor(self, prefix)
+            if removed:
+                self._subscribed.pop((id(agent), bytes(prefix)), None)
+            return removed
 
 
 class nixl_thread_sync_t(Enum):
@@ -831,6 +894,33 @@ class nixl_agent:
 
     def release_mem_view(self, mvh: int) -> None:
         self.agent.releaseMemView(mvh)
+
+    def add_notif_monitor(
+        self, monitor: nixl_notification_monitor, prefix: bytes
+    ) -> None:
+        """Route notifications matching a byte prefix to the given monitor.
+
+        Registration can happen before backend creation. Delivery depends on
+        the receiving backend's callback support and progress.
+
+        Prefixes of an agent must be disjoint, and b"" adds the default route for
+        messages with no matching prefix. A prefix that overlaps an existing one,
+        or a second default, raises nixlInvalidParamError. Remove the existing
+        subscription first to replace it.
+        The monitor keeps this agent alive until the subscription is removed.
+        Closing or dropping the monitor removes all its subscriptions.
+        """
+        monitor._subscribe(self, prefix)
+
+    def remove_notif_monitor(
+        self, monitor: nixl_notification_monitor, prefix: bytes
+    ) -> bool:
+        """Remove this agent's subscription of the monitor to exactly this prefix.
+
+        Return False if the monitor has no such subscription. Already queued
+        notifications remain available on the monitor.
+        """
+        return monitor._unsubscribe(self, prefix)
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.
