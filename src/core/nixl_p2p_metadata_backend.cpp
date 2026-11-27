@@ -98,10 +98,10 @@ public:
     // Send a message to the peer.
     // Calling this function also enables auto-connect if the connection is closed.
     void
-    sendMessage(const std::string &message) {
+    sendMessage(std::string message) {
         if (!stopCalled_) {
             autoConnect_ = true;
-            sendQueue_.push_back(message);
+            sendQueue_.push_back(std::move(message));
             sendNextMessage();
         } else {
             NIXL_WARN << getLogPrefix() << "Message dropped after stop: " << message;
@@ -116,6 +116,7 @@ public:
         }
 
         stopCalled_ = true;
+        autoConnect_ = false;
 
         if (checkCleanup()) {
             return;
@@ -222,6 +223,7 @@ private:
         resolver_ptr->async_resolve(
             peerAddress_.ip_,
             std::to_string(peerAddress_.port_),
+            asio::ip::tcp::resolver::numeric_host | asio::ip::tcp::resolver::numeric_service,
             cancelAndErrorAdapter("resolve", receive_timeout, std::move(resolve_complete)));
     }
 
@@ -253,13 +255,12 @@ private:
 
         auto receive_complete = [shared_this = shared_from_this(), generation = this->generation_](
                                     const asio::error_code &error, std::size_t bytes_transferred) {
-            if (shared_this->stopCalled_) {
-                shared_this->checkCleanup();
-                return;
-            }
             if (generation != shared_this->generation_) {
                 NIXL_INFO << shared_this->getLogPrefix()
                           << "Connection has been reset. Drop stale message.";
+                return;
+            }
+            if (shared_this->stopCalled_) {
                 return;
             }
 
@@ -314,20 +315,27 @@ private:
             return;
         }
 
-        nixl::fixedCapacityBuffer buffer(messageSizeBuf_.messageSize_);
-        auto read_buf = asio::buffer(buffer.data(), buffer.capacity());
+        try {
+            nixl::fixedCapacityBuffer buffer(messageSizeBuf_.messageSize_);
+            auto read_buf = asio::buffer(buffer.data(), buffer.capacity());
 
-        auto read_complete = [shared_this = shared_from_this(),
-                              buffer = std::move(buffer)](std::size_t bytes_transferred) mutable {
-            buffer.setSize(bytes_transferred);
-            shared_this->processMessage(std::move(buffer));
-        };
+            auto read_complete = [shared_this = shared_from_this(), buffer = std::move(buffer)](
+                                     std::size_t bytes_transferred) mutable {
+                buffer.setSize(bytes_transferred);
+                shared_this->processMessage(std::move(buffer));
+            };
 
-        asio::async_read(socket_,
-                         read_buf,
-                         cancelAndErrorAdapter("receive message body failed",
-                                               receive_timeout,
-                                               std::move(read_complete)));
+            asio::async_read(socket_,
+                             read_buf,
+                             cancelAndErrorAdapter("receive message body failed",
+                                                   receive_timeout,
+                                                   std::move(read_complete)));
+        }
+        catch (const std::exception &e) {
+            onError(generation_,
+                    asio::error::make_error_code(asio::error::no_memory),
+                    "allocate buffer for message body");
+        }
     }
 
     void
@@ -420,6 +428,8 @@ private:
 
     void
     cleanup() {
+        autoConnect_ = false;
+
         if (socket_.is_open()) {
             asio::error_code ec;
             socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
@@ -427,7 +437,6 @@ private:
             NIXL_INFO << getLogPrefix() << "Closed socket.";
         }
 
-        autoConnect_ = false;
         connectionState_ = connection_state_t::CLOSED;
         connectionRetryCount_ = 0;
         connectionRetryTimer_.cancel();
@@ -508,8 +517,8 @@ private:
     // This is an optimization to avoid allocating a small buffer
     // on the heap for each message.
     union {
-        std::size_t messageSize_;
-        std::uint8_t buf_[sizeof(std::size_t)];
+        std::uint64_t messageSize_;
+        std::uint8_t buf_[sizeof(messageSize_)];
     } messageSizeBuf_;
 
     // The queue of messages to send to the peer.
@@ -533,7 +542,7 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx,
             bindListener(asio::ip::tcp::endpoint(asio::ip::tcp::v6(), config.listenPort));
         }
         catch (const asio::system_error &e) {
-            NIXL_INFO << module_prefix << "Failed to bind IPv6 listener socket: " << e.what()
+            NIXL_INFO << getLogPrefix() << "Failed to bind IPv6 listener socket: " << e.what()
                       << ". Trying IPv4.";
             asio::error_code ec;
             acceptor_.close(ec);
@@ -541,7 +550,8 @@ nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx,
         }
         acceptor_.listen();
 
-        NIXL_INFO << module_prefix << "listening on port " << acceptor_.local_endpoint().port();
+        NIXL_INFO << getLogPrefix() << "MD listener is listening on port "
+                  << acceptor_.local_endpoint().port();
     }
 }
 
@@ -572,13 +582,14 @@ void
 nixlP2PMetadataBackend::acceptPeers() {
     acceptor_.async_accept([this](const asio::error_code &error, asio::ip::tcp::socket socket) {
         if (!acceptor_.is_open()) {
-            NIXL_INFO << module_prefix << "Listener closed.";
+            NIXL_INFO << getLogPrefix() << "Listener closed.";
             return;
         }
         if (error) {
-            NIXL_ERROR << module_prefix << "Failed to accept peer: " << error.message();
+            NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << error.message();
             if (error == asio::error::connection_aborted || error == asio::error::no_descriptors ||
-                error == asio::error::no_buffer_space || error == asio::error::no_memory) {
+                error == asio::error::no_buffer_space || error == asio::error::no_memory ||
+                error == std::errc::too_many_files_open_in_system) {
                 acceptRetryTimer_.expires_after(accept_retry_interval);
                 acceptRetryTimer_.async_wait([this](const asio::error_code &) {
                     if (acceptor_.is_open()) {
@@ -603,7 +614,7 @@ nixlP2PMetadataBackend::acceptPeers() {
             getOrCreateSession(address)->setAcceptedSocket(std::move(socket));
         }
         catch (const std::exception &e) {
-            NIXL_ERROR << module_prefix << "Failed to accept peer: " << e.what();
+            NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << e.what();
             asio::error_code ec;
             socket.close(ec);
         }
@@ -615,6 +626,11 @@ nixlP2PMetadataBackend::acceptPeers() {
 void
 nixlP2PMetadataBackend::stop() {
     asio::post(ioContext_, [this]() {
+        if (stopped_) {
+            return;
+        }
+        stopped_ = true;
+
         asio::error_code ec;
         acceptor_.close(ec);
         acceptRetryTimer_.cancel();
@@ -645,8 +661,7 @@ nixlP2PMetadataBackend::sendLocal(const nixl_opt_args_t *extra_params) {
     const int port = extra_params->port;
 
     asio::post(ioContext_, [this, ip, port, blob = std::move(blob)]() {
-        peerAddress address{.ip_ = ip, .port_ = port};
-        getOrCreateSession(address)->sendMessage("NIXLCOMM:LOAD" + blob);
+        sendMessage(ip, port, "NIXLCOMM:LOAD" + blob);
     });
     return NIXL_SUCCESS;
 }
@@ -666,8 +681,7 @@ nixlP2PMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
     const int port = extra_params->port;
 
     asio::post(ioContext_, [this, ip, port, blob = std::move(blob)]() {
-        peerAddress address{.ip_ = ip, .port_ = port};
-        getOrCreateSession(address)->sendMessage("NIXLCOMM:LOAD" + blob);
+        sendMessage(ip, port, "NIXLCOMM:LOAD" + blob);
     });
     return NIXL_SUCCESS;
 }
@@ -683,10 +697,7 @@ nixlP2PMetadataBackend::fetchRemote(const std::string &remote_name,
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
 
-    asio::post(ioContext_, [this, ip, port]() {
-        peerAddress address{.ip_ = ip, .port_ = port};
-        getOrCreateSession(address)->sendMessage("NIXLCOMM:SEND");
-    });
+    asio::post(ioContext_, [this, ip, port]() { sendMessage(ip, port, "NIXLCOMM:SEND"); });
     return NIXL_SUCCESS;
 }
 
@@ -698,10 +709,8 @@ nixlP2PMetadataBackend::invalidateLocal(const nixl_opt_args_t *extra_params) {
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
 
-    asio::post(ioContext_, [this, ip, port]() {
-        peerAddress address{.ip_ = ip, .port_ = port};
-        getOrCreateSession(address)->sendMessage("NIXLCOMM:INVL" + ctx_.agentName());
-    });
+    asio::post(ioContext_,
+               [this, ip, port]() { sendMessage(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
     return NIXL_SUCCESS;
 }
 
@@ -717,4 +726,19 @@ nixlP2PMetadataBackend::getOrCreateSession(const peerAddress &address) {
     } else {
         return it->second.get();
     }
+}
+
+void
+nixlP2PMetadataBackend::sendMessage(const std::string &ip, int port, std::string message) {
+    if (stopped_) {
+        NIXL_WARN << getLogPrefix() << "Stopped. Skipping message: " << message;
+        return;
+    }
+    peerAddress address{.ip_ = ip, .port_ = port};
+    getOrCreateSession(address)->sendMessage(std::move(message));
+}
+
+std::string
+nixlP2PMetadataBackend::getLogPrefix() const {
+    return absl::StrFormat("%s[%s] ", module_prefix, ctx_.agentName());
 }

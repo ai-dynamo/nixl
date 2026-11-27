@@ -118,6 +118,12 @@ private:
     nixlP2PMetadataPeer *
     getOrCreateSession(const peerAddress &address);
 
+    void
+    sendMessage(const std::string &ip, int port, std::string message);
+
+    [[nodiscard]] std::string
+    getLogPrefix() const;
+
     // The metadata context.
     nixlMetadataContext &ctx_;
 
@@ -129,6 +135,8 @@ private:
     asio::steady_timer acceptRetryTimer_;
     // The map of peer addresses to their sessions.
     peer_session_map_t peerSessions_;
+
+    bool stopped_ = false;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H

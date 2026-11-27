@@ -692,8 +692,9 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalPartialWithErrors) {
     // Case 2: Attempt to load connection info on agent without backend
     {
         const LogIgnoreGuard lig1("loadRemoteMD: no common backend found");
-        const LogIgnoreGuard lig2(std::regex("\\[Peer: 127.0.0.1:[0-9]+\\] loadRemoteMD in P2P backend "
-                                             "failed with error NIXL_ERR_BACKEND"));
+        const LogIgnoreGuard lig2(
+            std::regex("\\[Peer: 127.0.0.1:[0-9]+\\] loadRemoteMD in P2P backend "
+                       "failed with error NIXL_ERR_BACKEND"));
 
         ASSERT_EQ(src.agent->sendLocalPartialMD({DRAM_SEG}, &send_args), NIXL_SUCCESS);
 
