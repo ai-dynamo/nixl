@@ -25,6 +25,7 @@ use std::collections::{HashMap, HashSet};
 use std::ffi::{CStr, CString};
 use std::fmt;
 use std::marker::PhantomData;
+use std::mem::ManuallyDrop;
 use std::ptr;
 use std::ptr::NonNull;
 use std::sync::{Arc, RwLock};
@@ -156,27 +157,40 @@ impl RegistrationHandle {
     }
 
     pub fn deregister(&mut self) -> Result<(), NixlError> {
-        if let Some(agent) = self.agent.take() {
-            tracing::trace!(
-                ptr = self.ptr,
-                size = self.size,
-                dev_id = self.dev_id,
-                mem_type = ?self.mem_type,
-                "Deregistering memory"
-            );
-            let mut reg_dlist = RegDescList::new(self.mem_type)?;
-            unsafe {
-                reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
-                let _opt_args = OptArgs::new().unwrap();
-                nixl_capi_deregister_mem(
-                    agent.write().unwrap().handle.as_ptr(),
-                    reg_dlist.handle(),
-                    _opt_args.inner.as_ptr(),
-                );
+        let Some(agent) = self.agent.as_ref() else {
+            return Ok(());
+        };
+        tracing::trace!(
+            ptr = self.ptr,
+            size = self.size,
+            dev_id = self.dev_id,
+            mem_type = ?self.mem_type,
+            "Deregistering memory"
+        );
+        let mut reg_dlist = RegDescList::new(self.mem_type)?;
+        reg_dlist.add_desc(self.ptr, self.size, self.dev_id);
+        let opt_args = OptArgs::new()?;
+        let status = unsafe {
+            nixl_capi_deregister_mem(
+                agent
+                    .write()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .handle
+                    .as_ptr(),
+                reg_dlist.handle(),
+                opt_args.inner.as_ptr(),
+            )
+        };
+        match status {
+            NIXL_CAPI_SUCCESS => {
+                self.agent = None;
+                tracing::trace!("Memory deregistered successfully");
+                Ok(())
             }
-            tracing::trace!("Memory deregistered successfully");
+            NIXL_CAPI_ERROR_INVALID_PARAM => Err(NixlError::InvalidParam),
+            NIXL_CAPI_ERROR_NOT_FOUND => Err(NixlError::NotFound),
+            _ => Err(NixlError::BackendError),
         }
-        Ok(())
     }
 }
 
@@ -583,42 +597,122 @@ pub trait NixlRegistration: NixlDescriptor {
     fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError>;
 }
 
-/// System memory storage implementation using a Vec<u8>
+/// System memory storage backed by a byte buffer
+///
+/// The buffer type `B` defaults to `Vec<u8>`. Use [`SystemStorage::new`] or
+/// `From<Vec<u8>>` for a `Vec<u8>`, and [`SystemStorage::from_buffer`] for any
+/// other buffer, such as one from a custom allocator.
+///
+/// Dropping the storage deregisters it before releasing the buffer. If
+/// deregistration fails, the buffer is leaked instead of released.
 #[derive(Debug)]
-pub struct SystemStorage {
-    data: Vec<u8>,
+pub struct SystemStorage<B = Vec<u8>> {
     handle: Option<RegistrationHandle>,
+    data: ManuallyDrop<B>,
 }
 
 impl SystemStorage {
     /// Create a new system storage with the given size
     pub fn new(size: usize) -> Result<Self, NixlError> {
-        let data = vec![0; size];
-        Ok(Self { data, handle: None })
+        Ok(Self::from(vec![0; size]))
+    }
+}
+
+impl From<Vec<u8>> for SystemStorage {
+    fn from(data: Vec<u8>) -> Self {
+        Self {
+            handle: None,
+            data: ManuallyDrop::new(data),
+        }
+    }
+}
+
+impl<B> SystemStorage<B> {
+    /// Deregister the storage, if registered, and return its buffer
+    ///
+    /// # Errors
+    /// Returns the storage together with the error if deregistration fails,
+    /// so the buffer is not released while it may still be registered.
+    pub fn into_inner(mut self) -> Result<B, (Self, NixlError)> {
+        if let Err(error) = self.deregister() {
+            return Err((self, error));
+        }
+        let mut this = ManuallyDrop::new(self);
+        Ok(unsafe { ManuallyDrop::take(&mut this.data) })
+    }
+
+    fn deregister(&mut self) -> Result<(), NixlError> {
+        if let Some(handle) = self.handle.as_mut() {
+            handle.deregister()?;
+        }
+        self.handle = None;
+        Ok(())
+    }
+}
+
+impl<B> Drop for SystemStorage<B> {
+    fn drop(&mut self) {
+        match self.deregister() {
+            Ok(()) => unsafe { ManuallyDrop::drop(&mut self.data) },
+            Err(error) => {
+                tracing::error!(?error, "Failed to deregister storage, leaking its buffer")
+            }
+        }
+    }
+}
+
+impl<B> SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
+    /// Create a system storage over a caller-provided buffer
+    ///
+    /// Registration records the buffer's address once, and transfers read and
+    /// write through it for as long as the storage stays registered.
+    ///
+    /// # Safety
+    /// The caller must ensure:
+    /// - `as_ref` and `as_mut` return the same region, at the same address and
+    ///   with the same length, on every call for as long as the buffer lives
+    /// - That region does not move when the buffer itself is moved
+    /// - That region stays allocated for as long as the storage may be
+    ///   registered, including when the storage is leaked. A buffer that
+    ///   borrows its memory must not let the borrow end before then
+    pub unsafe fn from_buffer(data: B) -> Self {
+        Self {
+            handle: None,
+            data: ManuallyDrop::new(data),
+        }
     }
 
     /// Fill the storage with a specific byte value
     pub fn memset(&mut self, value: u8) {
-        self.data.fill(value);
+        self.data.as_mut().fill(value);
     }
 
     /// Get a slice of the underlying data
     pub fn as_slice(&self) -> &[u8] {
-        &self.data
+        self.data.as_ref()
     }
 }
 
-impl MemoryRegion for SystemStorage {
+impl<B> MemoryRegion for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn size(&self) -> usize {
-        self.data.len()
+        self.data.as_ref().len()
     }
 
     unsafe fn as_ptr(&self) -> *const u8 {
-        self.data.as_ptr()
+        self.data.as_ref().as_ptr()
     }
 }
 
-impl NixlDescriptor for SystemStorage {
+impl<B> NixlDescriptor for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn mem_type(&self) -> MemType {
         MemType::Dram
     }
@@ -628,7 +722,10 @@ impl NixlDescriptor for SystemStorage {
     }
 }
 
-impl NixlRegistration for SystemStorage {
+impl<B> NixlRegistration for SystemStorage<B>
+where
+    B: AsRef<[u8]> + AsMut<[u8]> + fmt::Debug + Send + Sync,
+{
     fn register(&mut self, agent: &Agent, opt_args: Option<&OptArgs>) -> Result<(), NixlError> {
         let handle = agent.register_memory(self, opt_args)?;
         self.handle = Some(handle);
