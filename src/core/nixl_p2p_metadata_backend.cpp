@@ -443,7 +443,10 @@ private:
         hasInflightSend_ = false;
         sendQueue_.clear();
 
-        backend_.peerSessions_.erase(peerAddress_);
+        auto it = backend_.peerSessions_.find(peerAddress_);
+        if (it != backend_.peerSessions_.end() && it->second.get() == this) {
+            backend_.peerSessions_.erase(it);
+        }
     }
 
     void
@@ -589,7 +592,7 @@ nixlP2PMetadataBackend::acceptPeers() {
             NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << error.message();
             acceptRetryTimer_.expires_after(acceptRetryInterval_);
             acceptRetryTimer_.async_wait([this](const asio::error_code &error) {
-                if (error != asio::error::operation_aborted) {
+                if (acceptor_.is_open()) {
                     acceptPeers();
                 }
             });
