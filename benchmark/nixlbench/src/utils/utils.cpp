@@ -167,6 +167,7 @@ NB_ARG_UINT64(start_block_size, 4 * (1 << 10), "Max size of block");
 NB_ARG_UINT64(max_block_size, 64 * (1 << 20), "Max size of block");
 NB_ARG_UINT64(start_batch_size, 1, "Starting size of batch");
 NB_ARG_UINT64(max_batch_size, 1, "Max size of batch");
+NB_ARG_INT32(batch_repeat, 1, "Repeat each batch size this many times");
 NB_ARG_INT32(num_iter, 1000, "Max iterations");
 NB_ARG_BOOL(recreate_xfer,
             false,
@@ -405,6 +406,7 @@ size_t xferBenchConfig::start_block_size = 0;
 size_t xferBenchConfig::max_block_size = 0;
 size_t xferBenchConfig::start_batch_size = 0;
 size_t xferBenchConfig::max_batch_size = 0;
+int xferBenchConfig::batch_repeat = 1;
 int xferBenchConfig::num_iter = 0;
 int xferBenchConfig::large_blk_iter_ftr = 16;
 int xferBenchConfig::warmup_iter = 0;
@@ -955,6 +957,11 @@ xferBenchConfig::loadParams(void) {
     max_block_size = NB_ARG(max_block_size);
     start_batch_size = NB_ARG(start_batch_size);
     max_batch_size = NB_ARG(max_batch_size);
+    batch_repeat = NB_ARG(batch_repeat);
+    if (batch_repeat < 1) {
+        std::cerr << "batch_repeat must be >= 1" << std::endl;
+        return -1;
+    }
     num_iter = NB_ARG(num_iter);
     if (num_iter < 1) {
         std::cerr << "num_iter must be >= 1" << std::endl;
@@ -1351,6 +1358,7 @@ xferBenchConfig::printConfig() {
     printOption("Max block size (--max_block_size=N)", std::to_string(max_block_size));
     printOption("Start batch size (--start_batch_size=N)", std::to_string(start_batch_size));
     printOption("Max batch size (--max_batch_size=N)", std::to_string(max_batch_size));
+    printOption("Batch repeat (--batch_repeat=N)", std::to_string(batch_repeat));
     printOption("Num iter (--num_iter=N)", std::to_string(num_iter));
     printOption("Warmup iter (--warmup_iter=N)", std::to_string(warmup_iter));
     printOption("Large block iter factor (--large_blk_iter_ftr=N)",
