@@ -505,7 +505,8 @@ TEST_F(MetadataExchangeTestFixture, SocketSendLocalAndInvalidateLocal) {
     const std::string port_str = std::to_string(port);
     send_args.ipAddr = ip_str;
     send_args.port = port;
-    const LogIgnoreGuard lig(std::regex("\\[Peer: " + ip_str + ":" + port_str + "\\] connect:"));
+    const LogIgnoreGuard lig(
+        std::regex("\\[Peer: " + ip_str + ":" + port_str + "\\] connect failed with error:"));
 
     ASSERT_EQ(src.agent->sendLocalMD(&send_args), NIXL_SUCCESS);
 

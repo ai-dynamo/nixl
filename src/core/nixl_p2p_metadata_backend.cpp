@@ -69,31 +69,21 @@ public:
           connectionRetryTimer_(backend.ioContext_),
           shutdownTimer_(backend.ioContext_) {}
 
-    // Set the socket to a newly accepted connection.
+    // Constructor for an accepted peer.
+    nixlP2PMetadataPeer(nixlP2PMetadataBackend &backend,
+                        const peerAddress &address,
+                        asio::ip::tcp::socket socket)
+        : backend_(backend),
+          peerAddress_(address),
+          socket_(std::move(socket)),
+          autoConnect_(false),
+          connectionState_(connection_state_t::CONNECTED),
+          connectionRetryTimer_(backend.ioContext_),
+          shutdownTimer_(backend.ioContext_) {}
+
     void
-    setAcceptedSocket(asio::ip::tcp::socket socket) {
-        if (stopCalled_) {
-            NIXL_WARN << getLogPrefix() << "setAcceptedSocket() called after stop(). Ignoring.";
-            asio::error_code ec;
-            socket.close(ec);
-            return;
-        }
-
-        // The old socket must have died. Close and ignore the error just in case.
-        if (socket_.is_open()) {
-            asio::error_code ec;
-            socket_.close(ec);
-        }
-        socket_ = std::move(socket);
-        autoConnect_ = false;
-        connectionState_ = connection_state_t::CONNECTED;
-        generation_++;
-        hasInflightSend_ = false;
-        connectionRetryCount_ = 0;
-        connectionRetryTimer_.expires_at(std::chrono::steady_clock::time_point::min());
-
+    receiveMessage() {
         receiveMessageSize();
-        sendNextMessage();
     }
 
     // Send a message to the peer.
@@ -111,15 +101,14 @@ public:
 
     // Gracefully stop the async I/O operations.
     void
-    stop() {
+    stop(bool force = false) {
         if (stopCalled_) {
             return;
         }
 
         stopCalled_ = true;
-        autoConnect_ = false;
 
-        if (checkCleanup()) {
+        if (gracefulCleanup(force)) {
             return;
         }
 
@@ -161,20 +150,20 @@ private:
              generation = this->generation_,
              what = std::move(what),
              on_success = std::move(on_success)](asio::error_code error, Args... args) mutable {
-                if (error) {
-                    shared_this->onError(generation, error, what);
-                } else if (StopAction == on_stop_action_t::STOP && shared_this->stopCalled_) {
-                    shared_this->checkCleanup();
+                if (StopAction == on_stop_action_t::STOP && shared_this->stopCalled_) {
+                    // No-op.
                 } else if (generation != shared_this->generation_) {
                     NIXL_WARN << shared_this->getLogPrefix()
                               << "Connection has been reset. Drop stale operation.";
+                } else if (error) {
+                    shared_this->onError(generation, error, what);
                 } else {
                     on_success(std::forward<Args>(args)...);
                 }
             });
     }
 
-    template<on_stop_action_t StopAction = on_stop_action_t::STOP,
+    template<on_stop_action_t StopAction = on_stop_action_t::CONTINUE_ON_STOP,
              typename Rep,
              typename Period,
              typename Fn>
@@ -195,11 +184,6 @@ private:
     void
     resolveEndpoint() {
         if (connectionState_ != connection_state_t::CLOSED) {
-            return;
-        }
-        if (stopCalled_) {
-            NIXL_INFO << getLogPrefix() << "Stop called, cancelling connection.";
-            cleanup();
             return;
         }
         if (connectionRetryTimer_.expiry() > std::chrono::steady_clock::now()) {
@@ -248,7 +232,6 @@ private:
     void
     receiveMessageSize() {
         if (stopCalled_) {
-            checkCleanup();
             return;
         }
 
@@ -281,9 +264,8 @@ private:
                     asio::async_read(
                         shared_this->socket_,
                         buffer,
-                        shared_this->cancelAndErrorAdapter("receive message size failed",
-                                                           receive_timeout,
-                                                           std::move(read_complete)));
+                        shared_this->cancelAndErrorAdapter<on_stop_action_t::STOP>(
+                            "receive message size", receive_timeout, std::move(read_complete)));
                 }
                 return;
             }
@@ -296,7 +278,7 @@ private:
                 return;
             }
 
-            shared_this->onError(generation, error, "receive message size failed");
+            shared_this->onError(generation, error, "receive message size");
         };
 
         // There is no guarantee that a complete message will ever come, so we
@@ -326,11 +308,11 @@ private:
                 shared_this->processMessage(std::move(buffer));
             };
 
-            asio::async_read(socket_,
-                             read_buf,
-                             cancelAndErrorAdapter("receive message body failed",
-                                                   receive_timeout,
-                                                   std::move(read_complete)));
+            asio::async_read(
+                socket_,
+                read_buf,
+                cancelAndErrorAdapter<on_stop_action_t::STOP>(
+                    "receive message body", receive_timeout, std::move(read_complete)));
         }
         catch (const std::exception &e) {
             onError(generation_,
@@ -394,32 +376,39 @@ private:
                 return;
             }
 
-            hasInflightSend_ = true;
+            try {
+                nixl::dynamicSizedBuffer buf;
+                buf.put(sendQueue_.front());
 
-            nixl::dynamicSizedBuffer buf;
-            buf.put(sendQueue_.front());
-            sendQueue_.pop_front();
-            auto buffer = asio::buffer(buf.data(), buf.size());
+                auto buffer = asio::buffer(buf.data(), buf.size());
 
-            auto send_complete = [shared_this = shared_from_this(),
-                                  buf = std::move(buf)](std::size_t) mutable {
-                shared_this->hasInflightSend_ = false;
-                shared_this->sendNextMessage();
-            };
+                auto send_complete = [shared_this = shared_from_this(),
+                                      buf = std::move(buf)](std::size_t) mutable {
+                    shared_this->hasInflightSend_ = false;
+                    shared_this->sendNextMessage();
+                };
 
-            asio::async_write(
-                socket_,
-                buffer,
-                cancelAndErrorAdapter<on_stop_action_t::CONTINUE_ON_STOP>(
-                    "send message failed", receive_timeout, std::move(send_complete)));
+                hasInflightSend_ = true;
+                asio::async_write(socket_,
+                                  buffer,
+                                  cancelAndErrorAdapter<on_stop_action_t::CONTINUE_ON_STOP>(
+                                      "send message", receive_timeout, std::move(send_complete)));
+
+                sendQueue_.pop_front();
+            }
+            catch (const std::exception &e) {
+                onError(generation_,
+                        asio::error::make_error_code(asio::error::no_memory),
+                        "allocate buffer for send message");
+            }
 
             break;
         }
     }
 
     bool
-    checkCleanup() {
-        if (connectionState_ != connection_state_t::CONNECTED ||
+    gracefulCleanup(bool force = false) {
+        if (force || (!autoConnect_ && connectionState_ != connection_state_t::CONNECTED) ||
             (!hasInflightSend_ && sendQueue_.empty())) {
             cleanup();
             return true;
@@ -454,14 +443,9 @@ private:
     void
     onError(std::uint32_t generation, const asio::error_code &error, const std::string_view &msg) {
         if (error == asio::error::eof) {
-            if (stopCalled_ && connectionState_ == connection_state_t::CONNECTED) {
-                // We are in the graceful shutdown period, and the read operation
-                // is shutdown by us.
-                return;
-            }
             NIXL_INFO << getLogPrefix() << "Peer closed.";
         } else {
-            NIXL_ERROR << getLogPrefix() << msg << ": " << error.message();
+            NIXL_ERROR << getLogPrefix() << msg << " failed with error: " << error.message();
         }
 
         if (generation != this->generation_) {
@@ -612,7 +596,17 @@ nixlP2PMetadataBackend::acceptPeers() {
             }
 
             peerAddress address{.ip_ = peer_address.to_string(), .port_ = peer_endpoint.port()};
-            getOrCreateSession(address)->setAcceptedSocket(std::move(socket));
+
+            // Stop and remove the existing session if it exists.
+            auto it = peerSessions_.find(address);
+            if (it != peerSessions_.end()) {
+                it->second->stop(true);
+            }
+
+            auto session = std::make_shared<nixlP2PMetadataPeer>(*this, address, std::move(socket));
+            auto session_ptr = session.get();
+            peerSessions_.emplace(address, std::move(session));
+            session_ptr->receiveMessage();
         }
         catch (const std::exception &e) {
             NIXL_ERROR << getLogPrefix() << "Failed to get peer address: " << e.what();
