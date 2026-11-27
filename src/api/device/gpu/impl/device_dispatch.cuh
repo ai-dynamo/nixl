@@ -58,7 +58,7 @@ getPtr(nixlMemViewH, size_t) {
 
 template<level_t level>
 __device__ nixl_status_t
-flush(const nixlMemViewH &, unsigned) {
+flush(const nixlMemViewH &, unsigned, xferStatusH *) {
     return NIXL_ERR_NOT_SUPPORTED;
 }
 
@@ -200,16 +200,25 @@ getPtr(nixlMemViewH mvh, size_t index) {
 
 template<level_t level, exec_mode_t mode>
 __device__ nixl_status_t
-flush(const nixlMemViewH &remote, unsigned channel_id) {
+flush(const nixlMemViewH &remote, unsigned channel_id, xferStatusH *xfer_status) {
     const auto *view = detail::asDeviceMemView(remote);
-    switch (detail::executionMode<mode>(*view)) {
+    const exec_mode_t execution_mode = detail::executionMode<mode>(*view);
+    nixl_status_t status;
+
+    switch (execution_mode) {
     case exec_mode_t::UCX_DIRECT:
-        return ucx::flush<level>(view->backend_memview, channel_id);
+        status = ucx::flush<level>(view->backend_memview, channel_id, xfer_status);
+        break;
     case exec_mode_t::PROXY:
-        return NIXL_ERR_NOT_SUPPORTED;
+        status = NIXL_ERR_NOT_SUPPORTED;
+        break;
     default:
-        return NIXL_ERR_INVALID_PARAM;
+        status = NIXL_ERR_INVALID_PARAM;
+        break;
     }
+
+    detail::writeExecutionMode<level, mode>(xfer_status, status, execution_mode);
+    return status;
 }
 
 } // namespace nixl::gpu::impl
