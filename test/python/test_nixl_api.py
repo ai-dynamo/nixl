@@ -13,6 +13,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 
+import asyncio
 import contextlib
 import gc
 import os
@@ -960,3 +961,30 @@ def test_completion_monitor_wait(backend_name, prepped, wait):
             assert completions[0][0] is handle
             assert completions[0][1] == "DONE"
             assert monitor.size() == 0
+
+
+@pytest.mark.timeout(10)
+def test_completion_monitor_asyncio(backend_name):
+    """An event loop waits on the monitor fd and collects without blocking."""
+    if backend_name != "UCX":
+        pytest.skip("completion monitors are supported by UCX only")
+
+    async def post_and_wait(agent, handle, monitor):
+        readable = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        loop.add_reader(monitor.fd(), readable.set)
+        try:
+            agent.transfer(handle, monitor=monitor)
+            completions = []
+            while not completions:
+                await asyncio.wait_for(readable.wait(), timeout=5)
+                readable.clear()
+                completions = monitor.wait_any(timeout_ms=0)
+            return completions
+        finally:
+            loop.remove_reader(monitor.fd())
+
+    with _xfer_handle(backend_name) as (agent, handle):
+        monitor = nixl_completion_monitor(agent)
+        assert asyncio.run(post_and_wait(agent, handle, monitor)) == [(handle, "DONE")]
+        assert monitor.size() == 0
