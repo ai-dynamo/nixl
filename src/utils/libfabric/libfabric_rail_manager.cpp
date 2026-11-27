@@ -1163,15 +1163,22 @@ nixlLibfabricRailManager::postControlMessage(
 
 nixl_status_t
 nixlLibfabricRailManager::progressActiveRails(ProgressCudaDevice cuda_device) {
-    std::unordered_set<size_t> rails_to_process;
+    // Reused by every call on this thread, so progress stops allocating once the list has grown
+    // to the rail count. One per thread, because the progress thread and application threads
+    // can progress at the same time. Reuse is safe only because nothing a rail's progress runs
+    // calls back into this function, which would refill the list while it is iterated.
+    static thread_local std::vector<size_t> rails_to_process;
+    rails_to_process.clear();
 
     // Copy active rails under lock to avoid iterator invalidation
     {
         std::lock_guard<std::mutex> lock(active_rails_mutex_);
-        // Always progress rail 0 for notifications (SEND/RECV)
-        rails_to_process.insert(0);
+        // Always progress rail 0 for notifications (SEND/RECV), once
+        rails_to_process.push_back(0);
         for (const auto &[rail_id, refcount] : active_rails_) {
-            rails_to_process.insert(rail_id);
+            if (rail_id != 0) {
+                rails_to_process.push_back(rail_id);
+            }
         }
     }
 
