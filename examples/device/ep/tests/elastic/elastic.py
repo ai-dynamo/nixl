@@ -97,6 +97,48 @@ def self_kill():
     os.kill(os.getpid(), signal.SIGTERM)
 
 
+def check_variable_dispatch_capacity(
+    buffer, rank, active_ranks, num_experts_per_rank, hidden, reserved_capacity
+):
+    if reserved_capacity <= 4:
+        return
+
+    rank_bound = max(active_ranks) + 1
+    num_experts = rank_bound * num_experts_per_rank
+    peer = active_ranks[(active_ranks.index(rank) + 1) % len(active_ranks)]
+    combine_ptr = None
+    outputs = []
+    for capacity in (reserved_capacity, 4, reserved_capacity):
+        num_tokens = min(capacity, 8)
+        x = torch.full(
+            (num_tokens, hidden), rank + capacity, device="cuda", dtype=torch.bfloat16
+        )
+        ids = torch.full(
+            (num_tokens, 1),
+            peer * num_experts_per_rank,
+            device="cuda",
+            dtype=nixl_ep.topk_idx_t,
+        )
+        weights = torch.ones_like(ids, dtype=torch.float32)
+        recv_x, _, handle, _, _ = buffer.dispatch(
+            x, ids, capacity, num_experts, use_fp8=False
+        )
+        assert recv_x.shape == (num_experts_per_rank, rank_bound * capacity, hidden)
+        # Each dispatch/combine pair returns to the same slot index.
+        combine_buffer = buffer.get_next_combine_buffer(handle)
+        if combine_ptr is None:
+            combine_ptr = combine_buffer.data_ptr()
+        assert combine_buffer.data_ptr() == combine_ptr
+        zero_copy = capacity == 4
+        if zero_copy:
+            combine_buffer.copy_(recv_x)
+        combined, _, _ = buffer.combine(recv_x, ids, weights, handle, zero_copy=zero_copy)
+        outputs.append((combined, x))
+
+    for combined, x in outputs:
+        torch.testing.assert_close(combined, x, rtol=0, atol=0)
+
+
 def test_main(
     num_tokens: int,
     max_tokens_per_rank: int,
@@ -522,6 +564,7 @@ def worker(torch_rank: int, args: argparse.Namespace):
         num_ranks=max_num_ranks,
         num_experts_per_rank=args.num_experts_per_rank,
         num_rdma_bytes=num_rdma_bytes,
+        low_latency_layout=(max_tokens_per_rank, args.hidden_dim),
     )
     signal.signal(
         signal.SIGTERM,
@@ -575,6 +618,16 @@ def worker(torch_rank: int, args: argparse.Namespace):
         active_ranks_list = plan.get_active_ranks()
         current_num_ranks = max(active_ranks_list) + 1  # Sparse indexing
         current_num_experts = args.num_experts_per_rank * current_num_ranks
+
+        if not ranks_to_kill:
+            check_variable_dispatch_capacity(
+                buffer,
+                global_rank,
+                active_ranks_list,
+                args.num_experts_per_rank,
+                args.hidden_dim,
+                max_tokens_per_rank,
+            )
 
         test_main(
             args.num_tokens,
