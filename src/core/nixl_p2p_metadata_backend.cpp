@@ -15,234 +15,631 @@
  * limitations under the License.
  */
 #include "nixl_p2p_metadata_backend.h"
-
+#include "asio/error.hpp"
+#include "asio/error_code.hpp"
 #include "nixl_metadata_context.h"
-#include "stream/metadata_stream.h"
-#include "common/nixl_log.h"
-
-#include <arpa/inet.h>
-#include <fcntl.h>
-#include <netdb.h>
-#include <netinet/in.h>
-#include <poll.h>
-#include <sys/socket.h>
-#include <sys/uio.h>
-#include <unistd.h>
 
 #include <absl/strings/str_format.h>
 #include <absl/strings/str_split.h>
 
+#include <algorithm>
 #include <chrono>
+#include <cstddef>
 #include <cstdint>
-#include <cstring>
-#include <stdexcept>
+#include <deque>
+#include <exception>
+#include <memory>
 #include <string>
+#include <string_view>
 #include <utility>
+#include <vector>
+
+#include "common/byte_buffer.h"
+#include "common/nixl_log.h"
+#include "nixl_types.h"
 
 namespace {
-
-// Socket helpers, moved from the former nixl_listener.cpp. They are the wire
-// mechanics of the P2P transport and belong with this backend.
-
 // A peer supplies the frame length, so it is bounded before it drives an
 // allocation. Metadata blobs are orders of magnitude smaller than this.
-constexpr size_t max_frame_bytes = 1UL << 30; // 1 GiB
+constexpr std::size_t max_frame_bytes = 1UL << 30; // 1 GiB
 
-// A peer that sends a length prefix and then stalls would otherwise hold the
-// worker in the forced body read indefinitely.
-constexpr auto frame_body_timeout = std::chrono::seconds(5);
+// A peer that sends a partial message and then stalls must be detected
+// and disconnected.
+constexpr auto receive_timeout = std::chrono::seconds(5);
 
-nixl::scopedFd
-connectToIP(const std::string &ip_addr, int port) {
-    addrinfo hints{};
-    hints.ai_family = AF_UNSPEC;
-    hints.ai_socktype = SOCK_STREAM;
-    hints.ai_flags = AI_NUMERICHOST | AI_NUMERICSERV;
-    addrinfo *result = nullptr;
-    if (getaddrinfo(ip_addr.c_str(), std::to_string(port).c_str(), &hints, &result) != 0) {
-        NIXL_ERROR << "Invalid IPv4 or IPv6 address: " << ip_addr;
-        return {};
-    }
-    const std::unique_ptr<addrinfo, decltype(&freeaddrinfo)> address(result, freeaddrinfo);
-    if (address->ai_family != AF_INET && address->ai_family != AF_INET6) {
-        NIXL_ERROR << "Unsupported address family: " << address->ai_family;
-        return {};
-    }
+constexpr auto connection_retry_interval = std::chrono::seconds(1);
+constexpr auto max_connection_retry_count = 10;
+constexpr auto min_accept_retry_delay = std::chrono::microseconds(50000); // 50ms
 
-    nixl::scopedFd ret_fd(socket(address->ai_family, SOCK_STREAM | SOCK_NONBLOCK, 0));
-    if (!ret_fd.valid()) {
-        NIXL_PERROR << "socket creation failed for ip_addr: " << ip_addr << " and port: " << port;
-        return {};
-    }
-
-    const int connect_ret = connect(ret_fd.get(), address->ai_addr, address->ai_addrlen);
-    if (connect_ret < 0 && errno != EINPROGRESS) {
-        return {};
-    }
-
-    struct pollfd pfd;
-    pfd.fd = ret_fd.get();
-    pfd.events = POLLOUT;
-    pfd.revents = 0;
-
-    const int ret = poll(&pfd, 1, 1000); // 1000ms timeout
-    if (ret <= 0) {
-        if (ret < 0) {
-            NIXL_PERROR << "poll failed for ip_addr: " << ip_addr << " and port: " << port;
-        } else {
-            NIXL_ERROR << "poll timed out for ip_addr: " << ip_addr << " and port: " << port;
-        }
-        return {};
-    }
-
-    if (!(pfd.revents & POLLOUT)) {
-        NIXL_ERROR << "poll returned but socket not ready for write for ip_addr: " << ip_addr
-                   << " and port: " << port;
-        return {};
-    }
-
-    int error = 0;
-    socklen_t len = sizeof(error);
-    if (getsockopt(ret_fd.get(), SOL_SOCKET, SO_ERROR, &error, &len) < 0) {
-        NIXL_PERROR << "getsockopt failed for ip_addr: " << ip_addr << " and port: " << port;
-        return {};
-    }
-
-    if (error != 0) {
-        errno = error; // For the 'PERROR'.
-        NIXL_PERROR << "getsockopt gave error for ip_addr: " << ip_addr << " and port: " << port;
-        return {};
-    }
-
-    return ret_fd;
-}
-
-void
-sendCommMessage(int fd, const std::string &msg) {
-    size_t size = msg.size();
-    constexpr size_t iov_size = 2;
-    struct iovec iov[iov_size] = {{&size, sizeof(size)},
-                                  {const_cast<char *>(msg.data()), msg.size()}};
-
-    for (size_t i = 0, offset = 0, sent = 0; i < iov_size;) {
-        auto bytes = send(fd,
-                          static_cast<char *>(iov[i].iov_base) + offset,
-                          iov[i].iov_len - offset,
-                          MSG_NOSIGNAL);
-        if (bytes < 0) {
-            if (errno == EINTR || errno == EAGAIN || errno == EWOULDBLOCK) {
-                continue;
-            }
-            throw std::runtime_error(
-                absl::StrFormat("sendCommMessage(fd=%d, msg=%s) %zu/%zu bytes failed, errno=%d",
-                                fd,
-                                msg.c_str(),
-                                sent,
-                                size + sizeof(size),
-                                errno));
-        }
-        offset += bytes;
-        sent += bytes;
-        if (offset == iov[i].iov_len) {
-            offset = 0;
-            ++i;
-        }
-    }
-}
-
-bool
-recvCommMessageType(int fd, void *data, size_t size, bool force = false) {
-    const auto deadline = std::chrono::steady_clock::now() + frame_body_timeout;
-    for (size_t received = 0; received < size;) {
-        auto bytes = recv(fd, static_cast<char *>(data) + received, size - received, 0);
-        if (bytes > 0) {
-            received += bytes;
-            continue;
-        }
-        if (bytes == 0 && received == 0 && !force) {
-            return false;
-        }
-        if (bytes < 0) {
-            if (errno == EINTR) {
-                continue;
-            }
-            if (errno == EAGAIN || errno == EWOULDBLOCK) {
-                if (!force && received == 0) {
-                    return false; // nothing to read yet
-                }
-                if (std::chrono::steady_clock::now() >= deadline) {
-                    throw std::runtime_error(
-                        absl::StrFormat("recvCommMessage(fd=%d) timed out after %zu/%zu bytes",
-                                        fd,
-                                        received,
-                                        size));
-                }
-                continue;
-            }
-        }
-        throw std::runtime_error(
-            absl::StrFormat("recvCommMessage(fd=%d) %zu/%zu bytes failed ret=%d errno=%d",
-                            fd,
-                            received,
-                            size,
-                            bytes,
-                            errno));
-    }
-    return true;
-}
-
-bool
-recvCommMessage(int fd, std::string &msg) {
-    size_t size = 0;
-    if (!recvCommMessageType(fd, &size, sizeof(size))) {
-        return false;
-    }
-    if (size > max_frame_bytes) {
-        throw std::runtime_error(
-            absl::StrFormat("recvCommMessage(fd=%d) declared %zu bytes, over the %zu cap",
-                            fd,
-                            size,
-                            max_frame_bytes));
-    }
-    msg.resize(size);
-    return recvCommMessageType(fd, msg.data(), size, true);
-}
-
+constexpr auto module_prefix = "[P2P Metadata Backend]";
 } // namespace
 
-nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config)
+// Functions from this class must be called from the I/O context.
+class nixlP2PMetadataBackend::nixlP2PMetadataPeer
+    : public std::enable_shared_from_this<nixlP2PMetadataPeer> {
+
+public:
+    // Constructor for a new peer.
+    nixlP2PMetadataPeer(nixlP2PMetadataBackend &backend, const peerAddress &address)
+        : backend_(backend),
+          peerAddress_(address),
+          socket_(backend.ioContext_),
+          autoConnect_(true),
+          connectionState_(connection_state_t::CLOSED),
+          connectionRetryTimer_(backend.ioContext_),
+          shutdownTimer_(backend.ioContext_) {}
+
+    // Constructor for an accepted peer.
+    nixlP2PMetadataPeer(nixlP2PMetadataBackend &backend,
+                        const peerAddress &address,
+                        asio::ip::tcp::socket socket)
+        : backend_(backend),
+          peerAddress_(address),
+          socket_(std::move(socket)),
+          autoConnect_(false),
+          connectionState_(connection_state_t::CONNECTED),
+          connectionRetryTimer_(backend.ioContext_),
+          shutdownTimer_(backend.ioContext_) {}
+
+    void
+    receiveMessage() {
+        receiveMessageSize();
+    }
+
+    // Send a message to the peer.
+    // Calling this function also enables auto-connect if the connection is closed.
+    void
+    sendMessage(std::string message) {
+        if (!stopCalled_) {
+            autoConnect_ = true;
+            sendQueue_.push_back(std::move(message));
+            sendNextMessage();
+        } else {
+            NIXL_WARN << getLogPrefix() << "Message dropped after stop: " << message;
+        }
+    }
+
+    // Gracefully stop the async I/O operations.
+    void
+    stop(bool force = false) {
+        if (stopCalled_) {
+            return;
+        }
+
+        stopCalled_ = true;
+
+        if (gracefulCleanup(force)) {
+            return;
+        }
+
+        // Stop the receive loop.
+        asio::error_code ec;
+        socket_.shutdown(asio::ip::tcp::socket::shutdown_receive, ec);
+
+        sendNextMessage();
+
+        shutdownTimer_.expires_after(receive_timeout);
+        shutdownTimer_.async_wait(
+            [shared_this = shared_from_this()](const asio::error_code &error) {
+                if (error != asio::error::operation_aborted) {
+                    shared_this->cleanup();
+                }
+            });
+    }
+
+private:
+    enum class on_stop_action_t {
+        CONTINUE_ON_STOP,
+        STOP,
+    };
+
+    template<on_stop_action_t StopAction,
+             typename Rep,
+             typename Period,
+             typename Fn,
+             typename... Args>
+    auto
+    cancelAndErrorAdapter(std::string what,
+                          std::chrono::duration<Rep, Period> timeout,
+                          Fn &&on_success,
+                          void (Fn::*)(Args...)) {
+        return asio::cancel_after(
+            timeout,
+            asio::cancellation_type::terminal,
+            [shared_this = shared_from_this(),
+             generation = this->generation_,
+             what = std::move(what),
+             on_success = std::move(on_success)](asio::error_code error, Args... args) mutable {
+                if (StopAction == on_stop_action_t::STOP && shared_this->stopCalled_) {
+                    // No-op.
+                } else if (generation != shared_this->generation_) {
+                    NIXL_WARN << shared_this->getLogPrefix()
+                              << "Connection has been reset. Drop stale operation.";
+                } else if (error) {
+                    shared_this->onError(generation, error, what);
+                } else {
+                    on_success(std::forward<Args>(args)...);
+                }
+            });
+    }
+
+    template<on_stop_action_t StopAction = on_stop_action_t::CONTINUE_ON_STOP,
+             typename Rep,
+             typename Period,
+             typename Fn>
+    auto
+    cancelAndErrorAdapter(std::string what,
+                          std::chrono::duration<Rep, Period> timeout,
+                          Fn &&on_success) {
+        return cancelAndErrorAdapter<StopAction>(
+            std::move(what), timeout, std::forward<Fn>(on_success), &Fn::operator());
+    }
+
+    std::string
+    getLogPrefix() const {
+        return absl::StrFormat(
+            "%s[Peer: %s:%d] ", module_prefix, peerAddress_.ip_, peerAddress_.port_);
+    }
+
+    void
+    resolveEndpoint() {
+        if (connectionState_ != connection_state_t::CLOSED) {
+            return;
+        }
+        if (connectionRetryTimer_.expiry() > std::chrono::steady_clock::now()) {
+            NIXL_DEBUG << getLogPrefix() << "Connection retry in progress.";
+            return;
+        }
+
+        connectionState_ = connection_state_t::CONNECTING;
+        generation_++;
+        connectionRetryCount_++;
+        NIXL_INFO << getLogPrefix() << " connecting to peer.";
+
+
+        auto resolver = std::make_unique<asio::ip::tcp::resolver>(backend_.ioContext_);
+        auto resolver_ptr = resolver.get();
+
+        auto resolve_complete = [shared_this = shared_from_this(), r = std::move(resolver)](
+                                    asio::ip::tcp::resolver::results_type results) mutable {
+            shared_this->connectPeer(std::move(results));
+        };
+
+        resolver_ptr->async_resolve(
+            peerAddress_.ip_,
+            std::to_string(peerAddress_.port_),
+            asio::ip::tcp::resolver::numeric_host | asio::ip::tcp::resolver::numeric_service,
+            cancelAndErrorAdapter("resolve", receive_timeout, std::move(resolve_complete)));
+    }
+
+    void
+    connectPeer(asio::ip::tcp::resolver::results_type results) {
+        auto connect_complete = [shared_this =
+                                     shared_from_this()](const asio::ip::tcp::endpoint &) mutable {
+            shared_this->connectionState_ = connection_state_t::CONNECTED;
+            shared_this->connectionRetryCount_ = 0;
+            shared_this->hasInflightSend_ = false;
+            shared_this->receiveMessageSize();
+            shared_this->sendNextMessage();
+        };
+
+        asio::async_connect(
+            socket_,
+            results,
+            cancelAndErrorAdapter("connect", receive_timeout, std::move(connect_complete)));
+    }
+
+    void
+    receiveMessageSize() {
+        if (stopCalled_) {
+            return;
+        }
+
+        messageSizeBuf_.messageSize_ = 0;
+
+        auto receive_complete = [shared_this = shared_from_this(), generation = this->generation_](
+                                    const asio::error_code &error, std::size_t bytes_transferred) {
+            if (generation != shared_this->generation_) {
+                NIXL_INFO << shared_this->getLogPrefix()
+                          << "Connection has been reset. Drop stale message.";
+                return;
+            }
+            if (shared_this->stopCalled_) {
+                return;
+            }
+
+            constexpr std::size_t buf_size = sizeof(shared_this->messageSizeBuf_.buf_);
+            if (bytes_transferred > 0) {
+                if (bytes_transferred == buf_size) {
+                    // We have received the message size.
+                    shared_this->receiveMessageBody();
+                } else {
+                    // Read the remaining bytes.
+                    auto buffer =
+                        asio::buffer(shared_this->messageSizeBuf_.buf_ + bytes_transferred,
+                                     buf_size - bytes_transferred);
+                    auto read_complete = [shared_this](std::size_t) mutable {
+                        shared_this->receiveMessageBody();
+                    };
+                    asio::async_read(
+                        shared_this->socket_,
+                        buffer,
+                        shared_this->cancelAndErrorAdapter<on_stop_action_t::STOP>(
+                            "receive message size", receive_timeout, std::move(read_complete)));
+                }
+                return;
+            }
+
+            // Nothing has been received yet.
+            if (error == asio::error::interrupted || error == asio::error::try_again ||
+                error == asio::error::would_block || !error) {
+                // Retryable error (or no error).
+                shared_this->receiveMessageSize();
+                return;
+            }
+
+            shared_this->onError(generation, error, "receive message size");
+        };
+
+        // There is no guarantee that a complete message will ever come, so we
+        // cannot use async_read() to handle short reads. Instead, we use
+        // async_receive() with no timeout and we must handle short reads.
+        // Once we receive at least one byte, we know a message is coming and
+        // we can switch to async_read() with a timeout.
+        socket_.async_receive(asio::buffer(messageSizeBuf_.buf_), receive_complete);
+    }
+
+    void
+    receiveMessageBody() {
+        if (messageSizeBuf_.messageSize_ > max_frame_bytes) {
+            onError(generation_,
+                    asio::error::make_error_code(asio::error::message_size),
+                    "message corrupted");
+            return;
+        }
+
+        try {
+            nixl::fixedCapacityBuffer buffer(messageSizeBuf_.messageSize_);
+            auto read_buf = asio::buffer(buffer.data(), buffer.capacity());
+
+            auto read_complete = [shared_this = shared_from_this(), buffer = std::move(buffer)](
+                                     std::size_t bytes_transferred) mutable {
+                buffer.setSize(bytes_transferred);
+                shared_this->processMessage(std::move(buffer));
+            };
+
+            asio::async_read(
+                socket_,
+                read_buf,
+                cancelAndErrorAdapter<on_stop_action_t::STOP>(
+                    "receive message body", receive_timeout, std::move(read_complete)));
+        }
+        catch (const std::exception &e) {
+            onError(generation_,
+                    asio::error::make_error_code(asio::error::no_memory),
+                    "allocate buffer for message body");
+        }
+    }
+
+    void
+    processMessage(nixl::fixedCapacityBuffer buffer) {
+        std::string_view message(reinterpret_cast<char *>(buffer.data()), buffer.size());
+        for (const auto &command : absl::StrSplit(message, "NIXLCOMM:")) {
+            if (command.size() < 4) {
+                continue;
+            }
+            auto header = command.substr(0, 4);
+
+            if (header == "LOAD") {
+                std::string remote_agent;
+                const nixl_status_t ret =
+                    backend_.ctx_.loadRemoteMD(std::string(command.substr(4)), remote_agent);
+                if (ret != NIXL_SUCCESS) {
+                    NIXL_ERROR << getLogPrefix() << "loadRemoteMD in P2P backend failed with error "
+                               << ret;
+                }
+            } else if (header == "SEND") {
+                nixl_blob_t blob;
+                (void)backend_.ctx_.getLocalMD(blob);
+                sendQueue_.push_back("NIXLCOMM:LOAD" + blob);
+                sendNextMessage();
+            } else if (header == "INVL") {
+                // No break: the rest of this batch is still ours to dispatch.
+                (void)backend_.ctx_.invalidateRemoteMD(std::string(command.substr(4)));
+            } else {
+                NIXL_ERROR << getLogPrefix() << "Received socket message with bad header " << header
+                           << ".";
+            }
+        }
+
+        // Post the next receive operation.
+        receiveMessageSize();
+    }
+
+    void
+    sendNextMessage() {
+        switch (connectionState_) {
+        case connection_state_t::CLOSED:
+            resolveEndpoint();
+            break;
+        case connection_state_t::CONNECTING:
+            break;
+        case connection_state_t::CONNECTED:
+            if (hasInflightSend_) {
+                return;
+            }
+
+            if (sendQueue_.empty()) {
+                if (stopCalled_) {
+                    cleanup();
+                }
+                return;
+            }
+
+            try {
+                nixl::dynamicSizedBuffer buf;
+                buf.put(sendQueue_.front());
+
+                auto buffer = asio::buffer(buf.data(), buf.size());
+
+                auto send_complete = [shared_this = shared_from_this(),
+                                      buf = std::move(buf)](std::size_t) mutable {
+                    shared_this->hasInflightSend_ = false;
+                    shared_this->sendNextMessage();
+                };
+
+                hasInflightSend_ = true;
+                asio::async_write(socket_,
+                                  buffer,
+                                  cancelAndErrorAdapter<on_stop_action_t::CONTINUE_ON_STOP>(
+                                      "send message", receive_timeout, std::move(send_complete)));
+
+                sendQueue_.pop_front();
+            }
+            catch (const std::exception &e) {
+                onError(generation_,
+                        asio::error::make_error_code(asio::error::no_memory),
+                        "allocate buffer for send message");
+            }
+
+            break;
+        }
+    }
+
+    bool
+    gracefulCleanup(bool force = false) {
+        if (force || (!autoConnect_ && connectionState_ != connection_state_t::CONNECTED) ||
+            (!hasInflightSend_ && sendQueue_.empty())) {
+            cleanup();
+            return true;
+        }
+        return false;
+    }
+
+    void
+    cleanup() {
+        autoConnect_ = false;
+
+        if (socket_.is_open()) {
+            asio::error_code ec;
+            socket_.shutdown(asio::ip::tcp::socket::shutdown_both, ec);
+            socket_.close(ec);
+            NIXL_INFO << getLogPrefix() << "Closed socket.";
+        }
+
+        connectionState_ = connection_state_t::CLOSED;
+        connectionRetryCount_ = 0;
+        connectionRetryTimer_.cancel();
+        shutdownTimer_.cancel();
+        hasInflightSend_ = false;
+        sendQueue_.clear();
+
+        auto it = backend_.peerSessions_.find(peerAddress_);
+        if (it != backend_.peerSessions_.end() && it->second.get() == this) {
+            backend_.peerSessions_.erase(it);
+        }
+    }
+
+    void
+    onError(std::uint32_t generation, const asio::error_code &error, const std::string_view &msg) {
+        if (error == asio::error::eof) {
+            NIXL_INFO << getLogPrefix() << "Peer closed.";
+        } else {
+            NIXL_ERROR << getLogPrefix() << msg << " failed with error: " << error.message();
+        }
+
+        if (generation != this->generation_) {
+            return;
+        }
+
+        asio::error_code ec;
+        socket_.close(ec);
+        connectionState_ = connection_state_t::CLOSED;
+
+        if (autoConnect_ && connectionRetryCount_ < max_connection_retry_count) {
+            connectionRetryTimer_.expires_after(connection_retry_interval);
+            connectionRetryTimer_.async_wait(
+                [shared_this = shared_from_this(),
+                 generation = this->generation_](const asio::error_code &error) {
+                    if (error != asio::error::operation_aborted &&
+                        generation == shared_this->generation_) {
+                        shared_this->resolveEndpoint();
+                    }
+                });
+        } else {
+            // Destroy this session. If a future message needs to be sent to
+            // the same peer, a new session will be created.
+            NIXL_INFO << getLogPrefix() << "Peer session died. Cleaning up.";
+            cleanup();
+        }
+    }
+
+private:
+    // The backend.
+    nixlP2PMetadataBackend &backend_;
+
+    // The address of the peer.
+    const peerAddress peerAddress_;
+    // The socket to the peer.
+    asio::ip::tcp::socket socket_;
+    // Whether to automatically connect to the peer.
+    bool autoConnect_ = false;
+
+    enum class connection_state_t {
+        CLOSED,
+        CONNECTING,
+        CONNECTED,
+    };
+    // The state of the connection.
+    connection_state_t connectionState_;
+    // The generation of the connection.
+    std::uint32_t generation_ = 0;
+    // The number of times the connection has been retried.
+    std::int32_t connectionRetryCount_ = 0;
+    // The timer for the connection retry.
+    asio::steady_timer connectionRetryTimer_;
+    // The timer for the shutdown grace period.
+    asio::steady_timer shutdownTimer_;
+
+    // The per-peer buffer used to receive the message size.
+    // This is an optimization to avoid allocating a small buffer
+    // on the heap for each message.
+    union {
+        std::uint64_t messageSize_;
+        std::uint8_t buf_[sizeof(messageSize_)];
+    } messageSizeBuf_;
+
+    // The queue of messages to send to the peer.
+    std::deque<std::string> sendQueue_;
+    // Whether there is an inflight send.
+    bool hasInflightSend_ = false;
+
+    // Whether the stop() method has been called.
+    bool stopCalled_ = false;
+};
+
+nixlP2PMetadataBackend::nixlP2PMetadataBackend(nixlMetadataContext &ctx,
+                                               const nixlMDConfig &config,
+                                               asio::io_context &io_context)
     : ctx_(ctx),
-      config_(config) {
-    if (config_.useListenThread) {
-        listener_ = std::make_unique<nixlMDStreamListener>(config_.listenPort);
-        listener_->setupListener(); // throws on bind/listen failure
+      ioContext_(io_context),
+      acceptor_(io_context),
+      acceptRetryTimer_(io_context),
+      acceptRetryInterval_(std::max(config.workerDelay, min_accept_retry_delay)) {
+    if (config.useListenThread) {
+        try {
+            bindListener(asio::ip::tcp::endpoint(asio::ip::tcp::v6(), config.listenPort));
+        }
+        catch (const asio::system_error &e) {
+            NIXL_INFO << getLogPrefix() << "Failed to bind IPv6 listener socket: " << e.what()
+                      << ". Trying IPv4.";
+            asio::error_code ec;
+            acceptor_.close(ec);
+            bindListener(asio::ip::tcp::endpoint(asio::ip::tcp::v4(), config.listenPort));
+        }
+        acceptor_.listen();
+
+        NIXL_INFO << getLogPrefix() << "MD listener is listening on port "
+                  << acceptor_.local_endpoint().port();
     }
 }
 
 nixlP2PMetadataBackend::~nixlP2PMetadataBackend() {
-    worker_.stop();
+    stop();
 }
 
-std::string_view
-nixlP2PMetadataBackend::name() const {
-    return "P2P";
-}
-
-bool
-nixlP2PMetadataBackend::usesThread() const {
-    return config_.useListenThread;
+void
+nixlP2PMetadataBackend::bindListener(const asio::ip::tcp::endpoint &endpoint) {
+    // Throws asio::system_error on failure.
+    // This is OK because this function is only called in the constructor.
+    acceptor_.open(endpoint.protocol());
+    if (endpoint.address().is_v6()) {
+        acceptor_.set_option(asio::ip::v6_only(false));
+    }
+    acceptor_.set_option(asio::socket_base::reuse_address(true));
+    acceptor_.bind(endpoint);
 }
 
 void
 nixlP2PMetadataBackend::start() {
-    if (config_.useListenThread) {
-        worker_.start([this] { serviceEvents(); }, config_.workerDelay);
+    if (acceptor_.is_open()) {
+        acceptPeers();
     }
 }
 
 void
+nixlP2PMetadataBackend::acceptPeers() {
+    acceptor_.async_accept([this](const asio::error_code &error, asio::ip::tcp::socket socket) {
+        if (!acceptor_.is_open()) {
+            NIXL_INFO << getLogPrefix() << "Listener closed.";
+            return;
+        }
+        if (error) {
+            NIXL_ERROR << getLogPrefix() << "Failed to accept peer: " << error.message();
+            acceptRetryTimer_.expires_after(acceptRetryInterval_);
+            acceptRetryTimer_.async_wait([this](const asio::error_code &error) {
+                if (acceptor_.is_open()) {
+                    acceptPeers();
+                }
+            });
+            return;
+        }
+
+        try {
+            auto peer_endpoint = socket.remote_endpoint();
+            auto peer_address = peer_endpoint.address();
+            if (peer_address.is_v6()) {
+                auto peer_address_v6 = peer_address.to_v6();
+                if (peer_address_v6.is_v4_mapped()) {
+                    peer_address = asio::ip::make_address_v4(asio::ip::v4_mapped, peer_address_v6);
+                }
+            }
+
+            peerAddress address{.ip_ = peer_address.to_string(), .port_ = peer_endpoint.port()};
+
+            // Stop and remove the existing session if it exists.
+            auto it = peerSessions_.find(address);
+            if (it != peerSessions_.end()) {
+                it->second->stop(true);
+            }
+
+            auto session = std::make_shared<nixlP2PMetadataPeer>(*this, address, std::move(socket));
+            auto session_ptr = session.get();
+            peerSessions_.emplace(address, std::move(session));
+            session_ptr->receiveMessage();
+        }
+        catch (const std::exception &e) {
+            NIXL_ERROR << getLogPrefix() << "Failed to get peer address: " << e.what();
+            asio::error_code ec;
+            socket.close(ec);
+        }
+
+        acceptPeers();
+    });
+}
+
+void
 nixlP2PMetadataBackend::stop() {
-    worker_.stop();
+    asio::post(ioContext_, [this]() {
+        if (stopped_) {
+            return;
+        }
+        stopped_ = true;
+
+        asio::error_code ec;
+        acceptor_.close(ec);
+        acceptRetryTimer_.cancel();
+
+        std::vector<std::shared_ptr<nixlP2PMetadataPeer>> sessions;
+        sessions.reserve(peerSessions_.size());
+        for (auto &[_, session] : peerSessions_) {
+            sessions.push_back(session);
+        }
+
+        for (auto &session : sessions) {
+            session->stop();
+        }
+    });
 }
 
 nixl_status_t
@@ -257,8 +654,9 @@ nixlP2PMetadataBackend::sendLocal(const nixl_opt_args_t *extra_params) {
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    worker_.submit([this, ip, port, blob = std::move(blob)]() {
-        sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
+
+    asio::post(ioContext_, [this, ip, port, blob = std::move(blob)]() {
+        sendMessage(ip, port, "NIXLCOMM:LOAD" + blob);
     });
     return NIXL_SUCCESS;
 }
@@ -276,14 +674,15 @@ nixlP2PMetadataBackend::sendLocalPartial(const nixl_reg_dlist_t &descs,
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    worker_.submit([this, ip, port, blob = std::move(blob)]() {
-        sendToPeer(ip, port, "NIXLCOMM:LOAD" + blob);
+
+    asio::post(ioContext_, [this, ip, port, blob = std::move(blob)]() {
+        sendMessage(ip, port, "NIXLCOMM:LOAD" + blob);
     });
     return NIXL_SUCCESS;
 }
 
 nixl_status_t
-nixlP2PMetadataBackend::fetchRemote(const std::string & /*remote_name*/,
+nixlP2PMetadataBackend::fetchRemote(const std::string &remote_name,
                                     const nixl_opt_args_t *extra_params) {
     if (!extra_params || extra_params->ipAddr.empty()) {
         return NIXL_ERR_INVALID_PARAM;
@@ -292,7 +691,8 @@ nixlP2PMetadataBackend::fetchRemote(const std::string & /*remote_name*/,
     // remote-section cache by serviceEvents() when the peer answers.
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    worker_.submit([this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:SEND"); });
+
+    asio::post(ioContext_, [this, ip, port]() { sendMessage(ip, port, "NIXLCOMM:SEND"); });
     return NIXL_SUCCESS;
 }
 
@@ -303,160 +703,37 @@ nixlP2PMetadataBackend::invalidateLocal(const nixl_opt_args_t *extra_params) {
     }
     const std::string ip = extra_params->ipAddr;
     const int port = extra_params->port;
-    worker_.submit(
-        [this, ip, port]() { sendToPeer(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
+
+    asio::post(ioContext_,
+               [this, ip, port]() { sendMessage(ip, port, "NIXLCOMM:INVL" + ctx_.agentName()); });
     return NIXL_SUCCESS;
 }
 
-void
-nixlP2PMetadataBackend::serviceEvents() {
-    acceptPeers();
-    readIncoming();
-}
-
-void
-nixlP2PMetadataBackend::sendToPeer(const std::string &ip, int port, const std::string &msg) {
-    const auto key = std::make_pair(ip, port);
-    auto client = remoteSockets_.find(key);
-    if (client == remoteSockets_.end()) {
-        auto new_client = connectToIP(ip, port);
-        if (!new_client.valid()) {
-            NIXL_ERROR << "P2P backend could not connect to IP " << ip << " and port " << port;
-            return;
-        }
-        client = remoteSockets_.emplace(key, std::move(new_client)).first;
-    }
-    try {
-        sendCommMessage(client->second.get(), msg);
-    }
-    catch (const std::runtime_error &e) {
-        NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
-        remoteSockets_.erase(client);
+// Must be called from the I/O context.
+nixlP2PMetadataBackend::nixlP2PMetadataPeer *
+nixlP2PMetadataBackend::getOrCreateSession(const peerAddress &address) {
+    auto it = peerSessions_.find(address);
+    if (it == peerSessions_.end()) {
+        auto session = std::make_shared<nixlP2PMetadataPeer>(*this, address);
+        auto session_ptr = session.get();
+        peerSessions_.emplace(address, std::move(session));
+        return session_ptr;
+    } else {
+        return it->second.get();
     }
 }
 
 void
-nixlP2PMetadataBackend::acceptPeers() {
-    while (true) {
-        auto new_fd = listener_->acceptClient();
-        if (!new_fd.valid()) {
-            break;
-        }
-        sockaddr_storage client_address;
-        socklen_t client_addrlen = sizeof(client_address);
-        if (getpeername(new_fd.get(),
-                        reinterpret_cast<sockaddr *>(&client_address),
-                        &client_addrlen) != 0) {
-            NIXL_PERROR << "getpeername failed for accepted client";
-            continue;
-        }
-        char client_ip[INET6_ADDRSTRLEN];
-        const void *address;
-        std::uint16_t client_port;
-        int family = client_address.ss_family;
-        switch (family) {
-        case AF_INET6: {
-            const auto *const client6 = reinterpret_cast<const sockaddr_in6 *>(&client_address);
-            address = &client6->sin6_addr;
-            if (IN6_IS_ADDR_V4MAPPED(&client6->sin6_addr)) {
-                family = AF_INET;
-                address = &client6->sin6_addr.s6_addr[12];
-            }
-            client_port = ntohs(client6->sin6_port);
-            break;
-        }
-        case AF_INET: {
-            const auto *const client4 = reinterpret_cast<const sockaddr_in *>(&client_address);
-            address = &client4->sin_addr;
-            client_port = ntohs(client4->sin_port);
-            break;
-        }
-        default:
-            NIXL_ERROR << "Unsupported client address family: " << family;
-            continue;
-        }
-        if (inet_ntop(family, address, client_ip, sizeof(client_ip)) == nullptr) {
-            NIXL_PERROR << "inet_ntop failed for client address";
-            continue;
-        }
-        std::string peer_ip(client_ip);
-        if (family == AF_INET6) {
-            const auto scope_id =
-                reinterpret_cast<const sockaddr_in6 *>(&client_address)->sin6_scope_id;
-            if (scope_id != 0) {
-                peer_ip += "%" + std::to_string(scope_id);
-            }
-        }
-        const int flags = fcntl(new_fd.get(), F_GETFL, 0);
-        if (flags == -1 || fcntl(new_fd.get(), F_SETFL, flags | O_NONBLOCK) == -1) {
-            NIXL_PERROR << "fcntl failed for accepted client";
-            continue;
-        }
-        remoteSockets_[std::make_pair(peer_ip, client_port)] = std::move(new_fd);
+nixlP2PMetadataBackend::sendMessage(const std::string &ip, int port, std::string message) {
+    if (stopped_) {
+        NIXL_WARN << getLogPrefix() << "Stopped. Skipping message: " << message;
+        return;
     }
+    peerAddress address{.ip_ = ip, .port_ = port};
+    getOrCreateSession(address)->sendMessage(std::move(message));
 }
 
-void
-nixlP2PMetadataBackend::readIncoming() {
-    auto socket_iter = remoteSockets_.begin();
-    while (socket_iter != remoteSockets_.end()) {
-        std::string commands;
-        bool disconnected = false;
-
-        try {
-            if (!recvCommMessage(socket_iter->second.get(), commands)) {
-                ++socket_iter;
-                continue;
-            }
-        }
-        // std::exception, not std::runtime_error: a frame that fails to allocate
-        // throws std::bad_alloc, which must disconnect the peer rather than
-        // escape serviceEvents() and take down the worker.
-        catch (const std::exception &e) {
-            NIXL_ERROR << "Failed to receive message from peer, disconnecting: " << e.what();
-            socket_iter = remoteSockets_.erase(socket_iter);
-            continue;
-        }
-
-        for (const auto &command : absl::StrSplit(commands, "NIXLCOMM:")) {
-            if (command.size() < 4) {
-                continue;
-            }
-            const std::string header = std::string(command.substr(0, 4));
-
-            if (header == "LOAD") {
-                std::string remote_agent;
-                const nixl_status_t ret =
-                    ctx_.loadRemoteMD(std::string(command.substr(4)), remote_agent);
-                if (ret != NIXL_SUCCESS) {
-                    NIXL_ERROR << "loadRemoteMD in P2P backend failed from peer "
-                               << socket_iter->first.first << ":" << socket_iter->first.second
-                               << " with error " << ret;
-                }
-            } else if (header == "SEND") {
-                nixl_blob_t blob;
-                (void)ctx_.getLocalMD(blob);
-                try {
-                    sendCommMessage(socket_iter->second.get(), "NIXLCOMM:LOAD" + blob);
-                }
-                catch (const std::runtime_error &e) {
-                    NIXL_ERROR << "Failed to send message to peer, disconnecting: " << e.what();
-                    disconnected = true;
-                    break;
-                }
-            } else if (header == "INVL") {
-                // No break: the rest of this batch is still ours to dispatch.
-                (void)ctx_.invalidateRemoteMD(std::string(command.substr(4)));
-            } else {
-                NIXL_ERROR << "Received socket message with bad header " << header << " from peer "
-                           << socket_iter->first.first << ":" << socket_iter->first.second;
-            }
-        }
-
-        if (disconnected) {
-            socket_iter = remoteSockets_.erase(socket_iter);
-        } else {
-            ++socket_iter;
-        }
-    }
+std::string
+nixlP2PMetadataBackend::getLogPrefix() const {
+    return absl::StrFormat("%s[%s] ", module_prefix, ctx_.agentName());
 }

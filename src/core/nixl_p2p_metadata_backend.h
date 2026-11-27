@@ -23,17 +23,18 @@
 
 #include "nixl_md_config.h"
 #include "nixl_metadata_backend.h"
-#include "nixl_metadata_worker.h"
-#include "common/scoped_fd.h"
 
-#include <map>
+#include <chrono>
+#include <cstddef>
+#include <functional>
 #include <memory>
 #include <string>
 #include <string_view>
-#include <utility>
+#include <unordered_map>
+
+#include <asio.hpp>
 
 class nixlMetadataContext;
-class nixlMDStreamListener;
 
 /**
  * @class nixlP2PMetadataBackend
@@ -41,20 +42,22 @@ class nixlMDStreamListener;
  *
  * Owns its transport state: the open peer connections and (when the agent
  * enables listening) the accept socket. Outbound ops validate and serialize
- * synchronously, then submit the socket send to its worker; inbound work
- * (accepting peers, reading LOAD/SEND/INVL replies) happens in serviceEvents()
- * on the same thread, so the connection map is only ever touched by one thread.
- * A listener is what there is to service, so the worker runs only then: without
- * one the sends run inline on the caller thread and no thread is started.
+ * synchronously, then submit the socket send to the I/O thread; inbound work
+ * (accepting peers, reading LOAD/SEND/INVL replies) happens asynchronously
+ * on the I/O thread too, so the connection map is only ever touched by one thread.
  * Depends only on nixlMetadataContext, not nixlAgent.
  */
 class nixlP2PMetadataBackend : public nixlMetadataBackend {
 public:
-    nixlP2PMetadataBackend(nixlMetadataContext &ctx, const nixlMDConfig &config);
+    nixlP2PMetadataBackend(nixlMetadataContext &ctx,
+                           const nixlMDConfig &config,
+                           asio::io_context &io_context);
     ~nixlP2PMetadataBackend() override;
 
     [[nodiscard]] std::string_view
-    name() const override;
+    name() const override {
+        return "P2P";
+    }
 
     [[nodiscard]] nixl_status_t
     sendLocal(const nixl_opt_args_t *extra_params) override;
@@ -68,9 +71,11 @@ public:
     [[nodiscard]] nixl_status_t
     invalidateLocal(const nixl_opt_args_t *extra_params) override;
 
-    // A thread runs only when there is a listener to service.
+    // The I/O thread always runs.
     [[nodiscard]] bool
-    usesThread() const override;
+    usesThread() const override {
+        return true;
+    }
 
     void
     start() override;
@@ -79,25 +84,61 @@ public:
     stop() override;
 
 private:
-    // Accept new peers and read/dispatch incoming messages. Worker poll.
-    void
-    serviceEvents();
+    struct peerAddress {
+        std::string ip_;
+        int port_;
 
-    // Connect-on-demand to (ip, port) and send msg; disconnect on error. Runs as
-    // a worker task, so never concurrently with serviceEvents().
+        bool
+        operator==(const peerAddress &other) const {
+            return ip_ == other.ip_ && port_ == other.port_;
+        }
+    };
+
+    struct peerHash {
+        std::size_t
+        operator()(const peerAddress &address) const {
+            return std::hash<std::string>()(address.ip_) ^ std::hash<int>()(address.port_);
+        }
+    };
+
+    class nixlP2PMetadataPeer;
+
+    using peer_session_map_t =
+        std::unordered_map<peerAddress, std::shared_ptr<nixlP2PMetadataPeer>, peerHash>;
+
+    // Bind the acceptor to the given endpoint.
+    // Throws std::runtime_error on failure.
     void
-    sendToPeer(const std::string &ip, int port, const std::string &msg);
+    bindListener(const asio::ip::tcp::endpoint &endpoint);
+
+    // Accept new peers.
     void
     acceptPeers();
-    void
-    readIncoming();
 
+    // Get or create a session for the given peer address.
+    nixlP2PMetadataPeer *
+    getOrCreateSession(const peerAddress &address);
+
+    void
+    sendMessage(const std::string &ip, int port, std::string message);
+
+    [[nodiscard]] std::string
+    getLogPrefix() const;
+
+    // The metadata context.
     nixlMetadataContext &ctx_;
-    const nixlMDConfig config_;
-    std::map<std::pair<std::string, int>, nixl::scopedFd> remoteSockets_;
-    std::unique_ptr<nixlMDStreamListener> listener_;
-    // Declared last so it joins before the state its tasks touch is destroyed.
-    nixlMetadataWorker worker_;
+
+    // The I/O context.
+    asio::io_context &ioContext_;
+    // The acceptor for new incoming connections.
+    asio::ip::tcp::acceptor acceptor_;
+    // The timer for retrying the accept operation.
+    asio::steady_timer acceptRetryTimer_;
+    std::chrono::microseconds acceptRetryInterval_;
+    // The map of peer addresses to their sessions.
+    peer_session_map_t peerSessions_;
+
+    bool stopped_ = false;
 };
 
 #endif // NIXL_SRC_CORE_NIXL_P2P_METADATA_BACKEND_H
