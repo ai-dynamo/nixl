@@ -128,10 +128,6 @@ RUN set -e; \
 # Set default OS if not provided
 ARG OS=${OS:-ubuntu24}
 ARG ARCH="x86_64"
-# PyTorch publishes wheels for only some CUDA minors, and the base image's own
-# CUDA_VERSION (13.4) has no index. Deliberately not named CUDA_VERSION: the base
-# exports that as ENV, which wins over an ARG of the same name.
-ARG TORCH_CUDA_INDEX="cu130"
 ARG DEFAULT_PYTHON_VERSION="3.12"
 ARG UCX_REPO="https://github.com/openucx/ucx.git"
 ARG UCX_REF="v1.24.x"
@@ -450,12 +446,20 @@ ENV UV_PYTHON=python${DEFAULT_PYTHON_VERSION}
 # Build tools into system Python (no venv).
 RUN mkdir -p $UV_CACHE_DIR && uv pip install --system --upgrade \
     meson meson-python pybind11 patchelf pyYAML click tabulate auditwheel tomlkit
-# Use system torch if present (>=2.7), else install it.
+# Use system torch if present (>=2.7), else install it from the cu134 index: torch
+# built with older CUDA makes the driver re-finalize its sm_100 kernels for sm_103
+# (GB300/B300) on first use in every process, costing seconds (pytorch/pytorch#202323).
+# cu134 has no Python 3.10 torch, so Python 3.10 uses cu130.
 RUN if TORCH_CHECK_ERR=$(/usr/bin/python${DEFAULT_PYTHON_VERSION} -c "import torch; v=torch.__version__.split('.')[:2]; assert (int(v[0]),int(v[1])) >= (2,7)" 2>&1); then \
         echo "Using PyTorch from system site-packages"; \
     else \
         echo "System torch check failed: ${TORCH_CHECK_ERR}" >&2; \
-        export UV_INDEX="https://download.pytorch.org/whl/${TORCH_CUDA_INDEX}" && \
+        if [ "${DEFAULT_PYTHON_VERSION}" = "3.10" ]; then \
+            torch_index=cu130; \
+        else \
+            torch_index=cu134; \
+        fi && \
+        export UV_INDEX="https://download.pytorch.org/whl/${torch_index}" && \
         uv pip install --system torch torchvision torchaudio; \
     fi
 # setuptools for PEP 639 license metadata
