@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import pickle
 import sys
+import threading
 from enum import Enum
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -155,7 +156,10 @@ class nixl_notification_monitor(nixlBind._NotificationMonitor):
 
     def __init__(self) -> None:
         super().__init__()
-        # The native subscriptions refer to these agents.
+        # The native subscriptions refer to these agents. The lock pairs each
+        # native subscription change with its update here, since the native
+        # calls release the GIL.
+        self._lock = threading.Lock()
         self._subscribed: dict[tuple[int, bytes], nixl_agent] = {}
 
     def __enter__(self) -> nixl_notification_monitor:
@@ -177,14 +181,30 @@ class nixl_notification_monitor(nixlBind._NotificationMonitor):
         Wakes a blocked wait_any() with RuntimeError and releases the eventfd.
         Closing twice is allowed.
         """
-        super().close()
-        self._subscribed.clear()
+        with self._lock:
+            super().close()
+            self._subscribed.clear()
 
-    def _track(self, agent: nixl_agent, prefix: bytes) -> None:
-        self._subscribed[(id(agent), bytes(prefix))] = agent
+    def _subscribe(self, agent: nixl_agent, prefix: bytes) -> None:
+        key = (id(agent), bytes(prefix))
+        with self._lock:
+            # Keep the agent alive before the native subscription refers to it.
+            # A rejected duplicate keeps the existing subscription's entry.
+            tracked = key in self._subscribed
+            self._subscribed[key] = agent
+            try:
+                agent.agent.addNotifMonitor(self, agent.name, prefix)
+            except BaseException:
+                if not tracked:
+                    del self._subscribed[key]
+                raise
 
-    def _untrack(self, agent: nixl_agent, prefix: bytes) -> None:
-        self._subscribed.pop((id(agent), bytes(prefix)), None)
+    def _unsubscribe(self, agent: nixl_agent, prefix: bytes) -> bool:
+        with self._lock:
+            removed = agent.agent.removeNotifMonitor(self, prefix)
+            if removed:
+                self._subscribed.pop((id(agent), bytes(prefix)), None)
+            return removed
 
 
 class nixl_thread_sync_t(Enum):
@@ -890,8 +910,7 @@ class nixl_agent:
         The monitor keeps this agent alive until the subscription is removed.
         Closing or dropping the monitor removes all its subscriptions.
         """
-        self.agent.addNotifMonitor(monitor, self.name, prefix)
-        monitor._track(self, prefix)
+        monitor._subscribe(self, prefix)
 
     def remove_notif_monitor(
         self, monitor: nixl_notification_monitor, prefix: bytes
@@ -901,10 +920,7 @@ class nixl_agent:
         Return False if the monitor has no such subscription. Already queued
         notifications remain available on the monitor.
         """
-        removed = self.agent.removeNotifMonitor(monitor, prefix)
-        if removed:
-            monitor._untrack(self, prefix)
-        return removed
+        return monitor._unsubscribe(self, prefix)
 
     def get_new_notifs(self, backends: list[str] = []) -> dict[str, list[bytes]]:
         """Get new notifications that have come to the agent.

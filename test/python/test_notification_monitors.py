@@ -10,6 +10,7 @@ import threading
 import time
 import uuid
 import weakref
+from concurrent.futures import ThreadPoolExecutor
 
 import pytest
 
@@ -240,6 +241,47 @@ def test_monitor_keeps_subscribed_agent_alive_until_released():
 
     gc.collect()
     assert agent_ref() is None
+
+
+def test_rejected_subscription_keeps_only_existing_references():
+    agent = nixl_agent(f"receiver-{uuid.uuid4()}", nixl_agent_config(backends=[]))
+    agent_ref = weakref.ref(agent)
+
+    with nixl_notification_monitor() as first, nixl_notification_monitor() as second:
+        agent.add_notif_monitor(first, b"watch:")
+        for monitor, prefix in ((first, b"watch:"), (second, b"watch:more")):
+            with pytest.raises(bindings.nixlInvalidParamError):
+                agent.add_notif_monitor(monitor, prefix)
+        del agent
+        gc.collect()
+        assert agent_ref() is not None
+
+        assert agent_ref().remove_notif_monitor(first, b"watch:") is True
+        gc.collect()
+        assert agent_ref() is None
+
+
+def test_concurrent_subscription_changes_stay_consistent():
+    agent = nixl_agent(f"receiver-{uuid.uuid4()}", nixl_agent_config(backends=[]))
+    monitor = nixl_notification_monitor()
+
+    def churn():
+        for _ in range(1_000):
+            try:
+                agent.add_notif_monitor(monitor, b"watch:")
+            except bindings.nixlInvalidParamError:
+                pass
+            agent.remove_notif_monitor(monitor, b"watch:")
+
+    with monitor:
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            for future in [pool.submit(churn) for _ in range(4)]:
+                future.result()
+
+        # The native subscription exists exactly when the monitor keeps the agent.
+        kept = bool(monitor._subscribed)
+        assert agent.remove_notif_monitor(monitor, b"watch:") is kept
+        assert not monitor._subscribed
 
 
 @pytest.mark.parametrize("timeout_ms", [0, 20])
