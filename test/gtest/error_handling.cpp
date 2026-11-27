@@ -225,7 +225,7 @@ private:
     const bool progThread_;
     size_t numWorkers_;
     size_t numThreads_;
-    const std::string errHandlingMode_;
+    std::string errHandlingMode_;
 };
 
 void
@@ -372,15 +372,15 @@ TestErrorHandling::SetUp() {
         return;
     }
 
-    unsigned major, minor, release;
-    ucp_get_version(&major, &minor, &release);
-    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) {
-        GTEST_SKIP() << "UCX failover error handling requires UCX 1.24 or newer";
+    if (::nixl::hwInfo::instance().numEfaDevices > 0) {
+        GTEST_SKIP() << "UCX failover error handling does not support Amazon EFA";
     }
 
-    // Failover cannot select protocols over shared memory and TCP alone.
-    if (!nixl::hasActiveIbPort()) {
-        GTEST_SKIP() << "UCX failover error handling requires an active InfiniBand or RoCE port";
+    // Failover requires UCX 1.24 and cannot select protocols over shared memory and TCP alone.
+    unsigned major, minor, release;
+    ucp_get_version(&major, &minor, &release);
+    if ((UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) || !nixl::hasActiveIbPort()) {
+        errHandlingMode_ = nixl::ucx_err_handling_mode_peer;
     }
 #endif
 }
