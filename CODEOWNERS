@@ -51,9 +51,9 @@ CODEOWNERS @ai-dynamo/dynamo-ops-codeowners @ai-dynamo/nixl-maintainers
 /benchmark @aranadive @ovidiusm @brminich @ai-dynamo/nixl-maintainers
 
 # Libfabric Plugins
-/src/plugins/libfabric* @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou
-/src/utils/libfabric @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou
-/test/unit/utils/libfabric @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou
+/src/plugins/libfabric* @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou @rabi82 @mujtaba1747 @joshjso @chrislryu
+/src/utils/libfabric @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou @rabi82 @mujtaba1747 @joshjso @chrislryu
+/test/unit/utils/libfabric @ovidiusm @amitrad-aws @akkart-aws @fengjica @oa-aws @rongbingzhou @rabi82 @mujtaba1747 @joshjso @chrislryu
 
 # GPUNetIO Plugin
 /src/plugins/gpunetio @hbadihi @Artemy-Mellanox @ai-dynamo/nixl-maintainers
