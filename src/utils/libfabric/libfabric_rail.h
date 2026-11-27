@@ -642,8 +642,9 @@ private:
     struct fid_domain *domain; // from rail_domains[rail_id]
     struct fid_cq *cq; // from rail_cqs[rail_id]
     struct fid_av *av; // from rail_avs[rail_id]
+    struct fid_eq *eq; // nullptr if the provider refused it
 
-    // Serializes every libfabric call on this rail's endpoint, CQ and AV. The rail opens its
+    // Serializes every libfabric call on this rail's endpoint, CQ, AV and EQ. The rail opens its
     // domain with FI_THREAD_COMPLETION, under which the provider takes no locks for these
     // objects and the application must serialize them. With the progress thread enabled the
     // PT posts data transfers and reads the CQ while the caller's thread still posts control
