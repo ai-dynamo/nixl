@@ -429,12 +429,14 @@ nixlLibfabricBackendH::complete_request(nixl_status_t status) {
     } else {
         successful_requests_.fetch_add(1, std::memory_order_relaxed);
     }
+    // Read everything the log line needs before the final increment: once it is visible,
+    // is_completed() may return true and the owner may release (delete) this handle.
+    const size_t submitted = submitted_requests_.load(std::memory_order_relaxed);
     // Release ensures the error store above is visible to any thread that
     // observes the incremented count via an acquire load in is_completed().
-    completed_requests_.fetch_add(1, std::memory_order_release);
-    NIXL_DEBUG << "Request completed (status=" << status
-               << "), total completed: " << completed_requests_.load(std::memory_order_relaxed)
-               << "/" << submitted_requests_.load(std::memory_order_relaxed);
+    const size_t completed = completed_requests_.fetch_add(1, std::memory_order_release) + 1;
+    NIXL_DEBUG << "Request completed (status=" << status << "), total completed: " << completed
+               << "/" << submitted;
 }
 
 size_t
@@ -1653,14 +1655,9 @@ nixlLibfabricEngine::postXfer(const nixl_xfer_op_t &operation,
     NIXL_DEBUG << "Processing complete: submitted " << total_submitted << " requests from "
                << desc_count << " descriptors" << " for xfer_id" << backend_handle->post_xfer_id;
 
-    // For same-agent transfers, override to 0 since we bypassed all rail operations
-    if (remote_agent == localAgent) {
-        backend_handle->adjust_total_submitted_requests(0);
-        NIXL_DEBUG << "Same-agent transfer: adjusted total requests to 0 (all handled via memcpy)";
-    } else {
-        // Adjust to actual request count after all submissions complete
-        backend_handle->adjust_total_submitted_requests(total_submitted);
-    }
+    // Adjust to actual request count after all submissions complete. Same-agent transfers post
+    // real rail writes too, so they are tracked like any other transfer.
+    backend_handle->adjust_total_submitted_requests(total_submitted);
 
     // Send notification immediately after successful request submission
     if (backend_handle->has_notif && backend_handle->operation_ == nixl_xfer_op_t::NIXL_WRITE) {
