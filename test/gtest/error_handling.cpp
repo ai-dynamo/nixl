@@ -356,6 +356,7 @@ TestErrorHandling::TestErrorHandling()
       numWorkers_(GetParam().numWorkers),
       numThreads_(GetParam().numThreads),
       errHandlingMode_(GetParam().ucxErrHandlingMode) {
+    m_env.unsetVar("NIXL_PLUGIN_UCX_SGL_ENABLE");
     m_env.unsetVar("NIXL_UCX_SGL_ENABLE");
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
@@ -749,7 +750,7 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
 #if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_SGL_API)
 TEST(UcxErrHandlingDefault, SglSelectsPeer) {
     ScopedEnv env;
-    env.addVar("NIXL_UCX_SGL_ENABLE", "y");
+    env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "y");
     EXPECT_EQ(defaultErrHandlingMode(), UCP_ERR_HANDLING_MODE_PEER);
 }
 #endif
@@ -757,7 +758,7 @@ TEST(UcxErrHandlingDefault, SglSelectsPeer) {
 #if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_ERR_HANDLING_FAILOVER)
 TEST(UcxErrHandlingDefault, SglDisabledAllowsFailover) {
     ScopedEnv env;
-    env.addVar("NIXL_UCX_SGL_ENABLE", "n");
+    env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "n");
     unsigned major, minor, release;
     ucp_get_version(&major, &minor, &release);
     const auto expected = (UCP_VERSION(major, minor) >= UCP_VERSION(1, 24)) ?

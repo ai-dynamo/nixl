@@ -312,7 +312,7 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker);
 get_ucx_backend_common_options();
 
 /**
- * @brief Whether UCX SGL offload is requested: NIXL_UCX_SGL_ENABLE, enabled by default
+ * @brief Whether UCX SGL offload is requested: NIXL_PLUGIN_UCX_SGL_ENABLE, enabled by default
  *        when built with the UCX SGL API
  */
 [[nodiscard]] bool

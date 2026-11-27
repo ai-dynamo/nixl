@@ -62,8 +62,8 @@ failoverErrHandlingMode(unsigned ucp_version) noexcept {
 bool
 sglRequestedFromConfig() {
 #ifdef HAVE_UCX_SGL_API
-    // TODO: Remove NIXL_UCX_SGL_ENABLE once SGL has had enough field exposure.
-    return nixl::config::getValueOptional<bool>("NIXL_UCX_SGL_ENABLE").value_or(true);
+    return nixl::config::getValueOptional<bool>("NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE")
+        .value_or(true);
 #else
     return false;
 #endif
