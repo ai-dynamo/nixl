@@ -52,7 +52,7 @@ struct gdsXferReq {
 };
 
 // Precondition: descriptor_addr lies within the buffer at registered_base.
-gdsResolvedBuffer
+[[nodiscard]] gdsResolvedBuffer
 gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noexcept;
 
 // Abstract base for the GDS family of backends. It owns everything that is
@@ -65,46 +65,41 @@ gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noe
 class nixlGdsEngine : public nixlBackendEngine {
 public:
     explicit nixlGdsEngine(const nixlBackendInitParams *init_params);
-    ~nixlGdsEngine() override = default;
 
-    nixlGdsEngine(const nixlGdsEngine &) = delete;
-    nixlGdsEngine &
-    operator=(const nixlGdsEngine &) = delete;
-
-    nixl_mem_list_t
+    [[nodiscard]] nixl_mem_list_t
     getSupportedMems() const override {
         return {DRAM_SEG, VRAM_SEG, FILE_SEG};
     }
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     connect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     disconnect(const std::string &remote_agent) override {
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     loadLocalMD(nixlBackendMD *input, nixlBackendMD *&output) override {
         output = input;
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     unloadMD(nixlBackendMD *input) override {
         return NIXL_SUCCESS;
     }
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     registerMem(const nixlBlobDesc &mem, const nixl_mem_t &nixl_mem, nixlBackendMD *&out) override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     deregisterMem(nixlBackendMD *meta) override;
 
     // Shared: validates the request and translates descriptors into a
     // gdsXferReq list, then defers the concrete handle creation to finalizePrep.
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     prepXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
@@ -112,7 +107,7 @@ public:
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     queryMem(const nixl_reg_dlist_t &descs, std::vector<nixl_query_resp_t> &resp) const override;
 
     // postXfer / checkXfer / releaseReqH remain pure virtual here (inherited from
@@ -121,11 +116,11 @@ public:
 protected:
     // The single backend-specific step of preparation: build a concrete,
     // posted-ready request handle from the validated logical request list.
-    virtual nixl_status_t
+    [[nodiscard]] virtual nixl_status_t
     finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const = 0;
 
 private:
-    std::unique_ptr<gdsDriverHandle> driver_;
+    gdsDriverHandle driver_;
     std::unordered_map<int, std::weak_ptr<gdsFileHandle>> gds_file_map_;
     nixl::PathModeDevIdRegistry path_mode_devids_;
 };

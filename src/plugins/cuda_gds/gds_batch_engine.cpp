@@ -263,42 +263,30 @@ nixlGdsIOBatch::reset() {
 
 nixlGdsBatchEngine::nixlGdsBatchEngine(const nixlBackendInitParams *init_params)
     : nixlGdsEngine(init_params) {
-    // Base ctor opened the cuFile driver; bail if that failed.
-    if (this->initErr) {
-        return;
+    nixl_b_params_t *custom_params = init_params->customParams;
+    batch_pool_size_ =
+        nixl::getBackendParamDefaulted(custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
+    batch_limit_ =
+        nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
+    max_request_size_ =
+        nixl::getBackendParamDefaulted(custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
+    break_first_batch_poll_ =
+        nixl::getBackendParamDefaulted(custom_params, "test_break_first_batch_poll", 0u) != 0;
+
+    if (batch_pool_size_ == 0 || batch_limit_ == 0 || max_request_size_ == 0) {
+        throw std::invalid_argument(
+            "GDS: batch_pool_size, batch_limit, and max_request_size must be greater than zero");
     }
 
-    try {
-        nixl_b_params_t *custom_params = init_params->customParams;
-        batch_pool_size_ = nixl::getBackendParamDefaulted(
-            custom_params, "batch_pool_size", DEFAULT_BATCH_POOL_SIZE);
-        batch_limit_ =
-            nixl::getBackendParamDefaulted(custom_params, "batch_limit", DEFAULT_BATCH_LIMIT);
-        max_request_size_ = nixl::getBackendParamDefaulted(
-            custom_params, "max_request_size", DEFAULT_MAX_REQUEST_SIZE);
-        break_first_batch_poll_ =
-            nixl::getBackendParamDefaulted(custom_params, "test_break_first_batch_poll", 0u) != 0;
-
-        if (batch_pool_size_ == 0 || batch_limit_ == 0 || max_request_size_ == 0) {
-            throw std::invalid_argument(
-                "GDS: batch_pool_size, batch_limit, and max_request_size must be greater than "
-                "zero");
+    batch_pool_.reserve(batch_pool_size_);
+    batch_storage_.reserve(batch_pool_size_);
+    for (unsigned int i = 0; i < batch_pool_size_; i++) {
+        auto batch = std::make_unique<nixlGdsIOBatch>(batch_limit_);
+        if (!batch->isValid()) {
+            throw std::runtime_error("GDS: failed to initialize cuFile batch pool");
         }
-
-        batch_pool_.reserve(batch_pool_size_);
-        batch_storage_.reserve(batch_pool_size_);
-        for (unsigned int i = 0; i < batch_pool_size_; i++) {
-            auto batch = std::make_unique<nixlGdsIOBatch>(batch_limit_);
-            if (!batch->isValid()) {
-                throw std::runtime_error("GDS: failed to initialize cuFile batch pool");
-            }
-            batch_pool_.push_back(batch.get());
-            batch_storage_.push_back(std::move(batch));
-        }
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << e.what();
-        this->initErr = true;
+        batch_pool_.push_back(batch.get());
+        batch_storage_.push_back(std::move(batch));
     }
 }
 
@@ -362,7 +350,7 @@ nixlGdsBatchEngine::finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH
                 const size_t request_size = std::min(remaining_size, max_request_size);
 
                 gdsXferReq chunk{};
-                chunk.addr = (char *)req.addr + current_offset;
+                chunk.addr = static_cast<char *>(req.addr) + current_offset;
                 chunk.size = request_size;
                 chunk.file_offset = req.file_offset + current_offset;
                 chunk.fh = req.fh;

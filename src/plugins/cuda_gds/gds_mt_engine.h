@@ -50,26 +50,24 @@ public:
 class nixlGdsMtEngine : public nixlGdsEngine {
 public:
     explicit nixlGdsMtEngine(const nixlBackendInitParams *init_params);
-    ~nixlGdsMtEngine() override = default;
 
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     postXfer(const nixl_xfer_op_t &operation,
              const nixl_meta_dlist_t &local,
              const nixl_meta_dlist_t &remote,
              const std::string &remote_agent,
              nixlBackendReqH *&handle,
              const nixl_opt_b_args_t *opt_args = nullptr) const override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     checkXfer(nixlBackendReqH *handle) const override;
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     releaseReqH(nixlBackendReqH *handle) const override;
 
 protected:
-    nixl_status_t
+    [[nodiscard]] nixl_status_t
     finalizePrep(std::vector<gdsXferReq> &&reqs, nixlBackendReqH *&handle) const override;
 
 private:
-    size_t thread_count_;
     std::unique_ptr<tf::Executor> executor_;
 };
 

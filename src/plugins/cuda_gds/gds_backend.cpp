@@ -72,15 +72,7 @@ gdsResolveRegisteredBuffer(void *registered_base, uintptr_t descriptor_addr) noe
 }
 
 nixlGdsEngine::nixlGdsEngine(const nixlBackendInitParams *init_params)
-    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {
-    try {
-        driver_ = std::make_unique<gdsDriverHandle>();
-    }
-    catch (const std::exception &e) {
-        NIXL_ERROR << e.what();
-        this->initErr = true;
-    }
-}
+    : nixlBackendEngine(init_params, nixl_backend_capability_t::LOCAL) {}
 
 nixl_status_t
 nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
@@ -140,7 +132,7 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
 
     case DRAM_SEG: {
         try {
-            out = new nixlGdsMetadata((void *)mem.addr, mem.len, 0);
+            out = new nixlGdsMetadata(reinterpret_cast<void *>(mem.addr), mem.len, 0);
             return NIXL_SUCCESS;
         }
         catch (const std::exception &e) {
@@ -149,14 +141,16 @@ nixlGdsEngine::registerMem(const nixlBlobDesc &mem,
         }
     }
 
-    default:
-        return NIXL_ERR_BACKEND;
+    case BLK_SEG:
+    case OBJ_SEG:
+        return NIXL_ERR_NOT_SUPPORTED;
     }
+    return NIXL_ERR_BACKEND;
 }
 
 nixl_status_t
 nixlGdsEngine::deregisterMem(nixlBackendMD *meta) {
-    std::unique_ptr<nixlGdsMetadata> md((nixlGdsMetadata *)meta);
+    std::unique_ptr<nixlGdsMetadata> md(static_cast<nixlGdsMetadata *>(meta));
 
     if (auto *file_data = std::get_if<fileSegData>(&md->data_)) {
         if (file_data->handle) {
@@ -245,7 +239,7 @@ nixlGdsEngine::prepXfer(const nixl_xfer_op_t &operation,
                                   resolved.dev_ptr_base,
                                   resolved.dev_ptr_offset,
                                   mem_desc.len,
-                                  (size_t)file_desc.addr,
+                                  static_cast<size_t>(file_desc.addr),
                                   file_data->handle->cu_fhandle,
                                   (operation == NIXL_READ) ? CUFILE_READ : CUFILE_WRITE});
     }

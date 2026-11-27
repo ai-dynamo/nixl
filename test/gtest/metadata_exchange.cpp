@@ -735,7 +735,7 @@ TEST_F(MetadataExchangeTestFixture, LocalNonLocalMDExchange) {
         }
 
         const LogIgnoreGuard lig1("GDS: error initializing GPU Direct Storage driver");
-        const LogIgnoreGuard lig2("createBackend: backend initialization error for 'GDS'");
+        const LogIgnoreGuard lig2("createBackend: backend creation failed for 'GDS'");
         status = src.agent->createBackend(name, {}, backend);
         if (status == NIXL_SUCCESS) {
             backend_name = name;
