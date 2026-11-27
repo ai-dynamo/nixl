@@ -78,6 +78,12 @@ getAvailableNetworkDevices() {
             std::string device_name = cur->domain_attr->name;
             std::string provider_name = cur->fabric_attr->prov_name;
 
+            // EFA lists each device once per fabric. Keep only the one the rails open, so
+            // that each device is listed once.
+            if (provider_name == NIXL_LIBFABRIC_EFA_PROVIDER && !isEfaFabric(cur)) {
+                continue;
+            }
+
             NIXL_TRACE << "Found device - domain: " << device_name << ", provider=" << provider_name
                        << ", ep_type=" << cur->ep_attr->type << ", caps=" << std::hex << cur->caps
                        << std::dec;
@@ -110,6 +116,20 @@ getAvailableNetworkDevices() {
 
     NIXL_ERROR << "No network devices found with any provider";
     return {"none", {}};
+}
+
+bool
+setEfaFabricHint(struct fi_info *hints) {
+    // Replaces any existing name; fi_freeinfo() frees the one we set here.
+    free(hints->fabric_attr->name);
+    hints->fabric_attr->name = strdup(NIXL_LIBFABRIC_EFA_FABRIC);
+    return hints->fabric_attr->name != nullptr;
+}
+
+bool
+isEfaFabric(const struct fi_info *info) {
+    return info->fabric_attr->name &&
+        strcmp(info->fabric_attr->name, NIXL_LIBFABRIC_EFA_FABRIC) == 0;
 }
 
 std::string
