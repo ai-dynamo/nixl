@@ -106,7 +106,17 @@ NIXL loads each backend as a plug-in, and each plug-in supports specific memory 
     <tr>
       <td><a href="/nixl/user-guide/backend-selection/gusli">GUSLI</a></td>
       <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DRAM ↔ Block</td>
-      <td style="border-left: 1px solid var(--border, var(--grayscale-a5));">Block I/O</td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">Block I/O</td>
+    </tr>
+    <tr>
+      <td><a href="/nixl/user-guide/backend-selection/redis">Redis</a></td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">DRAM ↔ Key-Value</td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">Redis (hiredis)</td>
+    </tr>
+    <tr>
+      <td><a href="/nixl/user-guide/backend-selection/rocm-ais">AIS</a></td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">VRAM ↔ File</td>
+      <td style="border-left: 1px solid var(--border, var(--grayscale-a5)); border-top: 1px solid var(--border, var(--grayscale-a5));">hipFile (AMD Infinity Storage)</td>
     </tr>
   </tbody>
 </table>
@@ -128,6 +138,8 @@ The table below maps common scenarios to recommended backends. NIXL selects the 
 | CPU-to-Azure Blob | DRAM | Object Storage | Azure Blob | Azure Blob REST API |
 | CPU/GPU to DDN INFINIA | DRAM / VRAM | Object Storage | INFINIA | Asynchronous object I/O from registered host or GPU memory |
 | CPU to DOCA_MEMOS KV store | DRAM | Object Storage | DOCA_MEMOS | Key-value store and retrieve on BlueField NVMe KV devices |
+| CPU to Redis | DRAM | Key-Value | Redis | Stage DRAM buffers in a Redis server (SET/GET, with queryMem existence checks) |
+| GPU-to-file on AMD (ROCm) | VRAM | File | AIS | hipFile direct storage on AMD platforms, bypassing host staging |
 | File I/O (3FS) | File | DRAM | HF3FS | 3FS fuse-based filesystem |
 
 <Note>
