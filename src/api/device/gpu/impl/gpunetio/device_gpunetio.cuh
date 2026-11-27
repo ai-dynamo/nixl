@@ -56,7 +56,8 @@ validView(const GpunetioDeviceView *view, uint32_t role) {
 // Every SQ/CQ access below happens while the caller owns the lane (phase SCALAR),
 // and a readSession only touches the QP while it owns the lane (phase POSTING).
 // The lane's device-scope acquire/release orders the SDK's plain index updates
-// between owners, so the SDK needs no atomics or QP lock of its own here.
+// between owners, so the SDK needs no atomics or QP lock of its own here. Taking
+// the lane needs only acquire ordering: unlockLane's release store publishes.
 inline constexpr auto owned_qp_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
 
 __device__ inline void
@@ -247,7 +248,7 @@ submitGet(const memViewElem &local,
         if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
             phase.compare_exchange_weak(previous,
                                         gpunetio_lane_phase_scalar,
-                                        cuda::memory_order_acq_rel,
+                                        cuda::memory_order_acquire,
                                         cuda::memory_order_acquire)) {
             // Unlock inside this branch before leaving the loop: same-warp callers may contend.
             const auto result = submitGetLocked(lane, la, le.key, ra, re.key, bytes, flags, status);
@@ -285,7 +286,7 @@ pollStatus(xferStatusH &status) {
     if (previous != gpunetio_lane_phase_posted ||
         !phase.compare_exchange_strong(previous,
                                        gpunetio_lane_phase_scalar,
-                                       cuda::memory_order_acq_rel,
+                                       cuda::memory_order_acquire,
                                        cuda::memory_order_acquire)) {
         return NIXL_IN_PROG;
     }
@@ -334,7 +335,7 @@ flushChannel(nixlMemViewH remote, unsigned channel) {
         if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
             phase.compare_exchange_weak(previous,
                                         gpunetio_lane_phase_scalar,
-                                        cuda::memory_order_acq_rel,
+                                        cuda::memory_order_acquire,
                                         cuda::memory_order_acquire)) {
             if (!have_target) {
                 publish(lane);
