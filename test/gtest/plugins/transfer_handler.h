@@ -61,7 +61,9 @@ public:
                 std::make_unique<memoryHandler<dstMemType>>(bufferSize_, dstDevId_ + i));
         }
 
-        if (dstBackendEngine_->supportsNotif()) setupNotifs("Test");
+        if (dstBackendEngine_->supportsCapability(nixl_backend_capability_t::NOTIF)) {
+            setupNotifs("Test");
+        }
 
         registerMems();
         prepMems(split_buf, remote_xfer);
@@ -210,7 +212,7 @@ private:
 
     void
     verifyTransfer(nixl_xfer_op_t op) {
-        if (srcBackendEngine_->supportsNotif()) {
+        if (srcBackendEngine_->supportsCapability(nixl_backend_capability_t::NOTIF)) {
             verifyNotifs(xferOptArgs_.notifMsg);
 
             xferOptArgs_.notifMsg = "";

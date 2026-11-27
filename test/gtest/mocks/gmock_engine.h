@@ -89,7 +89,6 @@ public:
 
     MOCK_METHOD(bool, supportsRemote, (), (const, override));
     MOCK_METHOD(bool, supportsLocal, (), (const, override));
-    MOCK_METHOD(bool, supportsNotif, (), (const, override));
     MOCK_METHOD(nixl_backend_capability_t, capabilities, (), (const));
     MOCK_METHOD(nixl_mem_list_t, getSupportedMems, (), (const, override));
     MOCK_METHOD(nixl_status_t,

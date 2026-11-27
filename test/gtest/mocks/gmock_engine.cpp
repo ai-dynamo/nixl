@@ -39,7 +39,6 @@ GMockBackendEngine::setDefaults() {
 
     ON_CALL(*this, supportsRemote()).WillByDefault(Return(true));
     ON_CALL(*this, supportsLocal()).WillByDefault(Return(true));
-    ON_CALL(*this, supportsNotif()).WillByDefault(Return(true));
     ON_CALL(*this, getSupportedMems()).WillByDefault(Return(nixl_mem_list_t{DRAM_SEG}));
     ON_CALL(*this, registerMem(_, _, _)).WillByDefault(Return(NIXL_SUCCESS));
     ON_CALL(*this, deregisterMem(_)).WillByDefault(Return(NIXL_SUCCESS));
@@ -80,7 +79,7 @@ GMockBackendEngine::setOptionalDefaults() {
     ON_CALL(*this, queryMem(_, _)).WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
     ON_CALL(*this, estimateXferCost(_, _, _, _, _, _, _, _, _))
         .WillByDefault(Return(NIXL_ERR_NOT_SUPPORTED));
-    ON_CALL(*this, capabilities()).WillByDefault(Return(nixl_backend_capability_t::NONE));
+    ON_CALL(*this, capabilities()).WillByDefault(Return(nixl_backend_capability_t::NOTIF));
 }
 
 void
