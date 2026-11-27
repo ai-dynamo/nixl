@@ -23,6 +23,7 @@ set -x
 ulimit -c unlimited
 
 # Parse commandline arguments with first argument being the install directory.
+SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
 INSTALL_DIR=$1
 
 if [ -z "$INSTALL_DIR" ]; then
@@ -48,6 +49,9 @@ uname -a || true
 
 echo "==== Running Nixlbench tests ===="
 cd ${INSTALL_DIR}
+
+export NIXLBENCH_BINARY="$PWD/bin/nixlbench"
+python3 "$SCRIPT_DIR/test_nixlbench_regressions.py" ./bin/nixlbench_tests ./nixlbench-regressions.xml
 
 DEFAULT_NB_PARAMS="--filepath /tmp --total_buffer_size 80000000 --start_block_size 16384 --max_block_size 16384 --start_batch_size 4 --max_batch_size 4"
 
@@ -123,7 +127,9 @@ run_nixlbench_two_workers_etcd() {
     parallel --line-buffer --halt now,fail=1 ::: "$command_line" "sleep 4 ; $command_line"
 }
 
+trap 'kill -9 ${ETCD_PID:-} 2>/dev/null || true' EXIT
 start_etcd_server "/nixl/nixlbench_ci"
+python3 "$SCRIPT_DIR/test_nixlbench_etcd.py" ./bin/nixlbench_tests ./nixlbench-etcd-tests.xml
 
 for op_type in READ WRITE; do
     for initiator in $seg_types; do

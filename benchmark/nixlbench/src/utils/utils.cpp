@@ -17,6 +17,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cmath>
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
@@ -26,6 +27,7 @@
 #include <unistd.h>
 #include <utility>
 #include <iomanip>
+#include <limits>
 #include <omp.h>
 #include <set>
 
@@ -923,6 +925,15 @@ xferBenchConfig::loadParams(void) {
     total_buffer_size = NB_ARG(total_buffer_size);
     num_initiator_dev = NB_ARG(num_initiator_dev);
     num_target_dev = NB_ARG(num_target_dev);
+    if (num_initiator_dev < 1 || num_target_dev < 1) {
+        std::cerr << "num_initiator_dev and num_target_dev must both be >= 1" << std::endl;
+        return -1;
+    }
+    if (mode == XFERBENCH_MODE_SG && scheme == XFERBENCH_SCHEME_MANY_TO_ONE &&
+        num_target_dev != 1) {
+        std::cerr << "SG manytoone requires exactly one target" << std::endl;
+        return -1;
+    }
     // In pairwise SG mode, only the device of the rank gets a VRAM buffer, and a
     // storage backend runs one initiator process.
     if (IS_PAIRWISE_AND_SG() && isStorageBackend() &&
@@ -949,6 +960,10 @@ xferBenchConfig::loadParams(void) {
     large_blk_iter_ftr = NB_ARG(large_blk_iter_ftr);
     warmup_iter = NB_ARG(warmup_iter);
     num_threads = NB_ARG(num_threads);
+    if (num_threads < 1) {
+        std::cerr << "num_threads must be >= 1" << std::endl;
+        return -1;
+    }
     pipeline_depth = NB_ARG(pipeline_depth);
     if (pipeline_depth < 1) {
         std::cerr << "pipeline_depth must be >= 1" << std::endl;
@@ -992,8 +1007,20 @@ xferBenchConfig::loadParams(void) {
     if (use_hugepages && (total_buffer_size % HUGEPAGE_SIZE) != 0) {
         size_t hugepage_aligned_size = ROUND_UP(total_buffer_size, HUGEPAGE_SIZE);
         std::cout << "Rounding total_buffer_size from " << total_buffer_size << " to "
-                  << hugepage_aligned_size << " for 2MB hugepage alignment." << std::endl;
+                  << hugepage_aligned_size << " for " << HUGEPAGE_SIZE
+                  << "-byte hugepage alignment." << std::endl;
         total_buffer_size = hugepage_aligned_size;
+    }
+    if (use_hugepages && mode == XFERBENCH_MODE_SG && scheme == XFERBENCH_SCHEME_MANY_TO_ONE) {
+        const size_t slice_count =
+            static_cast<size_t>(num_initiator_dev) * static_cast<size_t>(num_threads);
+        if (total_buffer_size % slice_count != 0 ||
+            (total_buffer_size / slice_count) % HUGEPAGE_SIZE != 0) {
+            std::cerr << "SG manytoone with hugepages requires total_buffer_size / "
+                         "(num_initiator_dev * num_threads) to be aligned to "
+                      << HUGEPAGE_SIZE << " bytes" << std::endl;
+            return -1;
+        }
     }
     if (!recreate_xfer && XFERBENCH_BACKEND_GUSLI == backend) {
         std::cout << "GUSLI backend requires per-iteration request creation due to library bug."
@@ -1097,30 +1124,33 @@ xferBenchConfig::loadParams(void) {
         }
     }
 
-    if ((max_block_size * max_batch_size) > (total_buffer_size / num_initiator_dev)) {
-        std::cerr
-            << "Incorrect buffer size configuration for Initiator"
-            << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
-            << std::endl;
-        return -1;
-    }
-    if ((max_block_size * max_batch_size) > (total_buffer_size / num_target_dev)) {
-        std::cerr
-            << "Incorrect buffer size configuration for Target"
-            << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
-            << std::endl;
-        return -1;
-    }
     const int workers = workerNum();
     const char *worker_kind = use_device_api ? "groups" : "threads";
-
-    if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
-        std::cerr << "Incorrect buffer size configuration "
-                  << "(max_block_size * max_batch_size) "
-                  << "(" << (max_block_size * max_batch_size) << ")"
-                  << " is > (total_buffer_size / " << workers << " " << worker_kind << ") ("
-                  << (total_buffer_size / workers) << ")" << std::endl;
-        return -1;
+    const bool sg_manytoone = XFERBENCH_MODE_SG == mode && XFERBENCH_SCHEME_MANY_TO_ONE == scheme;
+    // SG manytoone checks emitted sizes and per-peer descriptor depth below.
+    if (!sg_manytoone) {
+        if ((max_block_size * max_batch_size) > (total_buffer_size / num_initiator_dev)) {
+            std::cerr
+                << "Incorrect buffer size configuration for Initiator"
+                << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
+                << std::endl;
+            return -1;
+        }
+        if ((max_block_size * max_batch_size) > (total_buffer_size / num_target_dev)) {
+            std::cerr
+                << "Incorrect buffer size configuration for Target"
+                << "(max_block_size * max_batch_size) is > (total_buffer_size / num_initiator_dev)"
+                << std::endl;
+            return -1;
+        }
+        if ((max_block_size * max_batch_size) > (total_buffer_size / workers)) {
+            std::cerr << "Incorrect buffer size configuration "
+                      << "(max_block_size * max_batch_size) "
+                      << "(" << (max_block_size * max_batch_size) << ")"
+                      << " is > (total_buffer_size / " << workers << " " << worker_kind << ") ("
+                      << (total_buffer_size / workers) << ")" << std::endl;
+            return -1;
+        }
     }
 
     if (large_blk_iter_ftr <= 0) {
@@ -1140,6 +1170,45 @@ xferBenchConfig::loadParams(void) {
         std::cout << "WARNING: Adjusting warmup_iter to " << warmup_iter
                   << " to allow equal distribution to " << workers << " " << worker_kind
                   << std::endl;
+    }
+
+    if (sg_manytoone) {
+        if (start_block_size == 0 || start_block_size > max_block_size || start_batch_size == 0 ||
+            start_batch_size > max_batch_size) {
+            std::cerr << "SG manytoone requires nonzero, ordered block and batch size ranges"
+                      << std::endl;
+            return -1;
+        }
+        // processBatchSizes doubles from start_batch_size; the configured cap may not be emitted.
+        size_t largest_batch = start_batch_size;
+        while (largest_batch <= max_batch_size / 2) {
+            largest_batch *= 2;
+        }
+        const size_t bytes_per_peer = total_buffer_size /
+            (static_cast<size_t>(workers) * static_cast<size_t>(num_initiator_dev));
+        for (size_t block_size = start_block_size; block_size <= max_block_size;) {
+            // Match descriptor generation after iteration counts have been normalized.
+            const int depth = worker_type == XFERBENCH_WORKER_NIXL ?
+                iterationPlan(block_size).descriptor_depth :
+                pipeline_depth;
+            if (depth < 1 ||
+                largest_batch > std::numeric_limits<size_t>::max() / static_cast<size_t>(depth)) {
+                std::cerr << "Batch size and descriptor depth are too large" << std::endl;
+                return -1;
+            }
+            const size_t effective_batch = largest_batch * static_cast<size_t>(depth);
+            if (block_size > bytes_per_peer / effective_batch) {
+                std::cerr << "Incorrect buffer size configuration: SG manytoone requires "
+                             "(block_size * largest_emitted_batch * descriptor_depth) <= "
+                             "(total_buffer_size / (workers * num_initiator_dev)); block_size="
+                          << block_size << ", descriptor_depth=" << depth << std::endl;
+                return -1;
+            }
+            if (block_size > max_block_size / 2) {
+                break;
+            }
+            block_size *= 2;
+        }
     }
     partition = (num_initiator_dev * workers);
     if (total_buffer_size % partition) {
@@ -1396,6 +1465,18 @@ int
 xferBenchConfig::workerNum() {
     return xferBenchConfig::use_device_api ? xferBenchConfig::deviceGroupNum() :
                                              xferBenchConfig::num_threads;
+}
+
+xferBenchIterationPlan
+xferBenchConfig::iterationPlan(size_t block_size) {
+    const int workers = workerNum();
+    int warmup = warmup_iter / workers;
+    int iterations = num_iter / workers;
+    if (block_size > LARGE_BLOCK_SIZE) {
+        warmup /= large_blk_iter_ftr;
+        iterations /= large_blk_iter_ftr;
+    }
+    return {warmup, iterations, std::min(pipeline_depth, std::max(warmup, iterations))};
 }
 
 bool
@@ -1742,8 +1823,71 @@ xferBenchUtils::validateTransfer(bool is_initiator,
     return true;
 }
 
+namespace {
+bool
+exchangeIncastSummary(xferBenchRT *rt,
+                      bool is_target,
+                      size_t block_size,
+                      size_t batch_size,
+                      double &bandwidth) {
+    char message[128] = {};
+    const int senders = xferBenchConfig::num_initiator_dev;
+    if (!is_target) {
+        std::ostringstream payload;
+        payload << "incast-summary-v1 " << block_size << ' ' << batch_size << ' ' << senders << ' '
+                << std::setprecision(std::numeric_limits<double>::max_digits10) << bandwidth
+                << " end-incast-summary";
+        const std::string text = payload.str();
+        if (text.size() >= sizeof(message)) {
+            return false;
+        }
+        std::copy(text.begin(), text.end(), message);
+        return rt->sendChar(message, sizeof(message), senders) == 0;
+    }
+    if (rt->getRank() != senders || rt->recvChar(message, sizeof(message), 0) != 0) {
+        return false;
+    }
+    const size_t length = strnlen(message, sizeof(message));
+    if (length == sizeof(message)) {
+        return false;
+    }
+    std::istringstream payload(std::string(message, length));
+    std::string version, end;
+    size_t received_block = 0, received_batch = 0;
+    int received_senders = 0;
+    double received_bandwidth = 0;
+    if (!(payload >> version >> received_block >> received_batch >> received_senders >>
+          received_bandwidth >> end)) {
+        return false;
+    }
+    payload >> std::ws;
+    if (!payload.eof() || version != "incast-summary-v1" || end != "end-incast-summary" ||
+        received_block != block_size || received_batch != batch_size ||
+        received_senders != senders || !std::isfinite(received_bandwidth) ||
+        received_bandwidth < 0) {
+        return false;
+    }
+    bandwidth = received_bandwidth;
+    return true;
+}
+
+void
+printIncastSummary(xferBenchRT *rt, size_t block_size, size_t batch_size, double bandwidth) {
+    std::cout << "Sum of sender bandwidths (GB/Sec): " << std::fixed << std::setprecision(6)
+              << bandwidth << " [block_size=" << block_size << ", batch_size=" << batch_size
+              << ", senders=" << xferBenchConfig::num_initiator_dev << ", rank=" << rt->getRank()
+              << "]" << std::endl;
+}
+} // namespace
+
 void
 xferBenchUtils::printStatsHeader() {
+    if (xferBenchConfig::mode == XFERBENCH_MODE_SG &&
+        xferBenchConfig::scheme == XFERBENCH_SCHEME_MANY_TO_ONE) {
+        std::cout << "Incast summary: sum of independently timed sender bandwidths, "
+                     "printed by rank 0 and the target."
+                  << std::endl;
+    }
     if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
         // clang-format off
         std::cout << std::left
@@ -1780,7 +1924,7 @@ xferBenchUtils::printStatsHeader() {
     xferBenchConfig::printSeparator('-');
 }
 
-void
+bool
 xferBenchUtils::printStats(bool is_target,
                            size_t block_size,
                            size_t batch_size,
@@ -1788,6 +1932,8 @@ xferBenchUtils::printStats(bool is_target,
     size_t total_data_transferred = 0;
     double avg_latency = 0, throughput_gb = 0;
     double totalbw = 0;
+    const bool incast_summary = xferBenchConfig::mode == XFERBENCH_MODE_SG &&
+        xferBenchConfig::scheme == XFERBENCH_SCHEME_MANY_TO_ONE;
 
     int total_iter = xferBenchConfig::num_iter;
     int per_thread_iter = total_iter / xferBenchConfig::workerNum();
@@ -1797,9 +1943,16 @@ xferBenchUtils::printStats(bool is_target,
         per_thread_iter /= xferBenchConfig::large_blk_iter_ftr;
     }
 
-    // Targets don't participate in reduction - they have no throughput to contribute
-    if (is_target && IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        return;
+    // Only initiators have measured rates to contribute.
+    if (is_target) {
+        if (incast_summary) {
+            if (!exchangeIncastSummary(rt, true, block_size, batch_size, totalbw)) {
+                std::cerr << "Failed to receive a valid incast summary" << std::endl;
+                return false;
+            }
+            printIncastSummary(rt, block_size, batch_size, totalbw);
+        }
+        return true;
     }
 
     double total_duration = stats.total_duration.avg();
@@ -1815,14 +1968,26 @@ xferBenchUtils::printStats(bool is_target,
     throughput_gb = (((double)total_data_transferred / (1000 * 1000 * 1000)) /
                      (total_duration / 1e6)); // In GB/Sec
 
-    if (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) {
-        rt->reduceSumDouble(&throughput_gb, &totalbw, 0);
+    const bool reduce_rates = (IS_PAIRWISE_AND_SG() && rt->getSize() > 2) ||
+        (incast_summary && xferBenchConfig::num_initiator_dev > 1);
+    if (reduce_rates) {
+        if (rt->reduceSumDouble(&throughput_gb, &totalbw, 0, xferBenchConfig::num_initiator_dev) !=
+            0) {
+            std::cerr << "Failed to collect sender bandwidths for block " << block_size
+                      << ", batch " << batch_size << std::endl;
+            return false;
+        }
     } else {
         totalbw = throughput_gb;
     }
 
     if (IS_PAIRWISE_AND_SG() && rt->getRank() != 0) {
-        return;
+        return true;
+    }
+    if (incast_summary && rt->getRank() == 0 &&
+        !exchangeIncastSummary(rt, false, block_size, batch_size, totalbw)) {
+        std::cerr << "Failed to send the incast summary to the target" << std::endl;
+        return false;
     }
 
     double prepare_duration = stats.prepare_duration.avg();
@@ -1868,6 +2033,11 @@ xferBenchUtils::printStats(bool is_target,
                   << std::endl;
         // clang-format on
     }
+    if (incast_summary && rt->getRank() == 0) {
+        // Preserve the per-sender table; this sum uses independently timed rates.
+        printIncastSummary(rt, block_size, batch_size, totalbw);
+    }
+    return true;
 }
 
 bool

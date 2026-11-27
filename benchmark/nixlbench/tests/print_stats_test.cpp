@@ -52,7 +52,7 @@ public:
     }
 
     int
-    reduceSumDouble(double *local, double *global, int) override {
+    reduceSumDouble(double *local, double *global, int, int = 0) override {
         *global = *local;
         return 0;
     }

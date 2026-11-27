@@ -56,6 +56,7 @@ private:
     int my_rank; // Rank information
     int global_size;
     uint64_t barrier_gen;
+    uint64_t reduction_gen = 0;
     std::atomic<int> *terminate;
 
     bool error() const { return terminate != nullptr && *terminate; };
@@ -96,7 +97,11 @@ public:
     int sendChar(char *buffer, size_t count, int dest_rank) override;
     int recvChar(char *buffer, size_t count, int src_rank) override;
 
-    int reduceSumDouble(double *local_value, double *global_value, int dest_rank) override;
+    int
+    reduceSumDouble(double *local_value,
+                    double *global_value,
+                    int dest_rank,
+                    int num_contributors = 0) override;
 
     // Barrier synchronization
     int

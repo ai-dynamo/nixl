@@ -65,11 +65,16 @@ PYBIND11_MODULE (etcd_runtime, m) {
                  size_t count = buf_info.size;
                  return self.broadcastInt(ptr, count, root_rank);
              })
-        .def("reduce_sum_double",
-             [](xferBenchEtcdRT &self, double local_value, int dest_rank) {
-                 double global_value;
-                 int result = self.reduceSumDouble(&local_value, &global_value, dest_rank);
-                 return py::make_tuple(result, global_value);
-             })
+        .def(
+            "reduce_sum_double",
+            [](xferBenchEtcdRT &self, double local_value, int dest_rank, int num_contributors) {
+                double global_value = 0;
+                int result =
+                    self.reduceSumDouble(&local_value, &global_value, dest_rank, num_contributors);
+                return py::make_tuple(result, global_value);
+            },
+            py::arg("local_value"),
+            py::arg("dest_rank"),
+            py::arg("num_contributors") = 0)
         .def("barrier", &xferBenchEtcdRT::barrier);
 }

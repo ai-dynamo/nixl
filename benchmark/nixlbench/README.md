@@ -579,6 +579,48 @@ wait
   --backend UCX --num_threads 4 --enable_pt --progress_threads 2
 ```
 
+### Pipeline depth
+
+For NIXL workers, descriptor depth is the smaller of the configured pipeline depth
+and the larger per-worker iteration count across warmup and measurement, after
+iteration rounding and the large-block reduction. Each phase caps active requests
+to its iteration count while preserving each request's batch size.
+
+The POSIX integration tests cover short READ/WRITE phases, capped WRITE byte
+boundaries, large blocks with multiple workers, and phase warning behavior.
+
+### Incast bandwidth reporting
+
+In SG many-to-one runs, every initiator prints its own statistics row. Initiator
+rank 0 also collects the other `num_initiator_dev - 1` rates, adds its own, and
+prints one summary per block/batch case:
+
+```text
+Sum of sender bandwidths (GB/Sec): 7.000000 [block_size=1000000, batch_size=1, senders=3, rank=0]
+```
+
+Here the sender rates are the initiating processes' measured rates. For WRITE,
+the target receives the data; READ reverses the data direction.
+
+The target process prints a copy of the same sum, identified by `rank=N` where
+`N` is the sender count. It contributes no rate of its own. Rank 0 forwards the
+sum and case identity; the target validates them before printing. Both copies
+are sums of independently timed sender rates. They do not measure total bytes
+over a common elapsed interval or receiver-link utilization. A one-sender run
+uses its own rate without waiting for another contributor, then forwards that
+rate to the target.
+
+Missing or failed contributions fail the case; no partial sum is printed.
+Summary-copy errors also fail the case. Use a launcher that stops peers when any
+rank fails. ETCD reductions use separate keys for successive cases, and every
+SG incast rank synchronizes after reporting so summary-message cleanup finishes
+before the next case. This coordination is outside measured transfer timing.
+
+The existing ten-column incast rows and twelve-column pairwise table are
+unchanged. Readers can use the labeled summary, matched by block and batch,
+without reinterpreting the individual timing columns. When combining logs, keep
+one matching pair of rank-0/target summaries per case; do not add their values.
+
 ### Command Line Options
 
 #### Core Configuration
@@ -851,6 +893,43 @@ sudo systemctl start etcd && sudo systemctl enable etcd
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
 The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
+
+### SG many-to-one
+
+For a host-driven `N`:1 many-to-one WRITE (incast), start `N + 1` processes
+with identical arguments and the same unique `--benchmark_group`. ETCD ranks
+`0..N-1` are initiators and rank `N` is the single target, so start the
+initiators before the target when deterministic role placement is required.
+The Device API remains limited to the pairwise scheme.
+
+```bash
+./nixlbench \
+  --etcd_endpoints http://etcd-server:2379 \
+  --benchmark_group manytoone-example \
+  --backend UCX --mode SG --scheme manytoone \
+  --num_initiator_dev 4 --num_target_dev 1 \
+  --op_type WRITE \
+  --initiator_seg_type VRAM --target_seg_type VRAM \
+  --total_buffer_size 268435456 \
+  --start_block_size 262144 --max_block_size 262144 \
+  --start_batch_size 1 --max_batch_size 1
+```
+
+Run this command in five processes. Each initiator receives a distinct region
+of the target buffer. Assign one GPU per process and expose that GPU to the
+process as CUDA device 0 (for example, with `CUDA_VISIBLE_DEVICES`). When
+`--use_hugepages` is enabled for DRAM, each per-initiator, per-thread target
+region must be a multiple of 2 MiB.
+
+For SG many-to-one, `--total_buffer_size` is the aggregate target region.
+Each initiator receives `total_buffer_size / num_initiator_dev` bytes in total;
+with `num_threads` threads, each initiator-thread receives
+`total_buffer_size / (num_initiator_dev * num_threads)` bytes. For each block size,
+`block_size * largest_batch * descriptor_depth` must fit in that per-thread region,
+where `largest_batch` is the largest batch size the sweep emits (`start_batch_size`
+doubled while it does not exceed `max_batch_size`).
+For NIXL workers, use the normalized descriptor depth described in
+[Pipeline depth](#pipeline-depth). Other workers retain the configured pipeline depth.
 
 ### Backend-Specific Examples
 

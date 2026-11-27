@@ -46,7 +46,11 @@ int xferBenchRT::recvChar(char *buffer, size_t count, int src_rank) {
     return 0;
 }
 
-int xferBenchRT::reduceSumDouble(double *local_buffer, double *global_buffer, int dest_rank) {
+int
+xferBenchRT::reduceSumDouble(double *local_buffer,
+                             double *global_buffer,
+                             int dest_rank,
+                             int num_contributors) {
     return 0;
 }
 

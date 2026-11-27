@@ -37,7 +37,13 @@ class xferBenchRT {
         virtual int broadcastInt(int *buffer, size_t count, int root_rank) = 0;
         virtual int sendChar(char *buffer, size_t count, int dest_rank) = 0;
         virtual int recvChar(char *buffer, size_t count, int src_rank) = 0;
-        virtual int reduceSumDouble(double *local_value, double *global_value, int dest_rank) = 0;
+        // Explicit contributors are ranks [0, num_contributors), including dest_rank.
+        // Zero preserves the runtime's legacy participant selection.
+        virtual int
+        reduceSumDouble(double *local_value,
+                        double *global_value,
+                        int dest_rank,
+                        int num_contributors = 0) = 0;
 
         // Add a barrier function to synchronize all processes
         virtual int
