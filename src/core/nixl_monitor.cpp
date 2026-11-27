@@ -27,7 +27,6 @@
 #include "nixl.h"
 #include "transfer_request.h"
 #include "common/nixl_log.h"
-#include "common/nixl_time.h"
 
 std::unique_ptr<nixlCompletionMonitor>
 nixlCompletionMonitor::create(const nixlAgent &agent) {
@@ -46,16 +45,14 @@ nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
                                 std::chrono::milliseconds timeout,
                                 bool any) {
     constexpr std::chrono::milliseconds max_timeout(std::numeric_limits<int>::max());
-    const int timeout_ms = static_cast<int>(
-        std::clamp(timeout, std::chrono::milliseconds::zero(), max_timeout).count());
-
-    const nixlTime::ms_t start_ms = nixlTime::getMs();
-    int remaining_ms = 0;
+    timeout = std::clamp(timeout, std::chrono::milliseconds::zero(), max_timeout);
+    const auto deadline = std::chrono::steady_clock::now() + timeout;
+    std::chrono::milliseconds remaining = std::chrono::milliseconds::zero();
 
     completions.clear();
     do {
         pollfd pfd = {fd_, POLLIN, 0};
-        const int ret = poll(&pfd, 1, remaining_ms);
+        const int ret = poll(&pfd, 1, static_cast<int>(remaining.count()));
         if (ret < 0) {
             if (errno == EINTR) {
                 return NIXL_IN_PROG;
@@ -85,8 +82,9 @@ nixlCompletionMonitorImpl::wait(std::vector<nixlXferCompletion> &completions,
             return NIXL_SUCCESS;
         }
 
-        remaining_ms = timeout_ms - static_cast<int>(nixlTime::getMs() - start_ms);
-    } while (remaining_ms > 0);
+        const auto now = std::chrono::steady_clock::now();
+        remaining = std::chrono::ceil<std::chrono::milliseconds>(deadline - now);
+    } while (remaining > std::chrono::milliseconds::zero());
 
     return NIXL_IN_PROG;
 }
