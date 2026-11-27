@@ -53,6 +53,13 @@ validView(const GpunetioDeviceView *view, uint32_t role) {
 
 #if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
 
+// Every SQ/CQ access below happens while the caller owns the lane (phase SCALAR),
+// and a readSession only touches the QP while it owns the lane (phase POSTING).
+// The lane's device-scope acquire/release orders the SDK's plain index updates
+// between owners, so the SDK needs no atomics or QP lock of its own here. Taking
+// the lane needs only acquire ordering: unlockLane's release store publishes.
+inline constexpr auto owned_qp_mode = DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_EXCLUSIVE;
+
 __device__ inline void
 failLane(GpunetioDeviceLane *lane) {
     deviceAtomic(lane->failed).store(1, cuda::memory_order_relaxed);
@@ -71,7 +78,7 @@ unlockLane(GpunetioDeviceLane *lane) {
 __device__ inline void
 publish(GpunetioDeviceLane *lane) {
     if (lane->active_ticket != lane->next_retire) {
-        doca_gpu_dev_verbs_submit<DOCA_GPUNETIO_VERBS_RESOURCE_SHARING_MODE_GPU,
+        doca_gpu_dev_verbs_submit<owned_qp_mode,
                                   DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU,
                                   DOCA_GPUNETIO_VERBS_NIC_HANDLER_GPU_SM_DB>(lane->qp,
                                                                              lane->active_ticket);
@@ -81,20 +88,30 @@ publish(GpunetioDeviceLane *lane) {
 // The scalar owner checks every CQE. Polling only the target would skip earlier errors.
 __device__ inline nixl_status_t
 progress(GpunetioDeviceLane *lane, uint64_t target) {
-    while (lane->next_retire < target) {
-        const int result = compat::pollOne(lane->qp, lane->next_retire);
-        if (result == EBUSY) {
-            return NIXL_IN_PROG;
+    uint64_t next = lane->next_retire;
+    nixl_status_t result = NIXL_SUCCESS;
+    while (next < target) {
+        // On success the SDK has issued its NIC acquire fence and advanced cqe_ci.
+        const int rc = compat::pollOne<owned_qp_mode>(lane->qp, next);
+        if (rc == EBUSY) {
+            result = NIXL_IN_PROG;
+            break;
         }
-        if (result != 0) {
-            failLane(lane);
-            return NIXL_ERR_BACKEND;
+        if (rc != 0) {
+            result = NIXL_ERR_BACKEND;
+            break;
         }
-        // Publish completion to pollers in other CTAs after acquiring NIC writes.
-        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
-        deviceAtomic(lane->next_retire).store(lane->next_retire + 1, cuda::memory_order_release);
+        ++next;
     }
-    return NIXL_SUCCESS;
+    if (next != lane->next_retire) {
+        // Publish the checked prefix to pollers in other CTAs once per call.
+        doca_gpu_dev_verbs_fence_acquire<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_SYS>();
+        deviceAtomic(lane->next_retire).store(next, cuda::memory_order_release);
+    }
+    if (result == NIXL_ERR_BACKEND) {
+        failLane(lane); // After the successful prefix is visible.
+    }
+    return result;
 }
 
 __device__ inline nixl_status_t
@@ -106,17 +123,26 @@ submitGetLocked(GpunetioDeviceLane *lane,
                 size_t bytes,
                 uint64_t flags,
                 xferStatusH *status) {
-    if (lane->failed || !lane->qp || !compat::usesGpuSmDoorbell(lane->qp)) {
+    // A bound lane keeps its QP, and a rebind writes a fresh lane, so the QP is checked
+    // only until a GET stores its capacity. Later GETs read just the lane under the lock.
+    uint32_t capacity = lane->capacity;
+    if (lane->failed || !lane->qp || (!capacity && !compat::usesGpuSmDoorbell(lane->qp))) {
         failLane(lane);
         return NIXL_ERR_BACKEND;
     }
-    if (compat::needsDump(lane->qp)) {
-        return NIXL_ERR_NOT_SUPPORTED;
+    if (!capacity) {
+        if (compat::needsDump(lane->qp)) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(lane->qp);
+        capacity = cq ? min(uint32_t(lane->qp->sq_wqe_num), cq->cqe_num) : 0;
+        if (capacity < 2) {
+            return NIXL_ERR_BACKEND;
+        }
+        lane->capacity = capacity;
     }
-    auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(lane->qp);
-    const uint32_t capacity = cq ? min(uint32_t(lane->qp->sq_wqe_num), cq->cqe_num) : 0;
     const uint64_t chunks = 1 + (bytes - 1) / DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
-    if (capacity < 2 || chunks > ~uint64_t{0} - lane->active_ticket) {
+    if (chunks > ~uint64_t{0} - lane->active_ticket) {
         return NIXL_ERR_BACKEND;
     }
     if (lane->generation == ~uint64_t{0}) {
@@ -127,17 +153,20 @@ submitGetLocked(GpunetioDeviceLane *lane,
     size_t offset = 0;
     do {
         // Retire before reserve: the SDK availability wait does not propagate CQ errors.
-        while (lane->active_ticket - lane->next_retire >= capacity - 1) {
-            publish(lane);
-            if (progress(lane, lane->next_retire + 1) == NIXL_ERR_BACKEND) {
-                return NIXL_ERR_BACKEND;
-            }
+        if (lane->active_ticket - lane->next_retire >= capacity - 1) {
+            publish(lane); // A full queue may hold deferred WQEs; nothing is added while waiting.
+            do {
+                // Retire every completed CQE, not just one, before checking capacity again.
+                if (progress(lane, lane->active_ticket) == NIXL_ERR_BACKEND) {
+                    return NIXL_ERR_BACKEND;
+                }
+            } while (lane->active_ticket - lane->next_retire >= capacity - 1);
         }
         const size_t remaining = bytes - offset;
         const size_t chunk = remaining < DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE ?
             remaining :
             DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
-        ticket = doca_gpu_dev_verbs_reserve_wq_slots<>(lane->qp, 1);
+        ticket = doca_gpu_dev_verbs_reserve_wq_slots<owned_qp_mode>(lane->qp, 1);
         auto *wqe = doca_gpu_dev_verbs_get_wqe_ptr(lane->qp, ticket);
         // Signal each READ; completion is checked in FIFO order.
         constexpr auto ctrl = DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE;
@@ -150,7 +179,7 @@ submitGetLocked(GpunetioDeviceLane *lane,
                                             local_address + offset,
                                             local_key,
                                             chunk);
-        doca_gpu_dev_verbs_mark_wqes_ready<>(lane->qp, ticket, ticket);
+        doca_gpu_dev_verbs_mark_wqes_ready<owned_qp_mode>(lane->qp, ticket, ticket);
         lane->active_ticket = ticket + 1;
         offset += chunk;
     } while (offset < bytes);
@@ -179,8 +208,15 @@ submitGet(const memViewElem &local,
         if (status->mode != exec_mode_t{} && status->mode != exec_mode_t::GPUNETIO_DIRECT) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        if (status->mode == exec_mode_t::GPUNETIO_DIRECT && statusPayload(status)->initialized &&
-            statusPayload(status)->cached_status == NIXL_IN_PROG) {
+        // A request completed by a flush, or on a failed channel, is final even if its
+        // handle was never polled; only a still-outstanding request blocks reuse. Like
+        // pollStatus, this reads old->lane: the engine that accepted it must still exist.
+        const auto *old = statusPayload(status);
+        if (status->mode == exec_mode_t::GPUNETIO_DIRECT && old->initialized &&
+            old->cached_status == NIXL_IN_PROG && old->lane &&
+            old->ticket >= deviceAtomic(old->lane->next_retire).load(cuda::memory_order_acquire) &&
+            deviceAtomic(old->lane->phase).load(cuda::memory_order_acquire) !=
+                gpunetio_lane_phase_failed) {
             return NIXL_ERR_REPOST_ACTIVE;
         }
     }
@@ -208,6 +244,8 @@ submitGet(const memViewElem &local,
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
+    // Retry without sleeping, here and in flush: a nanosleep backoff measured slower
+    // with 128 THREAD callers sharing one channel.
     for (;;) {
         uint32_t previous = phase.load(cuda::memory_order_acquire);
         if (previous == gpunetio_lane_phase_failed) {
@@ -219,7 +257,7 @@ submitGet(const memViewElem &local,
         if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
             phase.compare_exchange_weak(previous,
                                         gpunetio_lane_phase_scalar,
-                                        cuda::memory_order_acq_rel,
+                                        cuda::memory_order_acquire,
                                         cuda::memory_order_acquire)) {
             // Unlock inside this branch before leaving the loop: same-warp callers may contend.
             const auto result = submitGetLocked(lane, la, le.key, ra, re.key, bytes, flags, status);
@@ -257,12 +295,20 @@ pollStatus(xferStatusH &status) {
     if (previous != gpunetio_lane_phase_posted ||
         !phase.compare_exchange_strong(previous,
                                        gpunetio_lane_phase_scalar,
-                                       cuda::memory_order_acq_rel,
+                                       cuda::memory_order_acquire,
                                        cuda::memory_order_acquire)) {
         return NIXL_IN_PROG;
     }
     publish(lane);
-    const auto result = progress(lane, payload->ticket + 1);
+    // Retire every completed CQE, not only this request's, so other pollers resolve
+    // on the lock-free fast path. A failure after this request keeps its success.
+    progress(lane, lane->active_ticket);
+    nixl_status_t result = NIXL_IN_PROG;
+    if (payload->ticket < lane->next_retire) {
+        result = NIXL_SUCCESS;
+    } else if (lane->failed) {
+        result = NIXL_ERR_BACKEND;
+    }
     payload->cached_status = result;
     unlockLane(lane);
     return result;
@@ -276,26 +322,40 @@ flushChannel(nixlMemViewH remote, unsigned channel) {
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
+    // Flush covers the work accepted before it. Take that target under the lock, then
+    // wait without holding the lock, so other callers keep using the channel.
+    bool have_target = false;
+    uint64_t target = 0;
     for (;;) {
-        uint32_t previous = phase.load(cuda::memory_order_acquire);
-        if (previous == gpunetio_lane_phase_failed) {
-            return NIXL_ERR_BACKEND;
+        if (have_target &&
+            deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
+            return NIXL_SUCCESS;
         }
-        if (previous == gpunetio_lane_phase_posting) {
-            return NIXL_ERR_NOT_ALLOWED;
+        uint32_t previous = phase.load(cuda::memory_order_acquire);
+        if (previous == gpunetio_lane_phase_failed || previous == gpunetio_lane_phase_posting) {
+            // A failure after the target leaves the flush successful, and a readSession only
+            // takes an idle lane, so a flush that already has a target has completed by then.
+            if (have_target &&
+                deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
+                return NIXL_SUCCESS;
+            }
+            return previous == gpunetio_lane_phase_failed ? NIXL_ERR_BACKEND : NIXL_ERR_NOT_ALLOWED;
         }
         if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
             phase.compare_exchange_weak(previous,
                                         gpunetio_lane_phase_scalar,
-                                        cuda::memory_order_acq_rel,
+                                        cuda::memory_order_acquire,
                                         cuda::memory_order_acquire)) {
-            publish(lane);
-            nixl_status_t result;
-            do {
-                result = progress(lane, lane->active_ticket);
-            } while (result == NIXL_IN_PROG);
+            if (!have_target) {
+                publish(lane);
+                target = lane->active_ticket;
+                have_target = true;
+            }
+            const auto result = progress(lane, target);
             unlockLane(lane);
-            return result;
+            if (result != NIXL_IN_PROG) {
+                return result;
+            }
         }
     }
 }

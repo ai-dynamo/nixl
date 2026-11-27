@@ -102,18 +102,27 @@ return `NIXL_ERR_NOT_SUPPORTED` in this GET-only implementation.
 GET validates the entire requested range before posting and splits transfers
 above the SDK WQE limit into bounded chunks. A status covers the complete request.
 A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
-`flush(remote_view, channel)` blocks until preceding channel work completes or
-fails. A supplied status can be polled in any order, and must reach a terminal
-result before being reused. Every CQE is checked in FIFO order, including those
+`flush(remote_view, channel)` blocks until the channel work accepted before the
+call completes or fails. A supplied status can be polled in any order. It can be
+reused once its request is final: polled to a terminal result, completed by a
+flush, or on a failed channel; reusing it earlier returns
+`NIXL_ERR_REPOST_ACTIVE`. Until getXferStatus has returned a terminal result for
+a status, polling it or passing it to `get` reads the state of the channel that
+accepted the request, so the engine that owns the channel must still exist.
+After that engine is torn down, reset the status (`xferStatusH{}`) before using
+it again. Every CQE is checked in FIFO order, including those
 from requests without a status. Completed requests stay complete if a later
 request fails; the failed channel rejects new work until teardown.
 
 `flags::defer` postpones doorbell publication until a nondeferred submission,
 status poll, flush, or queue-capacity pressure drives progress. Other flags are
-rejected. Multiple producers may submit on the same channel; short internal
-critical sections serialize queue reservation and completion checks. They do not
-require caller busy retries. Concurrent requests on different channels remain
-independent. A channel held by a backend readSession returns
+rejected. Multiple producers may submit on the same channel; a per-channel lock
+serializes queue reservation and completion checks, and contending callers spin
+until it is released. When the channel queue is full, `get` waits under that
+lock until completions free a slot. With an unresponsive peer this lasts until
+the transport reports an error, and other GETs on the channel wait behind it.
+`flush` waits for its completions without holding the lock. Concurrent requests
+on different channels remain independent. A channel held by a backend readSession returns
 `NIXL_ERR_NOT_ALLOWED` to standard calls until the session finishes.
 
 getXferStatus and flush acquire completed RDMA reads before reporting success.
