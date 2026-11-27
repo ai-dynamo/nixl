@@ -193,8 +193,11 @@ public:
 /**
  * @struct nixlAgentOptionalArgs
  * @brief A structure for optional argument that can be provided to relevant agent methods.
+ *        The ABI tag is part of the symbol name of every function that takes this structure.
+ *        Change it whenever the layout changes, so that an application built with another
+ *        layout fails to load instead of passing a structure of a different size.
  */
-struct nixlAgentOptionalArgs {
+struct [[gnu::abi_tag("v2")]] nixlAgentOptionalArgs {
     /**
      * @var backends vector to specify a list of backend handles, to limit the list
      *      of backends to be considered. Used in registerMem / deregisterMem

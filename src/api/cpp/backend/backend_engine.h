@@ -59,6 +59,8 @@ backendCapabilityStr(const nixl_backend_capability_t cap) noexcept {
         return "NOTIF";
     case nixl_backend_capability_t::TRACE_CONTEXT:
         return "TRACE_CONTEXT";
+    case nixl_backend_capability_t::COMPLETION:
+        return "COMPLETION";
     }
     return "UNKNOWN";
 }
