@@ -17,8 +17,6 @@
 
 #include <algorithm>
 #include <chrono>
-#include <filesystem>
-#include <fstream>
 #include <gtest/gtest.h>
 #include <nixl_types.h>
 #include "common.h"
@@ -36,25 +34,6 @@ namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
     constexpr const char *ucx_err_handling_mode_failover = "failover";
-
-    /**
-     * @brief Whether any InfiniBand or RoCE port is active
-     */
-    [[nodiscard]] static bool
-    hasActiveIbPort() {
-        std::error_code ec;
-        for (const auto &dev : std::filesystem::directory_iterator("/sys/class/infiniband", ec)) {
-            for (const auto &port : std::filesystem::directory_iterator(dev.path() / "ports", ec)) {
-                std::ifstream state_file(port.path() / "state");
-                std::string state;
-                if (std::getline(state_file, state) &&
-                    (state.find("ACTIVE") != std::string::npos)) {
-                    return true;
-                }
-            }
-        }
-        return false;
-    }
 
     /**
      * @brief Create a UCX backend, optionally overriding the error-handling mode
@@ -77,12 +56,7 @@ namespace nixl {
         EXPECT_EQ(NIXL_SUCCESS, status);
 
         nixlBackendH* backend_handle = nullptr;
-#ifdef HAVE_UCX_BACKEND
-        EXPECT_EQ(std::string(ucx_err_mode_to_string(defaultErrHandlingMode())),
-                  params[ucx_err_handling_mode_key]);
-#else
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
-#endif
         if (!err_handling_mode.empty()) {
             params[ucx_err_handling_mode_key] = err_handling_mode;
         }
@@ -380,9 +354,14 @@ TestErrorHandling::SetUp() {
     // Failover requires UCX 1.24 and cannot select protocols over shared memory and TCP alone.
     unsigned major, minor, release;
     ucp_get_version(&major, &minor, &release);
-    if ((UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) || !nixl::hasActiveIbPort()) {
+    if ((UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) ||
+        (::nixl::hwInfo::instance().numActiveIbPorts == 0)) {
         errHandlingMode_ = nixl::ucx_err_handling_mode_peer;
+        return;
     }
+
+    // Failover does not support SGL offload, so disable it before enabling failover.
+    m_env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "n");
 #endif
 }
 
@@ -746,27 +725,6 @@ TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     m_Target.destroy();
     m_Initiator.destroy();
 }
-
-#if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_SGL_API)
-TEST(UcxErrHandlingDefault, SglSelectsPeer) {
-    ScopedEnv env;
-    env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "y");
-    EXPECT_EQ(defaultErrHandlingMode(), UCP_ERR_HANDLING_MODE_PEER);
-}
-#endif
-
-#if defined(HAVE_UCX_BACKEND) && defined(HAVE_UCX_ERR_HANDLING_FAILOVER)
-TEST(UcxErrHandlingDefault, SglDisabledAllowsFailover) {
-    ScopedEnv env;
-    env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "n");
-    unsigned major, minor, release;
-    ucp_get_version(&major, &minor, &release);
-    const auto expected = (UCP_VERSION(major, minor) >= UCP_VERSION(1, 24)) ?
-        UCP_ERR_HANDLING_MODE_FAILOVER :
-        UCP_ERR_HANDLING_MODE_PEER;
-    EXPECT_EQ(defaultErrHandlingMode(), expected);
-}
-#endif
 
 #ifdef HAVE_UCX_BACKEND
 TEST_P(TestErrorHandling, ErrorCallbackMarksEndpointFailedWithoutClosingIt) {

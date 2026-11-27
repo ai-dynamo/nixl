@@ -45,8 +45,11 @@ namespace {
  */
 [[nodiscard]] bool
 sglEnabledFromConfig([[maybe_unused]] ucp_err_handling_mode_t err_handling_mode) {
+    // TODO: Remove NIXL_PLUGIN_UCX_SGL_ENABLE once SGL has had enough field exposure.
+    const auto configured =
+        nixl::config::getValueOptional<bool>("NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE");
 #ifdef HAVE_UCX_SGL_API
-    const bool enabled = sglRequestedFromConfig();
+    const bool enabled = configured.value_or(true);
     if (enabled && isFailoverErrHandlingMode(err_handling_mode)) {
         NIXL_DEBUG << "UCX SGL offload is not supported with failover error handling,"
                    << " disabling SGL offload";
@@ -55,22 +58,18 @@ sglEnabledFromConfig([[maybe_unused]] ucp_err_handling_mode_t err_handling_mode)
     NIXL_DEBUG << "UCX SGL offload " << (enabled ? "enabled" : "disabled");
     return enabled;
 #else
-    if (nixl::config::getValueOptional<bool>("NIXL_PLUGIN_UCX_SGL_ENABLE", "NIXL_UCX_SGL_ENABLE")
-            .value_or(false)) {
+    if (configured.value_or(false)) {
         NIXL_WARN << "NIXL_PLUGIN_UCX_SGL_ENABLE is set but NIXL was built without UCX SGL support";
     }
     return false;
 #endif
 }
 
-/**
- * @brief Error-handling mode from backend params, or the version default when unset
- */
 [[nodiscard]] ucp_err_handling_mode_t
 errHandlingModeFromParams(const nixl_b_params_t *custom_params) {
     const auto opt = nixl::getBackendParamOptional<std::string>(
         custom_params, std::string(nixl_ucx_err_handling_param_name));
-    return opt ? ucx_err_mode_from_string(*opt) : defaultErrHandlingMode();
+    return opt ? ucx_err_mode_from_string(*opt) : nixl_ucx_default_err_handling_mode;
 }
 } // namespace
 

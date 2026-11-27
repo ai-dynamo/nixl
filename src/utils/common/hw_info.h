@@ -24,9 +24,9 @@ namespace nixl {
  * @brief Lazily-detected, process-wide snapshot of the host's GPU and RDMA NIC inventory.
  *
  * Populated once on first call to @ref instance() by scanning PCI devices under
- * @c /sys/bus/pci/devices and matching vendor/class IDs. No CUDA, ROCm, or libibverbs
- * runtime is required. All fields are zero if the sysfs scan fails or no matching
- * devices are present.
+ * @c /sys/bus/pci/devices and matching vendor/class IDs, and RDMA ports under
+ * @c /sys/class/infiniband. No CUDA, ROCm, or libibverbs runtime is required. All fields
+ * are zero if the sysfs scan fails or no matching devices are present.
  */
 class hwInfo {
 public:
@@ -38,6 +38,8 @@ public:
     unsigned numIbDevices = 0;
     /** AWS EFA devices (vendor 0x1d0f, EFA device IDs). */
     unsigned numEfaDevices = 0;
+    /** Active ports of RDMA devices under /sys/class/infiniband (IB, RoCE, EFA). */
+    unsigned numActiveIbPorts = 0;
 
     /**
      * @brief Returns the process-wide singleton, populating it via the PCI sysfs scan

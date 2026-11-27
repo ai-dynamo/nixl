@@ -32,6 +32,8 @@ namespace nixl {
 namespace {
 
     constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
+    constexpr const char *kIbDevicePath = "/sys/class/infiniband";
+    constexpr const char *kIbPortStateActive = "4: ACTIVE";
 
     constexpr unsigned long kPciVendorMellanox = 0x15b3;
     constexpr unsigned long kPciVendorNvidia = 0x10de;
@@ -76,9 +78,29 @@ namespace {
         }
     }
 
+    [[nodiscard]] unsigned
+    countActiveIbPorts() {
+        unsigned count = 0;
+        std::error_code ec;
+        for (const auto &dev : std::filesystem::directory_iterator(kIbDevicePath, ec)) {
+            for (const auto &port : std::filesystem::directory_iterator(dev.path() / "ports", ec)) {
+                std::ifstream state_file(port.path() / "state");
+                std::string state;
+                if (std::getline(state_file, state) && (state == kIbPortStateActive)) {
+                    count++;
+                    NIXL_DEBUG << "Found active RDMA port: " << dev.path().filename().string()
+                               << "/" << port.path().filename().string();
+                }
+            }
+        }
+        return count;
+    }
+
 } // namespace
 
 hwInfo::hwInfo() {
+    numActiveIbPorts = countActiveIbPorts();
+
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
     if (ec) {
@@ -147,7 +169,8 @@ hwInfo::hwInfo() {
                << "numNvidiaGpus=" << numNvidiaGpus << ", "
                << "numAmdGpus=" << numAmdGpus << ", "
                << "numIbDevices=" << numIbDevices << ", "
-               << "numEfaDevices=" << numEfaDevices << " }";
+               << "numEfaDevices=" << numEfaDevices << ", "
+               << "numActiveIbPorts=" << numActiveIbPorts << " }";
 }
 
 const hwInfo &

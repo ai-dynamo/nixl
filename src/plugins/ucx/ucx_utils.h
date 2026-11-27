@@ -312,19 +312,6 @@ operator<<(std::ostream &os, const nixlUcxWorker &worker);
 get_ucx_backend_common_options();
 
 /**
- * @brief Whether UCX SGL offload is requested: NIXL_PLUGIN_UCX_SGL_ENABLE, enabled by default
- *        when built with the UCX SGL API
- */
-[[nodiscard]] bool
-sglRequestedFromConfig();
-
-/**
- * @brief Failover on UCX 1.24 and newer unless SGL offload is requested, otherwise peer
- */
-[[nodiscard]] ucp_err_handling_mode_t
-defaultErrHandlingMode();
-
-/**
  * @brief Whether the mode is failover; false when UCX lacks failover
  */
 [[nodiscard]] bool

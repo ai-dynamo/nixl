@@ -177,15 +177,13 @@ overridden before passing it to `createBackend` in C++ or `create_backend` in Py
 
 | Option key | Default | Description |
 | ---------- | ------- | ----------- |
-| `ucx_error_handling_mode` | `peer`, or `failover` when UCX provides that mode, the loaded library is 1.24 or newer, and SGL offload is off (`NIXL_PLUGIN_UCX_SGL_ENABLE=n` or NIXL built without the UCX SGL API) | UCX endpoint error handling policy. `peer` requests peer failure reporting; `failover` retries on another channel; `none` disables reporting. `failover` does not support SGL offload, so setting it explicitly disables SGL offload. |
+| `ucx_error_handling_mode` | `peer` | UCX endpoint error handling policy. `peer` requests peer failure reporting; `failover` (UCX 1.24 or newer) retries on another channel; `none` disables reporting. `failover` is used only when set explicitly. It does not support SGL offload, so setting it disables SGL offload. |
 | `ucx_vram_memtype_hint` | `auto` | Controls how NIXL hints the UCX memory type during VRAM registration. Supported values are exactly: `auto`, `none`, `cuda`, `cuda-managed`, `rocm`, `ze-device`. |
 
 The two options are independent; you do not need to set one to use the other.
 
 Agents that connect to each other must use the same `ucx_error_handling_mode`. UCX rejects
-endpoints whose error handling modes differ. The default can differ between agents, because it
-depends on the local UCX version and SGL setting, so set the mode explicitly when they may not
-match.
+endpoints whose error handling modes differ, so set `failover` on all of them.
 
 `ucx_error_handling_mode` affects UCP transport lane selection, not only error reporting.
 NIXL creates endpoints with `err_mode` set from this option, and UCP only selects lanes whose
