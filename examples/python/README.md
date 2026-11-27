@@ -32,7 +32,7 @@ python3 examples/python/basic_two_peers.py --mode initiator --ip 127.0.0.1 --por
 ```
 Note: `127.0.0.1` refers to localhost for same-machine testing. Replace it with the actual IP addresses of two machines to run across hosts.
 Options:
-- `--use_cuda True` to use GPU tensors if supported by the backend and the system.
+- `--use_cuda=true` to use GPU tensors if supported by the backend and the system. `--use_cuda=false` keeps CPU tensors.
 
 
 
@@ -57,4 +57,4 @@ python3 examples/python/expanded_two_peers.py --mode initiator --ip 127.0.0.1 --
 ```
 Options:
 - `--backend` selects the backend (default: UCX). Note that the example is targetting network backends not storage.
-- `--use_cuda True` to use GPU tensors if supported by the backend and the system.
+- `--use_cuda=true` to use GPU tensors if supported by the backend and the system. `--use_cuda=false` keeps CPU tensors.

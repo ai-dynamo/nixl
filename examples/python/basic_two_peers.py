@@ -17,7 +17,9 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument("--ip", type=str, required=True)
     parser.add_argument("--port", type=int, default=5555)
-    parser.add_argument("--use_cuda", type=bool, default=False)
+    parser.add_argument(
+        "--use_cuda", type=str.lower, choices=("true", "false"), default="false"
+    )
     parser.add_argument(
         "--mode",
         type=str,
@@ -35,7 +37,7 @@ if __name__ == "__main__":
     if args.mode != "target":
         listen_port = 0
 
-    if args.use_cuda:
+    if args.use_cuda == "true":
         torch.set_default_device("cuda:0")
     else:  # To be sure this is the default
         torch.set_default_device("cpu")
