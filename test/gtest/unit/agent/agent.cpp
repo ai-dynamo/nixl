@@ -111,6 +111,11 @@ namespace agent {
             return agent_.get();
         }
 
+        mocks::GMockBackendEngine &
+        getGMockEngine() {
+            return gmock_engine_;
+        }
+
         const mocks::GMockBackendEngine &
         getGMockEngine() const {
             return gmock_engine_;
@@ -1516,6 +1521,61 @@ namespace agent {
                   NIXL_SUCCESS);
         EXPECT_EQ(remote_agent_helper_->createBackendWithGMock(remote_params, remote_backend),
                   NIXL_SUCCESS);
+
+        std::string remote_agent_name_out;
+        EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, remote_agent_name_out),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(remote_agent_name, remote_agent_name_out);
+    }
+
+    /* A registration that fails must not leave an empty section in the local metadata:
+       the remote agent refuses metadata that carries an empty descriptor list. */
+    TEST_F(dualAgentBridgeFixture, FailedRegistrationKeepsMetadataLoadable) {
+        nixl_b_params_t local_params, remote_params;
+        nixlBackendH *local_backend, *remote_backend;
+        ASSERT_EQ(local_agent_helper_->createBackendWithGMock(local_params, local_backend),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(remote_agent_helper_->createBackendWithGMock(remote_params, remote_backend),
+                  NIXL_SUCCESS);
+
+        EXPECT_CALL(remote_agent_helper_->getGMockEngine(), registerMem)
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+
+        blob remote_blob;
+        nixl_opt_args_t remote_extra_params;
+        nixl_reg_dlist_t remote_reg_dlist(DRAM_SEG);
+        EXPECT_EQ(remote_agent_helper_->initAndRegisterMemory(
+                      remote_blob, remote_reg_dlist, remote_extra_params, remote_backend),
+                  NIXL_ERR_BACKEND);
+
+        std::string remote_agent_name_out;
+        EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, remote_agent_name_out),
+                  NIXL_SUCCESS);
+        EXPECT_EQ(remote_agent_name, remote_agent_name_out);
+    }
+
+    /* Same, when the list fails part way and the descriptors before it are rolled back. */
+    TEST_F(dualAgentBridgeFixture, RolledBackRegistrationKeepsMetadataLoadable) {
+        nixl_b_params_t local_params, remote_params;
+        nixlBackendH *local_backend, *remote_backend;
+        ASSERT_EQ(local_agent_helper_->createBackendWithGMock(local_params, local_backend),
+                  NIXL_SUCCESS);
+        ASSERT_EQ(remote_agent_helper_->createBackendWithGMock(remote_params, remote_backend),
+                  NIXL_SUCCESS);
+
+        auto &remote_engine = remote_agent_helper_->getGMockEngine();
+        EXPECT_CALL(remote_engine, registerMem)
+            .WillOnce(testing::Return(NIXL_SUCCESS))
+            .WillOnce(testing::Return(NIXL_ERR_BACKEND));
+        EXPECT_CALL(remote_engine, deregisterMem).Times(1);
+
+        blob first_blob, second_blob;
+        nixl_opt_args_t remote_extra_params;
+        nixl_reg_dlist_t remote_reg_dlist(DRAM_SEG);
+        remote_reg_dlist.addDesc(first_blob.getDesc());
+        EXPECT_EQ(remote_agent_helper_->initAndRegisterMemory(
+                      second_blob, remote_reg_dlist, remote_extra_params, remote_backend),
+                  NIXL_ERR_BACKEND);
 
         std::string remote_agent_name_out;
         EXPECT_EQ(local_agent_helper_->getAndLoadRemoteMd(remote_agent_, remote_agent_name_out),

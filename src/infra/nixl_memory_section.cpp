@@ -295,10 +295,7 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     if (!backend) {
         return NIXL_ERR_INVALID_PARAM;
     }
-    // Find the MetaDesc list, or add it to the map
     const nixl_mem_t nixl_mem = mem_elms.getType();
-
-    nixlSecDescList &target = emplace(nixl_mem, backend);
 
     nixlSectionDesc local_sec, self_sec;
     nixlBasicDesc *lp = &local_sec;
@@ -350,7 +347,12 @@ nixlLocalSection::addDescList(const nixl_reg_dlist_t &mem_elms,
     }
 
     if (ret == NIXL_SUCCESS) {
-        target.addDescs(std::move(local_batch));
+        // Only now, and only with something to hold. An empty section would be
+        // serialized with the rest of the local metadata, and a remote agent
+        // rejects metadata that carries an empty descriptor list.
+        if (!local_batch.empty()) {
+            emplace(nixl_mem, backend).addDescs(std::move(local_batch));
+        }
         if (backend->supportsLocal()) {
             remote_self.addDescs(std::move(self_batch));
         }
