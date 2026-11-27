@@ -298,6 +298,53 @@ TEST_F(MetadataExchangeTestFixture, GetLocalPartialAndLoadRemote) {
     ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 }
 
+TEST_F(MetadataExchangeTestFixture, ReadAfterFullAndPartialRefresh) {
+    initAgentsDefault();
+    auto &src = agents_[0];
+    auto &dst = agents_[1];
+
+    nixl_reg_dlist_t first(DRAM_SEG);
+    first.addDesc(src.buffers[0].getBlobDesc());
+    nixl_opt_args_t opts;
+    opts.includeConnInfo = true;
+    nixl_blob_t partial, full;
+    std::string peer;
+    ASSERT_EQ(src.agent->getLocalPartialMD(first, partial, &opts), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(partial, peer), NIXL_SUCCESS);
+
+    nixlXferReqH *requests[2]{};
+    auto prepareRead = [&](unsigned i) {
+        const auto source = src.buffers[i].getBasicDesc();
+        fillPayload(reinterpret_cast<void *>(source.addr), source.len, i, 123);
+        nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+        local.addDesc(dst.buffers[i].getBasicDesc());
+        remote.addDesc(source);
+        ASSERT_EQ(dst.agent->createXferReq(NIXL_READ, local, remote, peer, requests[i]),
+                  NIXL_SUCCESS);
+    };
+    ASSERT_NO_FATAL_FAILURE(prepareRead(0));
+
+    // The full snapshot adds buffer 1. Replaying the older partial snapshot must keep both.
+    ASSERT_EQ(src.agent->getLocalMD(full), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(full, peer), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->loadRemoteMD(partial, peer), NIXL_SUCCESS);
+    ASSERT_NO_FATAL_FAILURE(prepareRead(1));
+
+    for (unsigned i = 0; i < 2; ++i) {
+        auto status = dst.agent->postXferReq(requests[i]);
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        nixl_notifs_t notifs;
+        while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+            ASSERT_EQ(src.agent->getNotifs(notifs), NIXL_SUCCESS);
+            status = dst.agent->getXferStatus(requests[i]);
+        }
+        ASSERT_EQ(status, NIXL_SUCCESS);
+        const auto dest = dst.buffers[i].getBasicDesc();
+        EXPECT_TRUE(checkPayload(reinterpret_cast<const void *>(dest.addr), dest.len, i, 123));
+        ASSERT_EQ(dst.agent->releaseXferReq(requests[i]), NIXL_SUCCESS);
+    }
+}
+
 TEST_F(MetadataExchangeTestFixture, GetLocalPartialWithErrors) {
     auto &src = agents_[0];
     auto &dst = agents_[1];
@@ -399,27 +446,41 @@ TEST_F(MetadataExchangeTestFixture, LoadRemoteAfterSectionError) {
 
         EXPECT_EQ(lig1.getIgnoredCount(), 1);
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
-
-        // The failed load drops the remote agent, so there is nothing left to invalidate
-        ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
-        ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_ERR_NOT_FOUND);
     };
 
     // Case 1: Remote agent not loaded before. The failed load must not leave a
     // backend connection behind, otherwise loading the valid metadata fails.
     ASSERT_NO_FATAL_FAILURE(loadInvalidMD());
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_ERR_NOT_FOUND);
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_ERR_NOT_FOUND);
 
     ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
     ASSERT_EQ(remote_name, src.name);
     ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
 
-    // Case 2: Remote agent already loaded and connected, e.g. a peer sends updated
-    // metadata that fails to load. The peer is dropped and can be loaded again.
+    // A request prepared before the rejected refresh can still read the original registration.
+    const auto source = src.buffers.front().getBasicDesc();
+    const auto dest = dst.buffers.front().getBasicDesc();
+    fillPayload(reinterpret_cast<void *>(source.addr), source.len, 0, 123);
+    nixl_xfer_dlist_t local(DRAM_SEG), remote(DRAM_SEG);
+    local.addDesc(dest);
+    remote.addDesc(source);
+    nixlXferReqH *request = nullptr;
+    ASSERT_EQ(dst.agent->createXferReq(NIXL_READ, local, remote, src.name, request), NIXL_SUCCESS);
+
     ASSERT_NO_FATAL_FAILURE(loadInvalidMD());
+    EXPECT_EQ(dst.agent->checkRemoteMD(src.name, remote), NIXL_SUCCESS);
 
-    ASSERT_EQ(dst.agent->loadRemoteMD(md, remote_name), NIXL_SUCCESS);
-    ASSERT_EQ(remote_name, src.name);
-    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, {DRAM_SEG}), NIXL_SUCCESS);
+    auto status = dst.agent->postXferReq(request);
+    nixl_notifs_t notifs;
+    const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while (status == NIXL_IN_PROG && std::chrono::steady_clock::now() < deadline) {
+        ASSERT_EQ(src.agent->getNotifs(notifs), NIXL_SUCCESS);
+        status = dst.agent->getXferStatus(request);
+    }
+    ASSERT_EQ(status, NIXL_SUCCESS);
+    EXPECT_TRUE(checkPayload(reinterpret_cast<const void *>(dest.addr), dest.len, 0, 123));
+    ASSERT_EQ(dst.agent->releaseXferReq(request), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
 }
@@ -431,8 +492,9 @@ TEST_F(MetadataExchangeTestFixture, RejectOverlappingRemoteDescriptor) {
     auto &dst = agents_[1];
 
     constexpr size_t half_size = 1 << 16;
-    std::vector<uint8_t> buffer(2 * half_size, 0x5a);
-    const auto base_addr = reinterpret_cast<uintptr_t>(buffer.data());
+    std::vector<uint8_t> buffer(3 * half_size, 0x5a);
+    const auto prefix_addr = reinterpret_cast<uintptr_t>(buffer.data());
+    const auto base_addr = prefix_addr + half_size;
 
     nixl_opt_args_t partial_args;
     partial_args.includeConnInfo = true;
@@ -451,6 +513,8 @@ TEST_F(MetadataExchangeTestFixture, RejectOverlappingRemoteDescriptor) {
     ASSERT_EQ(src.agent->deregisterMem(reg_half), NIXL_SUCCESS);
 
     nixl_reg_dlist_t reg_full(DRAM_SEG);
+    // This lower-addressed descriptor will be unpacked before the overlap is detected.
+    reg_full.addDesc(nixlBlobDesc(prefix_addr, half_size, 0));
     reg_full.addDesc(nixlBlobDesc(base_addr, 2 * half_size, 0));
     ASSERT_EQ(src.agent->registerMem(reg_full), NIXL_SUCCESS);
 
@@ -467,13 +531,17 @@ TEST_F(MetadataExchangeTestFixture, RejectOverlappingRemoteDescriptor) {
         EXPECT_EQ(lig2.getIgnoredCount(), 1);
     }
 
-    // After the rejected overlapping load, reloading the new registration succeeds.
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, reg_half.trim()), NIXL_SUCCESS);
+    nixl_xfer_dlist_t prefix(DRAM_SEG);
+    prefix.addDesc(nixlBasicDesc(prefix_addr, half_size, 0));
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, prefix), NIXL_ERR_NOT_FOUND);
+
+    // Replacing the original registration requires explicit invalidation.
+    ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
     ASSERT_EQ(dst.agent->loadRemoteMD(md_full, remote_name), NIXL_SUCCESS);
     ASSERT_EQ(remote_name, src.name);
 
-    nixl_xfer_dlist_t check_full(DRAM_SEG);
-    check_full.addDesc(nixlBasicDesc(base_addr, 2 * half_size, 0));
-    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, check_full), NIXL_SUCCESS);
+    ASSERT_EQ(dst.agent->checkRemoteMD(src.name, reg_full.trim()), NIXL_SUCCESS);
 
     ASSERT_EQ(dst.agent->invalidateRemoteMD(src.name), NIXL_SUCCESS);
     ASSERT_EQ(src.agent->deregisterMem(reg_full), NIXL_SUCCESS);
