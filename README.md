@@ -32,6 +32,8 @@ NVIDIA Inference Xfer Library (NIXL) is targeted for accelerating point to point
 
 * [Use cases](https://github.com/ai-dynamo/nixl/blob/main/docs/uses.md) - NIXL usage examples and integrations (`docs/uses.md`)
 
+* [AI agent skills](https://github.com/ai-dynamo/nixl/tree/main/skills) - Agent guidance for NIXL docs and installation (`skills/`)
+
 ## Supported Platforms
 NIXL is supported on a Linux environment only. It is tested on Ubuntu (22.04/24.04) and Fedora. macOS and Windows are not currently supported; use a Linux host or container/VM.
 
