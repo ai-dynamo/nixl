@@ -38,6 +38,9 @@ struct alignas(16) GpunetioDeviceLane {
     alignas(8) uint64_t next_retire;
     alignas(4) uint32_t phase;
     alignas(4) uint32_t failed;
+    // Standard GET queue capacity, stored by the first GET whose QP checks pass and 0 until
+    // then. The host never sets it. It takes what was tail padding, which hosts zero.
+    alignas(4) uint32_t capacity;
 };
 
 // Each prepared context retains a selected lane for the batch extension.
@@ -79,6 +82,7 @@ static_assert(sizeof(GpunetioViewElem) == 32);
 static_assert(sizeof(GpunetioStatusPayload) == 24);
 static_assert(sizeof(GpunetioStatusPayload) <= 60);
 static_assert(sizeof(GpunetioDeviceLane) == 48);
+static_assert(offsetof(GpunetioDeviceLane, capacity) == 40);
 static_assert(alignof(GpunetioDeviceLane) >= 16);
 static_assert(std::is_standard_layout_v<GpunetioDeviceLane>);
 static_assert(std::is_trivial_v<GpunetioDeviceLane>);

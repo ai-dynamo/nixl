@@ -123,17 +123,26 @@ submitGetLocked(GpunetioDeviceLane *lane,
                 size_t bytes,
                 uint64_t flags,
                 xferStatusH *status) {
-    if (lane->failed || !lane->qp || !compat::usesGpuSmDoorbell(lane->qp)) {
+    // A bound lane keeps its QP, and a rebind writes a fresh lane, so the QP is checked
+    // only until a GET stores its capacity. Later GETs read just the lane under the lock.
+    uint32_t capacity = lane->capacity;
+    if (lane->failed || !lane->qp || (!capacity && !compat::usesGpuSmDoorbell(lane->qp))) {
         failLane(lane);
         return NIXL_ERR_BACKEND;
     }
-    if (compat::needsDump(lane->qp)) {
-        return NIXL_ERR_NOT_SUPPORTED;
+    if (!capacity) {
+        if (compat::needsDump(lane->qp)) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+        auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(lane->qp);
+        capacity = cq ? min(uint32_t(lane->qp->sq_wqe_num), cq->cqe_num) : 0;
+        if (capacity < 2) {
+            return NIXL_ERR_BACKEND;
+        }
+        lane->capacity = capacity;
     }
-    auto *cq = doca_gpu_dev_verbs_qp_get_cq_sq(lane->qp);
-    const uint32_t capacity = cq ? min(uint32_t(lane->qp->sq_wqe_num), cq->cqe_num) : 0;
     const uint64_t chunks = 1 + (bytes - 1) / DOCA_GPUNETIO_VERBS_MAX_TRANSFER_SIZE;
-    if (capacity < 2 || chunks > ~uint64_t{0} - lane->active_ticket) {
+    if (chunks > ~uint64_t{0} - lane->active_ticket) {
         return NIXL_ERR_BACKEND;
     }
     if (lane->generation == ~uint64_t{0}) {
