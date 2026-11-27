@@ -113,8 +113,8 @@ request fails; the failed channel rejects new work until teardown.
 `flags::defer` postpones doorbell publication until a nondeferred submission,
 status poll, flush, or queue-capacity pressure drives progress. Other flags are
 rejected. Multiple producers may submit on the same channel; a per-channel lock
-serializes queue reservation and completion checks, and contending callers back
-off while it is held. When the channel queue is full, `get` waits under that
+serializes queue reservation and completion checks, and contending callers spin
+until it is released. When the channel queue is full, `get` waits under that
 lock until completions free a slot. With an unresponsive peer this lasts until
 the transport reports an error, and other GETs on the channel wait behind it.
 `flush` waits for its completions without holding the lock. Concurrent requests
