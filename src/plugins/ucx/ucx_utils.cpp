@@ -33,6 +33,15 @@
 #include "config.h"
 #include "serdes/serdes.h"
 
+bool
+isFailoverErrHandlingMode(ucp_err_handling_mode_t mode) noexcept {
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    return mode == UCP_ERR_HANDLING_MODE_FAILOVER;
+#else
+    return false;
+#endif
+}
+
 [[nodiscard]] nixl_b_params_t
 get_ucx_backend_common_options() {
     nixl_b_params_t params = {{"ucx_devices", ""}, {"num_workers", "1"}};
@@ -54,6 +63,9 @@ template<typename E> struct EnumName {
 constexpr auto ucx_err_handling_mode_names = std::to_array<EnumName<ucp_err_handling_mode_t>>({
     {UCP_ERR_HANDLING_MODE_NONE, "none"},
     {UCP_ERR_HANDLING_MODE_PEER, "peer"},
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+    {UCP_ERR_HANDLING_MODE_FAILOVER, "failover"},
+#endif
 });
 
 constexpr auto ucx_vram_memtype_hint_names = std::to_array<EnumName<nixl_ucx_vram_memtype_hint_t>>({
@@ -190,7 +202,7 @@ nixlUcxEp::disconnect() {
 }
 
 nixlUcxEp::nixlUcxEp(ucp_worker_h worker, void *addr, ucp_err_handling_mode_t err_handling_mode)
-    : closeFlags_(err_handling_mode == UCP_ERR_HANDLING_MODE_PEER ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
+    : closeFlags_(err_handling_mode != UCP_ERR_HANDLING_MODE_NONE ? UCP_EP_CLOSE_FLAG_FORCE : 0) {
     ucp_ep_params_t ep_params;
 
     ep_params.field_mask = UCP_EP_PARAM_FIELD_REMOTE_ADDRESS | UCP_EP_PARAM_FIELD_ERR_HANDLING_MODE;
@@ -532,6 +544,9 @@ ucx_policy_to_mem_type(const nixl_ucx_vram_memtype_hint_t policy) {
 
 } // namespace
 
+/**
+ * @brief Create the UCX context and apply NIXL transport settings
+ */
 nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                bool prog_thread,
                                unsigned long num_workers,
@@ -539,7 +554,8 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
                                size_t num_device_channels,
                                const std::string &engine_config,
                                const std::string &name,
-                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy)
+                               nixl_ucx_vram_memtype_hint_t vram_mem_type_hint_policy,
+                               ucp_err_handling_mode_t err_handling_mode)
     : mtType_(makeMtType(prog_thread, sync_mode)),
       ucpVersion_(makeUcpVersion()),
       name_(name),
@@ -607,6 +623,11 @@ nixlUcxContext::nixlUcxContext(const std::vector<std::string> &devs,
         if (ucpVersion_ >= UCP_VERSION(1, 19)) {
             config.modify("MAX_COMPONENT_MDS", "32");
         }
+    }
+
+    /* UCX_FAILOVER_MODE=token requires UCX_IB_INDIRECT_ATOMIC=n. */
+    if (isFailoverErrHandlingMode(err_handling_mode)) {
+        config.modify("IB_INDIRECT_ATOMIC", "n");
     }
 
     std::string elem;

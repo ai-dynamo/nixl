@@ -33,12 +33,17 @@ constexpr std::chrono::seconds wait_timeout{100};
 namespace nixl {
     constexpr const char* ucx_err_handling_mode_key  = "ucx_error_handling_mode";
     constexpr const char* ucx_err_handling_mode_peer = "peer";
+    constexpr const char *ucx_err_handling_mode_failover = "failover";
 
+    /**
+     * @brief Create a UCX backend, optionally overriding the error-handling mode
+     */
     static nixlBackendH *
     createUcxBackend(nixlAgent &agent,
                      const std::string &backend_name,
                      size_t num_workers,
-                     size_t num_threads) {
+                     size_t num_threads,
+                     const std::string &err_handling_mode = "") {
         std::vector<nixl_backend_t> plugins;
         nixl_status_t status = agent.getAvailPlugins(plugins);
         EXPECT_EQ(status, NIXL_SUCCESS);
@@ -52,6 +57,9 @@ namespace nixl {
 
         nixlBackendH* backend_handle = nullptr;
         EXPECT_EQ(ucx_err_handling_mode_peer, params[ucx_err_handling_mode_key]);
+        if (!err_handling_mode.empty()) {
+            params[ucx_err_handling_mode_key] = err_handling_mode;
+        }
         params["num_workers"] = std::to_string(num_workers);
         params["num_threads"] = std::to_string(num_threads);
         // If threadpool is configured always force split
@@ -103,7 +111,8 @@ class TestErrorHandling : public nixl_test_t {
              const std::string &backend_name,
              bool use_prog_thread,
              size_t num_workers,
-             size_t num_threads);
+             size_t num_threads,
+             const std::string &err_handling_mode = "");
 
         void
         destroy();
@@ -150,7 +159,11 @@ protected:
     };
 
     TestErrorHandling();
-    template<TestType test_type, enum nixl_xfer_op_t op> void testXfer();
+    void
+    SetUp() override;
+    template<TestType test_type, enum nixl_xfer_op_t op>
+    void
+    testXfer();
     void
     testNotifAfterFail();
     void
@@ -186,6 +199,7 @@ private:
     const bool progThread_;
     size_t numWorkers_;
     size_t numThreads_;
+    std::string errHandlingMode_;
 };
 
 void
@@ -193,7 +207,8 @@ TestErrorHandling::Agent::init(const std::string &name,
                                const std::string &backend_name,
                                bool use_prog_thread,
                                size_t num_workers,
-                               size_t num_threads) {
+                               size_t num_threads,
+                               const std::string &err_handling_mode) {
     nixlAgentConfig cfg;
     m_progThread = use_prog_thread;
     cfg.useProgThread = use_prog_thread;
@@ -201,7 +216,8 @@ TestErrorHandling::Agent::init(const std::string &name,
     cfg.syncMode = nixl_thread_sync_t::NIXL_THREAD_SYNC_RW;
     m_priv = std::make_unique<nixlAgent>(name, cfg);
     // At the moment, only UCX backend is tested for error handling support.
-    m_backend = nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads);
+    m_backend =
+        nixl::createUcxBackend(*m_priv, backend_name, num_workers, num_threads, err_handling_mode);
     m_mem.init(m_backend);
     m_mem.fillData();
 
@@ -312,11 +328,43 @@ TestErrorHandling::TestErrorHandling()
     : m_backend_name(GetParam().backendName),
       progThread_(GetParam().progressThreadEnabled),
       numWorkers_(GetParam().numWorkers),
-      numThreads_(GetParam().numThreads) {
+      numThreads_(GetParam().numThreads),
+      errHandlingMode_(GetParam().ucxErrHandlingMode) {
+    m_env.unsetVar("NIXL_PLUGIN_UCX_SGL_ENABLE");
+    m_env.unsetVar("NIXL_UCX_SGL_ENABLE");
     m_env.addVar("UCX_RC_TIMEOUT", "100us");
     m_env.addVar("UCX_RC_RETRY_COUNT", "4");
     m_env.addVar("UCX_UD_TIMEOUT", "3s");
+    // Default 20s keepalive cannot fail every AM lane inside the 100s wait.
+    m_env.addVar("UCX_KEEPALIVE_INTERVAL", "1s");
     m_env.addVar("NIXL_PLUGIN_DIR", std::string(BUILD_DIR) + "/src/plugins/ucx");
+}
+
+void
+TestErrorHandling::SetUp() {
+#ifdef HAVE_UCX_BACKEND
+    if (errHandlingMode_ != nixl::ucx_err_handling_mode_failover) {
+        return;
+    }
+
+    if (::nixl::hwInfo::instance().numEfaDevices > 0) {
+        GTEST_SKIP() << "UCX failover error handling does not support Amazon EFA";
+    }
+
+    unsigned major, minor, release;
+    ucp_get_version(&major, &minor, &release);
+    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) {
+        GTEST_SKIP() << "UCX failover error handling requires UCX 1.24 or newer";
+    }
+
+    // Failover cannot select protocols over shared memory and TCP alone.
+    if (::nixl::hwInfo::instance().numVerbsIbPorts == 0) {
+        GTEST_SKIP() << "UCX failover error handling requires an active RDMA port";
+    }
+
+    // Failover does not support SGL offload, so disable it before enabling failover.
+    m_env.addVar("NIXL_PLUGIN_UCX_SGL_ENABLE", "n");
+#endif
 }
 
 void
@@ -335,11 +383,14 @@ TestErrorHandling::excludeEfaTransports() {
 }
 
 template<TestErrorHandling::TestType test_type, enum nixl_xfer_op_t op>
-void TestErrorHandling::testXfer() {
+void
+TestErrorHandling::testXfer() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
 
     exchangeMetaData();
 
@@ -368,7 +419,12 @@ void TestErrorHandling::testXfer() {
                 // on disconnect: the consumer must do it explicitly before
                 // re-registering the failed agent.
                 EXPECT_EQ(m_Initiator.getAgent()->invalidateRemoteMD(target_name), NIXL_SUCCESS);
-                m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+                m_Target.init(target_name,
+                              m_backend_name,
+                              progThread_,
+                              numWorkers_,
+                              numThreads_,
+                              errHandlingMode_);
                 exchangeMetaData();
             }
         } else {
@@ -541,8 +597,10 @@ void
 TestErrorHandling::testStalePreppedDlist() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -590,8 +648,10 @@ void
 TestErrorHandling::testStaleXferHandle() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -635,8 +695,10 @@ void
 TestErrorHandling::testMetadataReloadKeepsHandlesValid() {
     const std::string initiator_name = "initiator";
     const std::string target_name = "target";
-    m_Initiator.init(initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_);
-    m_Target.init(target_name, m_backend_name, progThread_, numWorkers_, numThreads_);
+    m_Initiator.init(
+        initiator_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
+    m_Target.init(
+        target_name, m_backend_name, progThread_, numWorkers_, numThreads_, errHandlingMode_);
     exchangeMetaData();
 
     nixl_xfer_dlist_t l_descs(DRAM_SEG), r_descs(DRAM_SEG);
@@ -693,5 +755,36 @@ NIXL_INSTANTIATE_TEST(ucx, TestErrorHandling, "UCX", true, 1, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_no_pt, TestErrorHandling, "UCX", false, 1, 0, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool, TestErrorHandling, "UCX", true, 2, 1, "");
 NIXL_INSTANTIATE_TEST(ucx_threadpool_no_pt, TestErrorHandling, "UCX", false, 2, 1, "");
+
+#ifdef HAVE_UCX_ERR_HANDLING_FAILOVER
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   true,
+                                   1,
+                                   0,
+                                   nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_no_pt,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   false,
+                                   1,
+                                   0,
+                                   nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_threadpool,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   true,
+                                   2,
+                                   1,
+                                   nixl::ucx_err_handling_mode_failover);
+NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(ucx_failover_threadpool_no_pt,
+                                   TestErrorHandling,
+                                   "UCX",
+                                   false,
+                                   2,
+                                   1,
+                                   nixl::ucx_err_handling_mode_failover);
+#endif
 
 } // namespace gtest

@@ -32,6 +32,9 @@ namespace nixl {
 namespace {
 
     constexpr const char *kPciDevicePath = "/sys/bus/pci/devices";
+    constexpr const char *kIbDevicePath = "/sys/class/infiniband";
+    constexpr const char *kIbVerbsDevPath = "/dev/infiniband";
+    constexpr const char *kIbPortStateActive = "4: ACTIVE";
 
     constexpr unsigned long kPciVendorMellanox = 0x15b3;
     constexpr unsigned long kPciVendorNvidia = 0x10de;
@@ -76,9 +79,59 @@ namespace {
         }
     }
 
+    /**
+     * @brief Whether the verbs device node of an RDMA device exists in /dev/infiniband.
+     *
+     * Containers can see the host's /sys/class/infiniband without the device nodes needed to
+     * use it.
+     */
+    [[nodiscard]] bool
+    hasVerbsDeviceNode(const std::filesystem::path &dev_path) {
+        const std::filesystem::directory_iterator end;
+        std::error_code ec;
+        for (std::filesystem::directory_iterator verbs(dev_path / "device" / "infiniband_verbs",
+                                                       ec);
+             !ec && (verbs != end);
+             verbs.increment(ec)) {
+            std::error_code node_ec;
+            if (std::filesystem::exists(
+                    std::filesystem::path(kIbVerbsDevPath) / verbs->path().filename(), node_ec)) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    void
+    countActiveIbPorts(unsigned &num_active, unsigned &num_verbs) {
+        const std::filesystem::directory_iterator end;
+        std::error_code dev_ec;
+        for (std::filesystem::directory_iterator dev(kIbDevicePath, dev_ec);
+             !dev_ec && (dev != end);
+             dev.increment(dev_ec)) {
+            const bool has_verbs = hasVerbsDeviceNode(dev->path());
+            std::error_code port_ec;
+            for (std::filesystem::directory_iterator port(dev->path() / "ports", port_ec);
+                 !port_ec && (port != end);
+                 port.increment(port_ec)) {
+                std::ifstream state_file(port->path() / "state");
+                std::string state;
+                if (std::getline(state_file, state) && (state == kIbPortStateActive)) {
+                    num_active++;
+                    num_verbs += has_verbs;
+                    NIXL_DEBUG << "Found active RDMA port: " << dev->path().filename().string()
+                               << "/" << port->path().filename().string()
+                               << (has_verbs ? "" : " (no verbs device node)");
+                }
+            }
+        }
+    }
+
 } // namespace
 
 hwInfo::hwInfo() {
+    countActiveIbPorts(numActiveIbPorts, numVerbsIbPorts);
+
     std::error_code ec;
     std::filesystem::directory_iterator dir_iter(kPciDevicePath, ec);
     if (ec) {
@@ -147,7 +200,9 @@ hwInfo::hwInfo() {
                << "numNvidiaGpus=" << numNvidiaGpus << ", "
                << "numAmdGpus=" << numAmdGpus << ", "
                << "numIbDevices=" << numIbDevices << ", "
-               << "numEfaDevices=" << numEfaDevices << " }";
+               << "numEfaDevices=" << numEfaDevices << ", "
+               << "numActiveIbPorts=" << numActiveIbPorts << ", "
+               << "numVerbsIbPorts=" << numVerbsIbPorts << " }";
 }
 
 const hwInfo &

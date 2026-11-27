@@ -196,6 +196,8 @@ struct nixlTestParam {
     unsigned numThreads;
     std::string engineConfig;
     bool sglEnabled = false;
+    // Empty keeps the backend default ucx_error_handling_mode.
+    std::string ucxErrHandlingMode;
 };
 
 using nixl_test_t = testing::TestWithParam<nixlTestParam>;
@@ -239,5 +241,23 @@ checkPayload(const void *addr, size_t size, uint32_t index, uint32_t seed);
                                                        _num_threads,             \
                                                        _engine_config,           \
                                                        true}})));
+
+#define NIXL_INSTANTIATE_TEST_UCX_ERR_MODE(_test_name,                           \
+                                           _test_case,                           \
+                                           _backend,                             \
+                                           _progress_thread_enabled,             \
+                                           _num_workers,                         \
+                                           _num_threads,                         \
+                                           _err_handling_mode)                   \
+    INSTANTIATE_TEST_SUITE_P(                                                    \
+        _test_name,                                                              \
+        _test_case,                                                              \
+        testing::ValuesIn(std::vector<nixlTestParam>({{_backend,                 \
+                                                       _progress_thread_enabled, \
+                                                       _num_workers,             \
+                                                       _num_threads,             \
+                                                       "",                       \
+                                                       false,                    \
+                                                       _err_handling_mode}})));
 
 #endif /* TEST_GTEST_COMMON_H */
