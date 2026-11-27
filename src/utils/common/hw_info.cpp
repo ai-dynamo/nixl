@@ -80,16 +80,22 @@ namespace {
 
     [[nodiscard]] unsigned
     countActiveIbPorts() {
+        const std::filesystem::directory_iterator end;
         unsigned count = 0;
-        std::error_code ec;
-        for (const auto &dev : std::filesystem::directory_iterator(kIbDevicePath, ec)) {
-            for (const auto &port : std::filesystem::directory_iterator(dev.path() / "ports", ec)) {
-                std::ifstream state_file(port.path() / "state");
+        std::error_code dev_ec;
+        for (std::filesystem::directory_iterator dev(kIbDevicePath, dev_ec);
+             !dev_ec && (dev != end);
+             dev.increment(dev_ec)) {
+            std::error_code port_ec;
+            for (std::filesystem::directory_iterator port(dev->path() / "ports", port_ec);
+                 !port_ec && (port != end);
+                 port.increment(port_ec)) {
+                std::ifstream state_file(port->path() / "state");
                 std::string state;
                 if (std::getline(state_file, state) && (state == kIbPortStateActive)) {
                     count++;
-                    NIXL_DEBUG << "Found active RDMA port: " << dev.path().filename().string()
-                               << "/" << port.path().filename().string();
+                    NIXL_DEBUG << "Found active RDMA port: " << dev->path().filename().string()
+                               << "/" << port->path().filename().string();
                 }
             }
         }

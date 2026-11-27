@@ -351,13 +351,15 @@ TestErrorHandling::SetUp() {
         GTEST_SKIP() << "UCX failover error handling does not support Amazon EFA";
     }
 
-    // Failover requires UCX 1.24 and cannot select protocols over shared memory and TCP alone.
     unsigned major, minor, release;
     ucp_get_version(&major, &minor, &release);
-    if ((UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) ||
-        (::nixl::hwInfo::instance().numActiveIbPorts == 0)) {
-        errHandlingMode_ = nixl::ucx_err_handling_mode_peer;
-        return;
+    if (UCP_VERSION(major, minor) < UCP_VERSION(1, 24)) {
+        GTEST_SKIP() << "UCX failover error handling requires UCX 1.24 or newer";
+    }
+
+    // Failover cannot select protocols over shared memory and TCP alone.
+    if (::nixl::hwInfo::instance().numActiveIbPorts == 0) {
+        GTEST_SKIP() << "UCX failover error handling requires an active RDMA port";
     }
 
     // Failover does not support SGL offload, so disable it before enabling failover.
