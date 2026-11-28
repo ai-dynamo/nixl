@@ -361,10 +361,10 @@ NB_ARG_BOOL(gusli_try_use_uring,
 // UCX GPU Device API options
 NB_ARG_BOOL(use_device_api,
             false,
-            "Use UCX GPU Device API for GPU-kernel-initiated PUT transfers. "
-            "When enabled, --num_threads is repurposed as the CUDA kernel "
-            "block size (num_threads <= 32 -> THREAD level; > 32 -> WARP level, must be a "
-            "multiple of 32), and the internal CPU thread count is forced to 1.");
+            "Use the NIXL GPU Device API for GPU-kernel-initiated transfers: PUT (WRITE) "
+            "with UCX, GET (READ) with GPUNETIO. When enabled, --num_threads is repurposed "
+            "as the CUDA kernel block size (num_threads <= 32 -> THREAD level; > 32 -> WARP "
+            "level, must be a multiple of 32), and the internal CPU thread count is forced to 1.");
 NB_ARG_INT32(device_channel_num,
              1,
              "Number of logical Device API channels, default to 1. "
@@ -500,20 +500,34 @@ validateDeviceAPIConfig() {
     if (!proxy && xferBenchConfig::device_mode != XFERBENCH_DEVICE_MODE_DIRECT) {
         return reject("device_mode must be direct or proxy");
     }
+    // GPUNETIO runs device GET directly on its native QP pool, with no progress thread.
+    const bool gpunetio = xferBenchConfig::backend == XFERBENCH_BACKEND_GPUNETIO;
 #ifndef HAVE_UCX_GPU_DEVICE_API
-    if (!proxy) {
+    if (!proxy && !gpunetio) {
         return reject("device_mode=direct needs UCX GPU Device API support, which is not enabled "
                       "in this build; set -Ducx_path=<path> with UCX GPU device headers available");
+    }
+#endif
+#ifndef NIXLBENCH_GPUNETIO_DEVICE_API
+    if (gpunetio) {
+        return reject("backend GPUNETIO needs the GPUNETIO device API, which is not enabled in "
+                      "this build; build NIXL with -Dgpunetio_device_api=enabled and DOCA 3.5+");
     }
 #endif
     if (xferBenchConfig::worker_type != XFERBENCH_WORKER_NIXL) {
         return reject("worker_type must be nixl");
     }
-    if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
-        return reject("backend must be UCX");
-    }
-    if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
-        return reject("op_type must be WRITE");
+    if (gpunetio) {
+        if (proxy) {
+            return reject("backend GPUNETIO supports only device_mode=direct");
+        }
+        if (xferBenchConfig::op_type != XFERBENCH_OP_READ) {
+            return reject("backend GPUNETIO supports only op_type READ");
+        }
+    } else if (xferBenchConfig::backend != XFERBENCH_BACKEND_UCX) {
+        return reject("backend must be UCX or GPUNETIO");
+    } else if (xferBenchConfig::op_type != XFERBENCH_OP_WRITE) {
+        return reject("op_type must be WRITE with backend UCX");
     }
     if (xferBenchConfig::initiator_seg_type != XFERBENCH_SEG_TYPE_VRAM ||
         xferBenchConfig::target_seg_type != XFERBENCH_SEG_TYPE_VRAM) {
@@ -528,7 +542,7 @@ validateDeviceAPIConfig() {
                       << "progress threads" << std::endl;
             xferBenchConfig::enable_pt = false;
         }
-    } else if (!xferBenchConfig::enable_pt) {
+    } else if (!gpunetio && !xferBenchConfig::enable_pt) {
         return reject("--enable_pt must be set");
     }
     if (xferBenchConfig::mode != XFERBENCH_MODE_SG) {
@@ -540,7 +554,7 @@ validateDeviceAPIConfig() {
     if (xferBenchConfig::pipeline_depth != 1) {
         return reject("pipeline_depth must be 1");
     }
-    if (!proxy &&
+    if (!proxy && !gpunetio &&
         (std::getenv("NIXL_UCX_RC_GDA_NUM_CHANNELS") != nullptr ||
          std::getenv("UCX_RC_GDA_NUM_CHANNELS") != nullptr)) {
         return reject("NIXL_UCX_RC_GDA_NUM_CHANNELS and UCX_RC_GDA_NUM_CHANNELS must not be set; "

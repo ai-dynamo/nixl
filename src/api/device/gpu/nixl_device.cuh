@@ -95,17 +95,18 @@ put(const memViewElem &src,
  * @param xfer_status [in,out] Optional status handle
  *                            (use @ref nixl::gpu::getXferStatus)
  *
- * @return NIXL_ERR_NOT_SUPPORTED Get is not supported yet.
+ * @return NIXL_IN_PROG Transfer posted successfully.
+ * @return NIXL_ERR_NOT_SUPPORTED The backend does not support GET.
  */
 template<level_t level = level_t::THREAD, exec_mode_t mode = exec_mode_t::DYNAMIC>
 __device__ nixl_status_t
-get(const memViewElem &,
-    const memViewElem &,
-    size_t,
-    unsigned = 0,
-    uint64_t = 0,
-    xferStatusH * = nullptr) {
-    return NIXL_ERR_NOT_SUPPORTED;
+get(const memViewElem &dst,
+    const memViewElem &src,
+    size_t size,
+    unsigned channel_id = 0,
+    uint64_t flags = 0,
+    xferStatusH *xfer_status = nullptr) {
+    return impl::get<level, mode>(dst, src, size, channel_id, flags, xfer_status);
 }
 
 /**

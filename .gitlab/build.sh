@@ -491,6 +491,10 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    # Build the GPUNETIO device API with DOCA 3.5+, so CI compiles it and nixlbench runs it.
+    if pkg-config --atleast-version=3.5 doca-gpunetio 2>/dev/null; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dgpunetio_device_api=enabled"
+    fi
     # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
     # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
     # Only NIXL's Meson build uses this venv; dependency builds keep system Python.
@@ -518,6 +522,18 @@ else
     # cp ${BUILD_DIR}/nixl.pc ${INSTALL_DIR}/lib/pkgconfig/nixl.pc
 
     cd benchmark/nixlbench
-    meson setup ${NIXLBENCH_BUILD_DIR} -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}
+    if ! meson setup ${NIXLBENCH_BUILD_DIR} -Dnixl_path=${INSTALL_DIR} -Dprefix=${INSTALL_DIR}; then
+        cat "${NIXLBENCH_BUILD_DIR}/meson-logs/meson-log.txt"
+        exit 1
+    fi
+    # GPU CI expects the device GET path when DOCA is available. Keep failures visible:
+    # a failed optional compiler probe otherwise only disables the feature in the summary.
+    if $HAS_GPU && pkg-config --atleast-version=3.5 doca-gpunetio 2>/dev/null; then
+        if ! meson introspect --targets "${NIXLBENCH_BUILD_DIR}" | grep -F -- '-DNIXLBENCH_GPUNETIO_DEVICE_API' >/dev/null; then
+            cat "${NIXLBENCH_BUILD_DIR}/meson-logs/meson-log.txt"
+            echo "GPUNETIO Device API compiler probe failed; see the compiler output above" >&2
+            exit 1
+        fi
+    fi
     ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} && ninja -j"$NPROC" -C ${NIXLBENCH_BUILD_DIR} install
 fi

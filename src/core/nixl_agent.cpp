@@ -609,11 +609,6 @@ nixlAgent::createBackend(const nixl_backend_t &type,
     std::string conn_info;
 
     if (backend->supportsRemote()) {
-        if (!backend->supportsNotif()) {
-            NIXL_ERROR_FUNC << "backend '" << type << "' supportsRemote but not notifications";
-            return NIXL_ERR_BACKEND;
-        }
-
         const nixl_status_t ret = backend->getConnInfo(conn_info);
         if (ret != NIXL_SUCCESS) {
             NIXL_ERROR_FUNC << "failed to get connection info for '" << type << "' with status "
@@ -639,8 +634,10 @@ nixlAgent::createBackend(const nixl_backend_t &type,
         data->memToBackend[elm].push_back(backend.get());
     }
 
-    if (backend->supportsRemote()) {
+    if (backend->supportsRemote() && backend->supportsNotif()) {
         data->notifEngines.push_back(backend.get());
+    }
+    if (backend->supportsRemote()) {
         data->connMd_[type] = conn_info;
         if ((data->tracer_ != nullptr) &&
             !backend->supportsCapability(nixl_backend_capability_t::TRACE_CONTEXT)) {

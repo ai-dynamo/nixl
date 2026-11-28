@@ -532,7 +532,11 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     else \
         NIXL_EP_FLAG=""; \
     fi && \
-    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
+    GPUNETIO_DEVICE_API_FLAG="" && \
+    if pkg-config --atleast-version=3.5 doca-gpunetio 2>/dev/null; then \
+        GPUNETIO_DEVICE_API_FLAG="-Dgpunetio_device_api=enabled"; \
+    fi && \
+    meson setup -Ducx_path=$UCX_PREFIX -Dlibfabric_path=$LIBFABRIC_INSTALL_PATH $NIXL_EP_FLAG $GPUNETIO_DEVICE_API_FLAG build/ --prefix=$NIXL_PREFIX --buildtype=$BUILD_TYPE && \
     cd build && \
     ninja -j${NPROC:-$(nproc)} && \
     ninja install

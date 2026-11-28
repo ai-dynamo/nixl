@@ -339,7 +339,7 @@ if cuda_dep.found()
     endif
     message('nvcc version: ' + nvcc.version())
     message('CUDA targets: ' + ', '.join(selected_cuda_archs) + ' + ' + nvcc_ptx_arch)
-    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : false)
+    doca_gpunetio_dep = dependency('doca-gpunetio', version : '>=3.5', required : get_option('gpunetio_device_api').enabled())
 
     # Set the Python CUDA-specific wheel directory
     cuda_version_major = nvcc.version().split('.')[0]

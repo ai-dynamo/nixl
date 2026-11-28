@@ -251,19 +251,30 @@ sendDataQps(int fd, const nixlDocaRdmaQp &peer, uint32_t count) {
         (count == 1 || sendAll(fd, peer.qpn_write.data(), count * sizeof(uint32_t)));
 }
 
-bool
+nixl_status_t
 recvDataQps(int fd, uint32_t &data_qpn, std::vector<uint32_t> &write_qpns, uint32_t count) {
     if (count > 1) {
         uint32_t header[4]{};
-        if (!recvAll(fd, header, sizeof(header)) || header[0] != data_qp_protocol_magic ||
-            header[1] != data_qp_protocol_version || header[2] != count || header[3] != count + 1) {
-            return false;
+        if (!recvAll(fd, header, sizeof(header))) {
+            return NIXL_ERR_BACKEND;
+        }
+        if (header[0] != data_qp_protocol_magic || header[1] != data_qp_protocol_version ||
+            header[2] != count || header[3] != count + 1) {
+            return NIXL_ERR_INVALID_PARAM;
         }
         write_qpns.resize(count);
     }
-    return recvAll(fd, &data_qpn, sizeof(data_qpn)) && data_qpn != data_qp_protocol_magic &&
-        (count == 1 || recvAll(fd, write_qpns.data(), count * sizeof(uint32_t)));
+    if (!recvAll(fd, &data_qpn, sizeof(data_qpn))) {
+        return NIXL_ERR_BACKEND;
+    }
+    if (data_qpn == data_qp_protocol_magic) {
+        return NIXL_ERR_INVALID_PARAM;
+    }
+    return count == 1 || recvAll(fd, write_qpns.data(), count * sizeof(uint32_t)) ?
+        NIXL_SUCCESS :
+        NIXL_ERR_BACKEND;
 }
+
 } // namespace
 
 /****************************************
@@ -272,10 +283,26 @@ recvDataQps(int fd, uint32_t &data_qpn, std::vector<uint32_t> &write_qpns, uint3
 
 nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     : nixlBackendEngine(init_params,
-                        nixl_backend_capability_t::REMOTE | nixl_backend_capability_t::NOTIF) {
+                        nixl_backend_capability_t::REMOTE |
+                            (init_params->customParams->count("native_device_api") &&
+                                     init_params->customParams->at("native_device_api") == "true" ?
+                                 nixl_backend_capability_t::NONE :
+                                 nixl_backend_capability_t::NOTIF)) {
     std::vector<std::string> ndevs, tmp_gdevs; /* Empty vector */
     doca_error_t result;
     nixl_b_params_t *custom_params = init_params->customParams;
+    const auto native_option = custom_params->find("native_device_api");
+    if (native_option != custom_params->end()) {
+        if (native_option->second != "true" && native_option->second != "false") {
+            throw std::invalid_argument("native_device_api must be true or false");
+        }
+        nativeMode_ = native_option->second == "true";
+    }
+#ifndef NIXL_GPUNETIO_DEVICE_API_HOST
+    if (nativeMode_) {
+        throw std::invalid_argument("GPUNETIO device API is disabled");
+    }
+#endif
     int ret;
     union ibv_gid rgid;
 
@@ -337,7 +364,6 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
     NIXL_INFO << "CUDA streams used for pool mode: " << nstreams;
 
     local_port = parseGpunetioOobPort((*custom_params)["oob_port"]);
-    dataQpCount_ = parseDataQpCount((*custom_params)["data_qp_count"]);
     const auto stripe = custom_params->find("write_stripe");
     if (stripe != custom_params->end() && !stripe->second.empty()) {
         if (stripe->second != "slots" && stripe->second != "bytes") {
@@ -350,12 +376,22 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         (!parseUnsigned(min_bytes->second, writeStripeMinBytes_) || writeStripeMinBytes_ == 0)) {
         throw std::invalid_argument("write_stripe_min_bytes must be a positive integer");
     }
-    if (dataQpCount_ > 1 &&
+    const auto write_qps = parseDataQpCount((*custom_params)["data_qp_count"]);
+    const auto native_qps = nixl::gpunetio::parseNativeQps((*custom_params)["native_qp_count"]);
+    if (!nativeMode_ && native_qps != 1) {
+        throw std::invalid_argument("native_qp_count requires native_device_api");
+    }
+    if (nativeMode_ && write_qps != 1) {
+        throw std::invalid_argument("native mode uses native_qp_count, not data_qp_count");
+    }
+    dataQpCount_ = nativeMode_ ? native_qps : write_qps;
+    if (!nativeMode_ && dataQpCount_ > 1 &&
         (nstreams < static_cast<int>(dataQpCount_) ||
          nstreams > static_cast<int>(DOCA_POST_STREAM_NUM))) {
         throw std::invalid_argument("striped WRITE requires data_qp_count <= cuda_streams <= 4");
     }
-    NIXL_INFO << "WRITE data QPs per peer: " << dataQpCount_;
+    NIXL_INFO << (nativeMode_ ? "Native READ pool QPs per peer: " : "WRITE data QPs per peer: ")
+              << dataQpCount_;
     NIXL_INFO << "OOB listen port: " << local_port;
 
     // Reject an unusable explicit interface before acquiring RDMA/GPU resources.
@@ -451,6 +487,27 @@ nixlDocaEngine::nixlDocaEngine(const nixlBackendInitParams *init_params)
         if (result != DOCA_SUCCESS) {
             NIXL_ERROR << "Failed to create DOCA GPU device " << doca_error_get_descr(result);
         }
+    }
+
+    if (nativeMode_) {
+        try {
+            initializeNativeState();
+            if (progressThreadStart() != NIXL_SUCCESS) {
+                throw std::runtime_error("Failed to start GPUNETIO connection thread");
+            }
+        }
+        catch (...) {
+            nativeState_.reset();
+            if (gdevs[0].second && doca_gpu_destroy(gdevs[0].second) != DOCA_SUCCESS) {
+                throw;
+            }
+            if (verbs_ah_attr && doca_verbs_ah_attr_destroy(verbs_ah_attr) != DOCA_SUCCESS) {
+                throw;
+            }
+            rollbackOobDevice(ddev, verbs_pd, verbs_context);
+            throw;
+        }
+        return;
     }
 
     // DOCA_GPU_MEM_TYPE_GPU_CPU == GDRCopy
@@ -598,23 +655,31 @@ nixlDocaEngine::~nixlDocaEngine() {
     NIXL_DEBUG << "Before progressThreadStop ";
     progressThreadStop();
 
-    *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
-        DOCA_GPU_EXIT | DOCA_GPU_ABORT;
+    if (!nativeMode_) {
+        *reinterpret_cast<volatile uint32_t *>(&gpu_state_cpu->control) =
+            DOCA_GPU_EXIT | DOCA_GPU_ABORT;
+    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         NIXL_ERROR << "Cannot select GPUNETIO engine device; retaining device resources";
         // Host progress is joined; do not destroy device-owned objects in another context.
+        nativeState_.release();
         retainedQp_.release();
         return;
     }
-    NIXL_DEBUG << "Before cudaStreamSynchronize ";
-    nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
-    nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
-
-    for (int i = 0; i < nstreams; i++) {
-        NIXL_DEBUG << "Before cudaStreamSynchronize post_stream " << i;
-        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]), "stream synchronize");
-        nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+    if (!nativeMode_) {
+        nixlDocaEngineCheckCudaError(cudaStreamSynchronize(wait_stream), "stream synchronize");
+        nixlDocaEngineCheckCudaError(cudaStreamDestroy(wait_stream), "stream destroy");
+        for (int i = 0; i < nstreams; i++) {
+            nixlDocaEngineCheckCudaError(cudaStreamSynchronize(post_stream[i]),
+                                         "stream synchronize");
+            nixlDocaEngineCheckCudaError(cudaStreamDestroy(post_stream[i]), "stream destroy");
+        }
+    } else if (nativeState_ && !nativeState_->lanesIdle()) {
+        NIXL_ERROR << "Native lanes not idle or snapshot failed; retaining dependent resources";
+        nativeState_.release();
+        retainedQp_.release();
+        return;
     }
 
     bool qps_closed = true;
@@ -636,6 +701,7 @@ nixlDocaEngine::~nixlDocaEngine() {
         if (!retained_closed) {
             retainedQp_.release();
         }
+        nativeState_.release();
         return;
     }
 
@@ -651,13 +717,15 @@ nixlDocaEngine::~nixlDocaEngine() {
         nixlDocaDestroyNotif(gdevs[0].second, notif.second);
     }
     notifMap.clear();
-
-    doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
-    doca_gpu_mem_free(gdevs[0].second, gpu_state_gpu);
-    doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
-    doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
-    doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+    nativeState_.reset();
+    if (!nativeMode_) {
+        doca_gpu_mem_free(gdevs[0].second, xferReqRingGpu);
+        doca_gpu_mem_free(gdevs[0].second, gpu_state_gpu);
+        doca_gpu_mem_free(gdevs[0].second, host_state_gpu_);
+        doca_gpu_mem_free(gdevs[0].second, notif_fill_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_progress_gpu);
+        doca_gpu_mem_free(gdevs[0].second, notif_send_gpu);
+    }
 
     result = doca_gpu_destroy(gdevs[0].second);
     if (result != DOCA_SUCCESS) {
@@ -697,6 +765,9 @@ nixlDocaEngine::~nixlDocaEngine() {
 
 nixl_status_t
 nixlDocaEngine::nixlDocaInitNotif(const std::string &remote_agent, doca_dev *dev, doca_gpu *gpu) {
+    if (nativeMode_) {
+        return NIXL_SUCCESS;
+    }
     const nixl_status_t completion_status =
         nixl::gpunetio::completionStatus(&host_state_cpu_->failed);
     if (completion_status != NIXL_SUCCESS) {
@@ -1113,10 +1184,12 @@ nixlDocaEngine::connectClientRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "connectClientRdmaQp: Receive client remote data qp connection details";
-    if (!recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_)) {
+    const auto data_qp_status =
+        recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_);
+    if (data_qp_status != NIXL_SUCCESS) {
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
-        return NIXL_ERR_BACKEND;
+        return data_qp_status;
     }
 
     // Notif QP
@@ -1302,10 +1375,16 @@ nixlDocaEngine::connectServerRdmaQp(int oob_sock_client, const std::string &remo
 
     // Data QP
     NIXL_DEBUG << "Server Receive client remote data qp connection details";
-    if (!recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_)) {
+    const auto data_qp_status =
+        recvDataQps(oob_sock_client, remote_qpn_data, remote_write_qpns, dataQpCount_);
+    if (data_qp_status != NIXL_SUCCESS) {
+        if (data_qp_status == NIXL_ERR_INVALID_PARAM && dataQpCount_ > 1) {
+            // Let the peer diagnose the pool mismatch from our header, not EOF.
+            sendDataQps(oob_sock_client, *rdma_qp, dataQpCount_);
+        }
         NIXL_ERROR << "Failed to receive remote connection details";
         result = DOCA_ERROR_CONNECTION_ABORTED;
-        return NIXL_ERR_BACKEND;
+        return data_qp_status;
     }
 
     // Notif QP
@@ -1557,6 +1636,15 @@ nixl_status_t
 nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
                             const nixl_mem_t &nixl_mem,
                             nixlBackendMD *&out) {
+    if (nativeMode_) {
+        cudaPointerAttributes attr{};
+        if (cudaPointerGetAttributes(&attr, reinterpret_cast<void *>(mem.addr)) != cudaSuccess ||
+            !((nixl_mem == VRAM_SEG && mem.devId == gdevs[0].first &&
+               attr.type == cudaMemoryTypeDevice && attr.device == int(gdevs[0].first)) ||
+              (nixl_mem == DRAM_SEG && attr.type == cudaMemoryTypeHost))) {
+            return NIXL_ERR_NOT_SUPPORTED;
+        }
+    }
     auto priv = std::make_unique<nixlDocaPrivateMetadata>();
     std::stringstream ss;
 
@@ -1595,6 +1683,7 @@ nixlDocaEngine::registerMem(const nixlBlobDesc &mem,
         return NIXL_ERR_BACKEND;
     }
 
+    priv->devId = static_cast<uint32_t>(mem.devId);
     priv->peerGpu = nixl_mem == VRAM_SEG && it == gdevs.end();
     ss << (uint32_t)priv->mr->get_rkey() << info_delimiter << ((uintptr_t)priv->mr->get_addr())
        << info_delimiter << ((size_t)priv->mr->get_tot_size());
@@ -1629,14 +1718,14 @@ nixlDocaEngine::loadRemoteMD(const nixlBlobDesc &input,
     // TODO: connection setup should move to connect
     nixlDocaConnection conn;
     auto md = std::make_unique<nixlDocaPublicMetadata>();
-    auto search = remoteConnMap.find(remote_agent);
-
-    if (search == remoteConnMap.end()) {
-        NIXL_ERROR << "err: remote connection not found remote_agent " << remote_agent;
-        return NIXL_ERR_NOT_FOUND;
+    {
+        std::lock_guard<std::mutex> lock(remoteConnLock);
+        auto search = remoteConnMap.find(remote_agent);
+        if (search == remoteConnMap.end() || (nativeMode_ && !search->second.connected)) {
+            return NIXL_ERR_NOT_FOUND;
+        }
+        conn = search->second;
     }
-
-    conn = (nixlDocaConnection)search->second;
 
     // directly copy underlying conn struct
     md->conn = conn;
@@ -1679,6 +1768,9 @@ nixlDocaEngine::prepXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     uint32_t pos;
     nixlDocaBckndReq *treq;
     nixlDocaPrivateMetadata *lmd;
@@ -1981,6 +2073,9 @@ nixlDocaEngine::postXfer(const nixl_xfer_op_t &operation,
                          const std::string &remote_agent,
                          nixlBackendReqH *&handle,
                          const nixl_opt_b_args_t *opt_args) const {
+    if (nativeMode_) {
+        return NIXL_ERR_NOT_SUPPORTED;
+    }
     nixl::doca::cudaDeviceGuard cuda_device(gdevs[0].first);
     if (cuda_device.status() != cudaSuccess) {
         return NIXL_ERR_BACKEND;
