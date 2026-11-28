@@ -19,7 +19,7 @@ utils_sources = [
   'utils.cpp',
   'utils.h',
   'scope_guard.h',
-  'memos_key.h'
+  'memos_key.h',
 ]
 
 utils_deps = [

@@ -18,6 +18,7 @@ option('libfabric_path', type: 'string', value: '', description: 'Path to LIBFAB
 option('etcd_inc_path', type: 'string', value: '', description: 'Path to ETCD Headers')
 option('etcd_lib_path', type: 'string', value: '', description: 'Path to ETCD Libraries')
 option('disable_gds_backend', type : 'boolean', value : false, description : 'disable gds backend')
+option('disable_odm_backend', type : 'boolean', value : false, description : 'disable odm backend')
 option('disable_rocm_ais_backend', type : 'boolean', value : false, description : 'disable AIS hipFile (AMD Infinity Storage) support')
 option('disable_mooncake_backend', type : 'boolean', value : false, description : 'disable mooncake backend')
 option('disable_infinia_backend', type : 'boolean', value : false, description : 'disable infinia backend')
@@ -53,3 +54,4 @@ option('build_tests', type: 'boolean', value: true, description: 'Build all test
 option('build_examples', type: 'boolean', value: true, description: 'Build all examples')
 option('build_nixl_ep', type: 'boolean', value: false, description: 'Build the NIXL EP example (requires sm_90 or newer) and install the experimental topology-aware API shell')
 option('test_all_plugins', type: 'boolean', value: false, description: 'Testing all plugins in addition to the mocks..')
+option('enable_odm_hw_tests', type: 'boolean', value: false, description: 'ODM meson test fails (instead of skip) when /dev/odm0 is absent')
