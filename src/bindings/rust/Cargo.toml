@@ -1,4 +1,4 @@
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -33,7 +33,7 @@ stub-api = []
 thiserror = { version = "2" }
 tracing = { version = "0.1" }
 serde = { version = "1", features = ["derive"] }
-bincode = "1"
+wincode = { version = "0.6", features = ["derive"] }
 libc = "0.2"
 
 [build-dependencies]
