@@ -117,7 +117,7 @@ memListElement::create(const nixlMetaDesc &desc) {
     element.field_mask =
         UCP_DEVICE_MEM_LIST_ELEM_FIELD_MEMH | UCP_DEVICE_MEM_LIST_ELEM_FIELD_LOCAL_ADDR;
     element.memh = md->getMem().getMemh();
-    element.local_addr = md->getMem().getBase();
+    element.local_addr = reinterpret_cast<void *>(desc.addr);
     return element;
 }
 
