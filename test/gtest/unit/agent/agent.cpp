@@ -328,7 +328,8 @@ namespace agent {
         LogMessageCounter untraced(untraced_log);
         const auto &engine = agent_helper_->getGMockEngine();
         ON_CALL(engine, capabilities())
-            .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
+            .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT |
+                                           nixl_backend_capability_t::NOTIF));
         selfXferSetup setup;
         agent_helper_->setupSelfXfer(setup);
         nixlAgent *agent = agent_helper_->getAgent();
@@ -382,6 +383,14 @@ namespace agent {
             return "0";
         }
 
+        // The capabilities of a backend are fixed at its creation
+        virtual void
+        setupEngine(const mocks::GMockBackendEngine &engine) const {
+            ON_CALL(engine, capabilities())
+                .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT |
+                                               nixl_backend_capability_t::NOTIF));
+        }
+
         void
         SetUp() override {
 #if !defined(NIXL_TRACE_ENABLED)
@@ -391,8 +400,7 @@ namespace agent {
             env_.addVar("NIXL_TEST_TRACE_FILE", trace_file_.string());
             agent_helper_ =
                 std::make_unique<agentHelper>(local_agent_name, "recorder", sampleRatio());
-            ON_CALL(agent_helper_->getGMockEngine(), capabilities())
-                .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
+            setupEngine(agent_helper_->getGMockEngine());
             agent_helper_->setupSelfXfer(setup_);
         }
 
@@ -989,6 +997,17 @@ namespace agent {
         }
     };
 
+    // A local backend without notifications: a remote backend must support them
+    class noNotifRecorderTracingAgentFixture : public sampledRecorderTracingAgentFixture {
+    protected:
+        void
+        setupEngine(const mocks::GMockBackendEngine &engine) const override {
+            ON_CALL(engine, capabilities())
+                .WillByDefault(testing::Return(nixl_backend_capability_t::TRACE_CONTEXT));
+            ON_CALL(engine, supportsRemote()).WillByDefault(testing::Return(false));
+        }
+    };
+
     TEST_F(sampledRecorderTracingAgentFixture, EachPostCarriesItsOwnContext) {
         nixlAgent *agent = agent_helper_->getAgent();
         const auto &engine = agent_helper_->getGMockEngine();
@@ -1051,10 +1070,8 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture, RejectedFirstCallUsesTheRequestsSpanId) {
+    TEST_F(noNotifRecorderTracingAgentFixture, RejectedFirstCallUsesTheRequestsSpanId) {
         nixlAgent *agent = agent_helper_->getAgent();
-        ON_CALL(agent_helper_->getGMockEngine(), supportsNotif())
-            .WillByDefault(testing::Return(false));
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
 
@@ -1126,10 +1143,8 @@ namespace agent {
         EXPECT_EQ(agent->releaseXferReq(req), NIXL_SUCCESS);
     }
 
-    TEST_F(sampledRecorderTracingAgentFixture, TraceInfoAfterARefusedFirstCall) {
+    TEST_F(noNotifRecorderTracingAgentFixture, TraceInfoAfterARefusedFirstCall) {
         nixlAgent *agent = agent_helper_->getAgent();
-        ON_CALL(agent_helper_->getGMockEngine(), supportsNotif())
-            .WillByDefault(testing::Return(false));
         nixlXferReqH *req = nullptr;
         ASSERT_EQ(agent_helper_->createSelfXferReq(setup_, req), NIXL_SUCCESS);
 

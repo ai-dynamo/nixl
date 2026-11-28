@@ -15,13 +15,12 @@
 
 fs = import('fs')
 
-build_dir = meson.current_build_dir()
-
 pyproject_toml = configure_file(
   input: 'pyproject.toml.in',
   output: 'pyproject.toml',
   configuration: {
     'VERSION': meson.project_version(),
+    'CUTE_EXTRA': get_option('build_cute') ? 'cute = ["nvidia-cutlass-dsl[cu13]==4.5.1"]' : '',
     'WHEEL_DEPS': get_option('release_wheel') \
       ? '"nixl-cu13==' + meson.project_version() + '"' \
       : '"' + cuda_wheel_dir.replace('_', '-') + '==' + meson.project_version() + '"',
@@ -56,10 +55,11 @@ if uv.found()
       nixl_api_copy,
       nixl_logging_copy,
       nixl_runtime_init_copy,
+      nixl_cute_copy,
       nixl_ep_init_copy,
     ],
     output: [wheel_name],
-    command: [uv, 'build', '--wheel', '--out-dir', build_dir, build_dir],
+    command: [py, files('build_wheel.py'), uv, '@OUTPUT@', '@INPUT@'],
     install: false,
     build_by_default: true
   )
