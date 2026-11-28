@@ -41,6 +41,8 @@ enum class nixl_ucx_vram_memtype_hint_t {
 };
 
 inline constexpr std::string_view nixl_ucx_err_handling_param_name = "ucx_error_handling_mode";
+inline constexpr ucp_err_handling_mode_t nixl_ucx_default_err_handling_mode =
+    UCP_ERR_HANDLING_MODE_PEER;
 inline constexpr std::string_view nixl_ucx_vram_memtype_hint_param_name = "ucx_vram_memtype_hint";
 
 // The API `ucp_context_query(ctx, &attr)` sets `UCS_MEMORY_TYPE_RDMA` in `attr.memory_types`
@@ -230,7 +232,7 @@ class nixlUcxWorker {
 public:
     explicit nixlUcxWorker(
         const nixlUcxContext &,
-        ucp_err_handling_mode_t ucp_err_handling_mode = UCP_ERR_HANDLING_MODE_NONE,
+        ucp_err_handling_mode_t ucp_err_handling_mode = nixl_ucx_default_err_handling_mode,
         size_t id = 0);
 
     virtual ~nixlUcxWorker() = default;

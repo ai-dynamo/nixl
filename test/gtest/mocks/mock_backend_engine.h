@@ -42,10 +42,6 @@ public:
     assert(sharedState > 0);
     return gmock_backend_engine->supportsLocal();
   }
-  bool supportsNotif() const override {
-    assert(sharedState > 0);
-    return gmock_backend_engine->supportsNotif();
-  }
 
   nixl_mem_list_t getSupportedMems() const override {
     assert(sharedState > 0);

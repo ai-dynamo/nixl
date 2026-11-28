@@ -134,7 +134,15 @@ class nixlMetaDesc : public nixlBasicDesc {
 struct nixlRemoteMetaDesc : public nixlMetaDesc {
     std::string remoteAgent;
 
-    using nixlMetaDesc::nixlMetaDesc;
+    nixlRemoteMetaDesc() = default;
+
+    nixlRemoteMetaDesc(uintptr_t addr,
+                       size_t len,
+                       uint64_t dev_id,
+                       nixlBackendMD *metadata,
+                       const std::string &remote_agent)
+        : nixlMetaDesc(addr, len, dev_id, metadata),
+          remoteAgent(remote_agent) {}
 
     explicit nixlRemoteMetaDesc(const std::string &remote_agent)
         : nixlMetaDesc(),

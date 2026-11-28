@@ -190,6 +190,7 @@ public:
     static size_t max_block_size;
     static size_t start_batch_size;
     static size_t max_batch_size;
+    static int batch_repeat;
     static int num_iter;
     static int large_blk_iter_ftr;
     static int warmup_iter;
