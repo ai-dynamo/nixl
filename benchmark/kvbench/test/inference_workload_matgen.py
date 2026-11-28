@@ -355,26 +355,22 @@ def estimate_compute_time(
     """Estimate the compute time of a batch, in seconds.
 
     Accounts for:
-    - Attention FLOPs: O(S²) per layer
-    - MLP FLOPs: O(S × H) per layer (assumes intermediate_size = 4*H)
+    - Attention FLOPs for each sequence independently
+    - MLP FLOPs across all tokens (assumes intermediate_size = 4*H)
     - TP parallelism: divides compute across TP GPUs
 
     Formula based on:
     https://medium.com/@plienhar/llm-inference-series-3-kv-caching-unveiled-048152e461c8
     """
-    B = batch.size
-    S = batch.total_isl
     H = model_config.hidden_size
     L = model_config.num_layers
 
-    # Attention score computation: 4 * B * S² * H per layer (Q·Kᵀ and Attn·V)
-    # Note: excludes QKV and output projections (8 * B * S * H² per layer).
-    # These are linear ops like MLP but omitted here for simplicity since
-    # they are relatively small compared to MLP (8H² vs 16H²).
-    attn_flop = 4 * B * S**2 * H * L
+    # Attention is independent across requests, so square each sequence length.
+    # The estimate excludes QKV and output projections.
+    attn_flop = 4 * sum(req.isl**2 for req in batch.user_requests) * H * L
 
-    # MLP: 16 * B * S * H² per layer (H→4H and 4H→H projections)
-    mlp_flop = 16 * B * S * H**2 * L
+    # The MLP processes each token once (H→4H and 4H→H projections).
+    mlp_flop = 16 * batch.total_isl * H**2 * L
 
     total_flop = attn_flop + mlp_flop
 
