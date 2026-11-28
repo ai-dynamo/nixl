@@ -19,8 +19,8 @@
 
 #include <string>
 #include <system_error>
-#include "absl/log/log.h"
-#include "absl/log/check.h"
+#include "absl/log/absl_log.h"
+#include "absl/log/absl_check.h"
 #include "absl/log/initialize.h"
 
 /*-----------------------------------------------------------------------------*
@@ -34,7 +34,7 @@
  * Logs a message and terminates the program unconditionally.
  * Maps to Abseil LOG(FATAL). Use for unrecoverable errors.
  */
-#define NIXL_FATAL LOG(FATAL)
+#define NIXL_FATAL ABSL_LOG(FATAL)
 
 /*
  * Like NIXL_FATAL, but also prints the errno message.
@@ -42,7 +42,7 @@
 #define NIXL_PFATAL NIXL_FATAL.WithPerror()
 
 /* Logs messages unconditionally (maps to Abseil ERROR level) */
-#define NIXL_ERROR LOG(ERROR)
+#define NIXL_ERROR ABSL_LOG(ERROR)
 
 /*
  * Like NIXL_ERROR, but also prints the errno message.
@@ -57,7 +57,7 @@
 /*
  * Logs messages unconditionally (maps to Abseil WARNING level)
  */
-#define NIXL_WARN LOG(WARNING)
+#define NIXL_WARN ABSL_LOG(WARNING)
 
 /*
  * Like NIXL_WARN, but also prints the errno message.
@@ -67,7 +67,7 @@
 /*
  * Logs messages unconditionally (maps to Abseil INFO level)
  */
-#define NIXL_INFO LOG(INFO)
+#define NIXL_INFO ABSL_LOG(INFO)
 
 /*
  * Like NIXL_INFO, but also prints the errno message.
@@ -77,7 +77,7 @@
 /*
  * Logs messages unconditionally (maps to Abseil verbosity level 1)
  */
-#define NIXL_DEBUG VLOG(1)
+#define NIXL_DEBUG ABSL_VLOG(1)
 
 /*
  * Like NIXL_DEBUG, but also prints the errno message.
@@ -88,7 +88,7 @@
  * Logs messages unconditionally (maps to Abseil verbosity level 2)
  * Stripped from release buids.
  */
-#define NIXL_TRACE DVLOG(2)
+#define NIXL_TRACE ABSL_DVLOG(2)
 
 /*
  * Like NIXL_TRACE, but also prints the errno message.
@@ -105,7 +105,7 @@
  * Allows streaming additional context:
  *      NIXL_ASSERT_ALWAYS(size > 0) << "Size must be positive, got " << size;
  */
-#define NIXL_ASSERT_ALWAYS(condition) CHECK(condition)
+#define NIXL_ASSERT_ALWAYS(condition) ABSL_CHECK(condition)
 
 /*
  * Check condition in debug builds only. Used for heavier checks.
@@ -113,7 +113,7 @@
  * Allows streaming additional context:
  *      NIXL_ASSERT(ptr != nullptr) << "Pointer must not be null";
  */
-#define NIXL_ASSERT(condition) DCHECK(condition)
+#define NIXL_ASSERT(condition) ABSL_DCHECK(condition)
 
 /*-----------------------------------------------------------------------------*
  * Helper Functions

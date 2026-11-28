@@ -273,7 +273,7 @@ if cuda_dep.found()
 
     cuda_arch_list = get_option('nixl_cuda_arch_list').strip()
     if cuda_arch_list == 'auto'
-        if get_option('build_nixl_ep')
+        if get_option('build_nixl_ep') or get_option('build_nixl_ep_runtime')
             cuda_arch_list = '90,100,103,120'
         else
             cuda_arch_list = '80,86,89,90,100,103,120'
@@ -657,7 +657,7 @@ utils_inc_dirs = include_directories('src/utils')
 nixl_device_api_inc_dirs = [nixl_device_inc_dirs, utils_inc_dirs]
 
 subdir('src')
-if get_option('build_nixl_ep')
+if get_option('build_nixl_ep_runtime')
   subdir('runtime/ep')
 endif
 if get_option('build_tests') and get_option('buildtype') != 'release'

@@ -46,11 +46,13 @@ public:
 
         bool remote_xfer = srcAgentName_ != dstAgentName_;
         if (remote_xfer) {
-            CHECK(src_engine->supportsRemote()) << "Local engine does not support remote transfers";
+            NIXL_ASSERT_ALWAYS(src_engine->supportsRemote())
+                << "Local engine does not support remote transfers";
             dstDevId_ = 1;
             verifyConnInfo();
         } else {
-            CHECK(src_engine->supportsLocal()) << "Local engine does not support local transfers";
+            NIXL_ASSERT_ALWAYS(src_engine->supportsLocal())
+                << "Local engine does not support local transfers";
             dstDevId_ = srcDevId_;
         }
 

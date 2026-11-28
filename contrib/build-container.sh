@@ -45,7 +45,8 @@ UCX_REPO=${UCX_REPO:-https://github.com/openucx/ucx.git}
 UCX_REF=${UCX_REF:-v1.24.x}
 UCX_SONAME_SUFFIX=${UCX_SONAME_SUFFIX:-}
 PRIVATE_UCX_SONAME_SUFFIX="nixl"
-BUILD_NIXL_EP="true"
+BUILD_NIXL_EP=${BUILD_NIXL_EP:-true}
+BUILD_NIXL_EP_RUNTIME=${BUILD_NIXL_EP_RUNTIME:-false}
 OS="ubuntu24"
 NPROC=${NPROC:-$(nproc)}
 GRPC_NPROC=${GRPC_NPROC:-$(nproc)}
@@ -194,6 +195,9 @@ get_options() {
         --build-nixl-ep)
             BUILD_NIXL_EP=true
             ;;
+        --build-nixl-ep-runtime)
+            BUILD_NIXL_EP_RUNTIME=true
+            ;;
         --build-ucx-spcx-plugin)
             BUILD_UCX_SPCX_PLUGIN="true"
             ;;
@@ -302,11 +306,8 @@ show_build_options() {
         echo "UCX SONAME suffix: Disabled"
         echo "UCX module deepbind: Disabled"
     fi
-    if [ "$BUILD_NIXL_EP" = "true" ]; then
-        echo "NIXL EP: Enabled"
-    else
-        echo "NIXL EP: Disabled"
-    fi
+    echo "Build NIXL EP v1: $BUILD_NIXL_EP"
+    echo "Build NIXL EP runtime: $BUILD_NIXL_EP_RUNTIME"
     if [ "$BUILD_INFINIA" = "true" ]; then
         echo "Infinia DDN plugin: Enabled (image: ${INFINIA_LIBS_IMAGE})"
     else
@@ -352,6 +353,7 @@ UCX_REF="${UCX_REF}"
 UCX_SHA="${ucx_sha}"
 UCX_SONAME_SUFFIX="${UCX_SONAME_SUFFIX}"
 BUILD_NIXL_EP="${BUILD_NIXL_EP}"
+BUILD_NIXL_EP_RUNTIME="${BUILD_NIXL_EP_RUNTIME}"
 BUILD_INFINIA="${BUILD_INFINIA}"
 INFINIA_LIBS_IMAGE="${INFINIA_LIBS_IMAGE}"
 BUILD_UCX_SPCX_PLUGIN="${BUILD_UCX_SPCX_PLUGIN}"
@@ -377,7 +379,8 @@ show_help() {
     echo "  [--ucx-ref ucx git reference (branch, tag, or sha)]"
     echo "  [--ucx-soname-suffix suffix to pass to UCX --with-soname-suffix]"
     echo "  [--private-ucx shortcut for --ucx-soname-suffix ${PRIVATE_UCX_SONAME_SUFFIX}; requires a UCX ref with --with-soname-suffix and --enable-module-deepbind]"
-    echo "  [--build-nixl-ep build NIXL EP, including the experimental topology-aware API shell (requires UCX >= 1.21). The full topology-aware implementation requires CUDA 13; this API shell does not.]"
+    echo "  [--build-nixl-ep build NIXL EP v1 (default: enabled; set BUILD_NIXL_EP=false to disable)]"
+    echo "  [--build-nixl-ep-runtime build the NIXL EP v2 runtime (requires CUDA 13)]"
     echo "  [--build-ucx-spcx-plugin build the UCX spcx external plugin (requires NIXL_GITLAB_TOKEN and NIXL_SPCX_PLUGIN_REPO_URL in the environment) (requires --dockerfile contrib/Dockerfile or contrib/Dockerfile.manylinux; bundled into the wheel only on the manylinux path)]"
     echo "  [--ucx-spcx-plugin-ref git ref of ucx-spcx-plugin to build (default: ${UCX_SPCX_PLUGIN_REF})]"
     echo "  [--ucx-spcx-plugin-install directory holding a pre-built plugin module to install instead of building one (implies --build-ucx-spcx-plugin; no gitlab credentials needed)]"
@@ -423,6 +426,7 @@ BUILD_ARGS+=" --build-arg UCX_REPO=$UCX_REPO"
 BUILD_ARGS+=" --build-arg UCX_REF=$UCX_REF"
 BUILD_ARGS+=" --build-arg UCX_SONAME_SUFFIX=$UCX_SONAME_SUFFIX"
 BUILD_ARGS+=" --build-arg BUILD_NIXL_EP=$BUILD_NIXL_EP"
+BUILD_ARGS+=" --build-arg BUILD_NIXL_EP_RUNTIME=$BUILD_NIXL_EP_RUNTIME"
 BUILD_ARGS+=" --build-arg NPROC=$NPROC"
 BUILD_ARGS+=" --build-arg GRPC_NPROC=$GRPC_NPROC"
 BUILD_ARGS+=" --build-arg OS=$OS"

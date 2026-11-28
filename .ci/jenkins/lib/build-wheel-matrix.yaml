@@ -316,6 +316,7 @@ steps:
       export NPROC=$NPROC
       export GRPC_NPROC=$GRPC_NPROC
       ./contrib/build-container.sh \
+        --build-nixl-ep-runtime \
         --wheel-base "${WHL_BASE}" \
         --python-versions "${python_version}" \
         --arch ${arch} \

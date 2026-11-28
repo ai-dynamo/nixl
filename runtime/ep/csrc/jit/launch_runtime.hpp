@@ -1,0 +1,73 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: MIT AND Apache-2.0
+
+#pragma once
+
+#include <ATen/cuda/CUDAContext.h>
+#include <absl/strings/str_format.h>
+
+#include <nixl_ep_v2/common/exception.cuh>
+
+#include "nixl_log.h"
+#include "../utils/system.hpp"
+#include "compiler.hpp"
+#include "include_parser.hpp"
+
+namespace nixl::runtime::ep::jit {
+
+struct LaunchArgs {
+    std::pair<int, int> grid_dim;
+    int num_threads;
+    int smem_size;
+    int cluster_dim;
+    bool cooperative;
+    bool pdl_enabled;
+
+    LaunchArgs(int grid_dim_x, int num_threads, int smem_size = 0, int cluster_dim = 1, bool cooperative = false, bool pdl_enabled = false):
+        grid_dim({grid_dim_x, 1}), num_threads(num_threads), smem_size(smem_size), cluster_dim(cluster_dim), cooperative(cooperative), pdl_enabled(pdl_enabled) {}
+};
+
+template <typename Derived>
+class LaunchRuntime {
+public:
+    template <typename Args>
+    static std::string generate(const Args& args) {
+        auto code = Derived::generate_impl(args);
+
+        // NOTES: we require that `generate_impl`'s includes never change
+        static std::string include_hash;
+        if (include_hash.empty())
+            include_hash = include_parser->get_hash_value(code);
+
+        // TODO: optimize string concat performance
+        code = absl::StrFormat("// Includes' hash value: %s\n%s", include_hash, code);
+        NIXL_DEBUG << "Generated kernel code:\n" << code;
+        return code;
+    }
+
+    template <typename Args>
+    static void launch(const std::shared_ptr<KernelRuntime>& kernel_runtime, const Args& args,
+                       const std::optional<at::cuda::CUDAStream>& stream_opt = std::nullopt) {
+        const auto kernel = kernel_runtime->kernel;
+        const auto stream = stream_opt.value_or(at::cuda::getCurrentCUDAStream());
+        const LaunchArgs& launch_args = args.launch_args;
+
+        const dim3& grid_dim = {static_cast<unsigned>(launch_args.grid_dim.first),
+                                static_cast<unsigned>(launch_args.grid_dim.second),
+                                1};
+        const dim3& block_dim = {static_cast<unsigned>(launch_args.num_threads), 1, 1};
+        auto config = construct_launch_config(kernel, stream, launch_args.smem_size,
+                                              grid_dim, block_dim, launch_args.cluster_dim,
+                                              launch_args.cooperative, launch_args.pdl_enabled);
+
+        // Launch in the derived class
+        NIXL_DEBUG << "Launch kernel with {" << launch_args.grid_dim.first << ", " << launch_args.grid_dim.second
+                   << "} x " << launch_args.num_threads << " (cooperative: " << launch_args.cooperative
+                   << "), shared memory: " << launch_args.smem_size << " bytes, cluster: " << launch_args.cluster_dim
+                   << ", stream: " << stream.id();
+        Derived::launch_impl(kernel, config, args);
+    }
+};
+
+} // namespace nixl::runtime::ep::jit

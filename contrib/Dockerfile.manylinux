@@ -454,6 +454,7 @@ FROM $wheel_base AS wheel
 ARG ARCH="x86_64"
 ARG BUILD_TYPE="release"
 ARG BUILD_NIXL_EP="true"
+ARG BUILD_NIXL_EP_RUNTIME="false"
 ARG UCX_SONAME_SUFFIX=""
 ARG NPROC=1
 ARG UCX_SPCX_PLUGIN_VERSION=""
@@ -534,13 +535,8 @@ RUN if [ "$BUILD_UCX_SPCX_PLUGIN" = "true" ]; then \
 # meson setup clones the taskflow and prometheus-cpp [wrap-git] subprojects from github.com.
 RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig rm -rf build && \
     mkdir build && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then \
-        echo "=== NIXL EP enabled: Building NIXL with NIXL EP support ===" && \
-        NIXL_EP_FLAG="-Dbuild_nixl_ep=true -Dbuild_examples=true"; \
-    else \
-        NIXL_EP_FLAG=""; \
-    fi && \
-    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE $NIXL_EP_FLAG -Ducx_path=/usr/local \
+    meson setup build/ --prefix=/usr/local/nixl --buildtype=$BUILD_TYPE -Dbuild_nixl_ep="$BUILD_NIXL_EP" \
+        -Dbuild_nixl_ep_runtime="$BUILD_NIXL_EP_RUNTIME" -Ducx_path=/usr/local \
     -Dcudapath_lib="/usr/local/cuda/lib64" \
     -Dcudapath_inc="/usr/local/cuda/include" \
     -Drelease_wheel=true && \
@@ -566,11 +562,10 @@ ARG WHL_PYTHON_VERSIONS="3.10,3.11,3.12,3.13,3.14"
 ARG WHL_TORCH_VERSIONS="2.14,2.15,2.16"
 ARG WHL_PLATFORM="manylinux_2_28_$ARCH"
 RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
-    if [ "$BUILD_NIXL_EP" = "true" ]; then \
-        EP_BUILD_FLAGS="--build-nixl-ep --torch-versions $WHL_TORCH_VERSIONS"; \
-    else \
-        EP_BUILD_FLAGS=""; \
-    fi && \
+    EP_BUILD_FLAGS=() && \
+    if [ "$BUILD_NIXL_EP" = "true" ]; then EP_BUILD_FLAGS+=(--build-nixl-ep); fi && \
+    if [ "$BUILD_NIXL_EP_RUNTIME" = "true" ]; then EP_BUILD_FLAGS+=(--build-nixl-ep-runtime); fi && \
+    if [ "${#EP_BUILD_FLAGS[@]}" -gt 0 ]; then EP_BUILD_FLAGS+=(--torch-versions "$WHL_TORCH_VERSIONS"); fi && \
     rm -rf dist && mkdir -p dist && \
     for PYTHON_VERSION in "${PYTHON_VERSIONS[@]}"; do \
         export PATH=$VIRTUAL_ENV/bin:$PATH && \
@@ -580,7 +575,7 @@ RUN IFS=',' read -ra PYTHON_VERSIONS <<< "$WHL_PYTHON_VERSIONS" && \
             --ucx-plugins-dir /usr/lib64/ucx \
             --nixl-plugins-dir $NIXL_PLUGIN_DIR \
             --output-dir dist \
-            $EP_BUILD_FLAGS ; \
+            "${EP_BUILD_FLAGS[@]}"; \
     done
 
 # Meta package wheel, pushed to PyPI alongside the backend wheel.

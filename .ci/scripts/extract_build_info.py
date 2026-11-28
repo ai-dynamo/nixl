@@ -40,7 +40,10 @@ _UCX_FIELDS = {
     "configured_with": re.compile(r"^# Configured with: (.*)$", re.M),
 }
 _UCX_GIT = re.compile(r"Git branch '([^']+)', revision ([0-9a-f]+)")
-_EP_MODULE = re.compile(r"^nixl_ep_cu\d+/nixl_ep_cpp_torch(\d)(\d+)\.[^/]+\.so$")
+_EP_MODULE = re.compile(
+    r"^(?:nixl_ep_cu\d+/nixl_ep|nixl_cu\d+/runtime/ep/nixl_ep_v2)"
+    r"_cpp_torch(\d)(\d+)\.[^/]+\.so$"
+)
 _DUMP = re.compile(r"^pip-py(?P<py>[0-9.]+)-torch(?P<torch>base|[0-9.]+)\.json$")
 
 
@@ -131,7 +134,7 @@ def load_dumps(directory: Optional[Path]) -> dict[str, dict[str, str]]:
 
 
 def torch_built_in(wheel: zipfile.ZipFile) -> list[str]:
-    """Torch versions whose nixl_ep module is in the wheel, e.g. torch214 -> 2.14."""
+    """Torch versions with an EP extension in the wheel, e.g. torch214 -> 2.14."""
     found = set()
     for name in wheel.namelist():
         match = _EP_MODULE.match(name)

@@ -138,6 +138,7 @@ steps:
       --build-arg NIXL_BUILD_DIR=${NIXL_BUILD_DIR} \
       --build-arg HAS_GPU=true \
       --build-arg BUILD_NIXL_EP=true \
+      --build-arg BUILD_NIXL_EP_RUNTIME=true \
       --build-arg NIXL_PYTHON=${NIXL_EP_PYTHON} \
       --build-arg BASE_IMAGE=${registry_host}${registry_path}/${arch}/nixl-ci-dl-gpu-ep-base:${CI_IMAGE_TAG} \
       --secret id=ghconfig,src=/tmp/ghconfig \

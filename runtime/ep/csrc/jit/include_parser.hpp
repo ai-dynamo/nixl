@@ -1,0 +1,95 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: MIT AND Apache-2.0
+
+#pragma once
+
+#include <filesystem>
+#include <fstream>
+#include <iterator>
+#include <memory>
+#include <optional>
+#include <regex>
+#include <sstream>
+#include <string>
+#include <unordered_map>
+#include <vector>
+
+#include <absl/strings/str_format.h>
+
+#include <nixl_ep_v2/common/exception.cuh>
+
+#include "../utils/hash.hpp"
+#include "../utils/lazy_init.hpp"
+
+namespace nixl::runtime::ep::jit {
+
+class IncludeParser {
+public:
+    static std::filesystem::path library_include_path;
+
+    static void prepare_init(const std::string& library_root_path) {
+        library_include_path = std::filesystem::path(library_root_path) / "include";
+    }
+
+    std::string get_hash_value(const std::string& code, bool exclude_code = true) {
+        std::stringstream ss;
+        for (const auto& i: get_includes(code))
+            ss << get_hash_value_by_path(library_include_path / i) << "$";
+        if (not exclude_code)
+            ss << "#" << get_hex_digest(code);
+        return get_hex_digest(ss.str());
+    }
+
+    std::string get_hash_value_by_path(const std::filesystem::path& path) {
+        // Check whether hit in cache
+        // ReSharper disable once CppUseAssociativeContains
+        if (cache.count(path) > 0) {
+            const auto opt = cache[path];
+            if (not opt.has_value())
+                EP_HOST_UNREACHABLE(absl::StrFormat("Circular include may occur: %s", path.string()));
+            return opt.value();
+        }
+
+        // Read file and calculate hash recursively
+        std::ifstream in(path);
+        if (not in.is_open())
+            EP_HOST_UNREACHABLE(absl::StrFormat("Failed to open: %s", path.string()));
+        std::string code((std::istreambuf_iterator<char>(in)), std::istreambuf_iterator<char>());
+        cache[path] = std::nullopt;
+        return (cache[path] = get_hash_value(code, false)).value();
+    }
+
+private:
+    static std::vector<std::string> get_includes(const std::string& code, const std::filesystem::path& file_path = "") {
+        std::vector<std::string> includes;
+        const std::regex pattern(R"(#\s*include\s*[<"][^>"]+[>"])");
+        std::sregex_iterator iter(code.begin(), code.end(), pattern);
+        const std::sregex_iterator end;
+
+        // TODO: parse relative paths as well
+        for (; iter != end; ++ iter) {
+            const auto include_str = iter->str();
+            const int len = include_str.length();
+            if (include_str.substr(0, 10) == "#include <" and include_str[len - 1] == '>' and include_str[10] != ' ' and include_str[len - 2] != ' ') {
+                std::string filename = include_str.substr(10, len - 11);
+                if (filename.rfind("nixl_ep_v2/", 0) == 0)  // We only parse `<nixl_ep_v2/*>`
+                    includes.push_back(filename);
+            } else {
+                std::string error_info = absl::StrFormat("Non-standard include: %s", include_str);
+                if (file_path != "")
+                    error_info += absl::StrFormat(" (%s)", file_path.string());
+                EP_HOST_UNREACHABLE(error_info);
+            }
+        }
+        return includes;
+    }
+
+    std::unordered_map<std::string, std::optional<std::string>> cache;
+};
+
+EP_DECLARE_STATIC_VAR_IN_CLASS(IncludeParser, library_include_path);
+
+static auto include_parser = std::make_shared<IncludeParser>();
+
+}  // namespace nixl::runtime::ep::jit

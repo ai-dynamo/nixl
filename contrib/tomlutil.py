@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 
-# SPDX-FileCopyrightText: Copyright (c) 2025 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+# SPDX-FileCopyrightText: Copyright (c) 2025-2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
 # SPDX-License-Identifier: Apache-2.0
 #
 # Licensed under the Apache License, Version 2.0 (the "License");
@@ -21,20 +21,26 @@ import tomlkit
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--wheel-name", type=str, help="Set the project name")
+parser.add_argument(
+    "--build-nixl-ep-runtime", choices=("true", "false"), default="false"
+)
 parser.add_argument("file", type=str, help="The toml file to modify")
 args = parser.parse_args()
 
 with open(args.file) as f:
     doc = tomlkit.parse(f.read())
 
+project = doc["project"]
 if args.wheel_name:
-    # Set the wheel name
-    # Example:
-    # ```toml
-    # [project]
-    # name = "<wheel_name>"
-    # ```
-    doc["project"]["name"] = args.wheel_name
+    project["name"] = args.wheel_name
+
+nvml = "nvidia-ml-py>=13.580.65"
+dependencies = project["dependencies"]
+if project["name"] == "nixl-cu13" and args.build_nixl_ep_runtime == "true":
+    if nvml not in dependencies:
+        dependencies.append(nvml)
+elif nvml in dependencies:
+    dependencies.remove(nvml)
 
 with open(args.file, "w") as f:
     f.write(tomlkit.dumps(doc))

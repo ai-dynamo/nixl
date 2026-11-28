@@ -63,7 +63,7 @@ fi
 } > cell.env
 
 cd nixl-src
-./contrib/build-container.sh \
+BUILD_NIXL_EP_RUNTIME=true ./contrib/build-container.sh \
   --wheel-base "manylinux_${manylinux}" \
   --python-versions "${python_version}" \
   --arch ${arch} \

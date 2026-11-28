@@ -491,6 +491,9 @@ else
     if [ "${BUILD_NIXL_EP}" = "true" ]; then
         EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep=true"
     fi
+    if [ "${BUILD_NIXL_EP_RUNTIME:-false}" = "true" ]; then
+        EXTRA_BUILD_ARGS="${EXTRA_BUILD_ARGS} -Dbuild_nixl_ep_runtime=true"
+    fi
     # When NIXL_PYTHON is set (currently only by test-dl-ep-matrix.yaml), build and
     # install NIXL EP against vLLM's Python/Torch venv to prevent ABI mismatches.
     # Only NIXL's Meson build uses this venv; dependency builds keep system Python.

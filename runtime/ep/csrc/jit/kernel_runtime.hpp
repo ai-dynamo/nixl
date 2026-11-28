@@ -1,0 +1,86 @@
+// SPDX-FileCopyrightText: Copyright (c) 2025 DeepSeek
+// SPDX-FileCopyrightText: Copyright (c) 2026 NVIDIA CORPORATION & AFFILIATES. All rights reserved.
+// SPDX-License-Identifier: MIT AND Apache-2.0
+
+#pragma once
+
+#include <ATen/cuda/CUDAContext.h>
+#include <fstream>
+
+#include <absl/strings/str_format.h>
+
+#include <nixl_ep_v2/common/exception.cuh>
+
+#include "nixl_log.h"
+#include "../utils/system.hpp"
+#include "handle.hpp"
+
+namespace nixl::runtime::ep::jit {
+
+class KernelRuntime final {
+public:
+    LibraryHandle library;
+    KernelHandle kernel;
+
+    explicit KernelRuntime(const std::filesystem::path& dir_path) {
+        // NOLINT(*-pro-type-member-init)
+        const auto cubin_path = dir_path / "kernel.cubin";
+        NIXL_DEBUG << "Loading CUBIN: " << cubin_path.string();
+
+        std::string symbol_name;
+        std::ifstream in(dir_path / "kernel.symbol");
+        EP_HOST_ASSERT(std::getline(in, symbol_name) and not symbol_name.empty() and
+                       "Missing, unreadable or empty kernel.symbol: clear the JIT cache and restart to rebuild it");
+        kernel = load_kernel(cubin_path, symbol_name, &library);
+    }
+
+    static std::string find_kernel_symbol(const std::filesystem::path& dir_path, const std::filesystem::path& cuobjdump_path) {
+        const auto cubin_path = dir_path / "kernel.cubin";
+
+        // Find the only symbol
+        // TODO: use kernel enumeration for newer drivers
+        const std::vector<std::string> illegal_names = {"vprintf", "__instantiate_kernel", "__internal", "__assertfail"};
+        const auto [exit_code, symbols] = call_external_command(absl::StrFormat("%s -symbols %s", quote_path(cuobjdump_path), quote_path(cubin_path)));
+        EP_HOST_ASSERT(exit_code == 0);
+        std::istringstream iss(symbols);
+        std::vector<std::string> symbol_names;
+        for (std::string line; std::getline(iss, line); ) {
+            if (line.find("STT_FUNC") == 0 and line.find("STO_ENTRY") != std::string::npos and
+                std::none_of(illegal_names.begin(), illegal_names.end(),
+                [&](const auto name) { return line.find(name) != std::string::npos; })) {
+                const auto last_space = line.rfind(' ');
+                symbol_names.push_back(line.substr(last_space + 1));
+            }
+        }
+
+        if (symbol_names.size() != 1) {
+            NIXL_ERROR << "Expected 1 kernel entry in compiled CUBIN " << cubin_path.string()
+                       << ", found " << symbol_names.size();
+            for (const auto& symbol: symbol_names)
+                NIXL_ERROR << "Symbol name: " << symbol;
+            EP_HOST_ASSERT(false and "Failed to identify a unique kernel entry in compiled CUBIN");
+        }
+
+        return symbol_names[0];
+    }
+
+    static bool check_validity(const std::filesystem::path& dir_path) {
+        if (not std::filesystem::exists(dir_path))
+            return false;
+        // NOTES: if the directory exists, kernel.cu and kernel.cubin must both exist,
+        // because the directory is created atomically via rename
+        if (not std::filesystem::exists(dir_path / "kernel.cu") or
+            not std::filesystem::exists(dir_path / "kernel.cubin")) {
+            NIXL_ERROR << "Corrupted JIT cache directory (missing kernel.cu or kernel.cubin): " << dir_path.string()
+                       << "; clear this cache directory and restart your task.";
+            EP_HOST_ASSERT(false and "Corrupted JIT cache directory");
+        }
+        return true;
+    }
+
+    ~KernelRuntime() noexcept(false) {
+        unload_library(library);
+    }
+};
+
+} // namespace nixl::runtime::ep::jit
