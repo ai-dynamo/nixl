@@ -640,7 +640,15 @@ devices can differ between the initiator and target processes.
 --asio_address IP          # ASIO TCP address used by both two-node instances (default: 127.0.0.1)
 --asio_port PORT           # ASIO TCP port used by both two-node instances (default: 12345)
 --etcd_endpoints URL       # ETCD server URL when using --runtime_type ETCD
+--etcd_barrier_poll_ms MS  # Interval at which the ETCD runtime polls a barrier, in ms (default: 3000)
 ```
+
+With `--runtime_type ETCD`, a rank leaves a barrier at its first poll after the last rank
+arrives, so the ranks leave up to one `--etcd_barrier_poll_ms` apart. In SG pairwise mode each
+initiator times its own loop after a barrier and Aggregate B/W sums their rates, so the loops
+should run over the same window: a short interval, e.g. `--etcd_barrier_poll_ms 10`, makes the
+ranks leave the barrier together and start their timed loops together. The barrier timeout does
+not depend on the interval (see [Using ETCD for Coordination](#using-etcd-for-coordination)).
 
 #### Storage Backend Options (GDS, GDS_MT, AIS, POSIX, HF3FS, OBJ, AZURE_BLOB, DAOS)
 ```
@@ -828,7 +836,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 
 1. Ensure an ETCD server is running.
 2. Launch multiple nixlbench instances pointing to the same ETCD server
-3. Multiple instances should be launched within the default timeout of 60s.
+3. Multiple instances should be launched within the barrier timeout of 180 seconds, which does not depend on `--etcd_barrier_poll_ms`.
 
 **For single-instance storage benchmarks:**
 
@@ -851,7 +859,7 @@ sudo systemctl start etcd && sudo systemctl enable etcd
 ./nixlbench --runtime_type ETCD --etcd_endpoints http://etcd-server:2379 \
   --backend UCX --initiator_seg_type VRAM --target_seg_type VRAM
 ```
-The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within 60s, otherwise the first instance will stop with an error in the barrier.
+The workers automatically coordinate ranks through ETCD as they connect. Note, the second nixlbench should be started within the barrier timeout above, otherwise the first instance will stop with an error in the barrier.
 
 ### Backend-Specific Examples
 

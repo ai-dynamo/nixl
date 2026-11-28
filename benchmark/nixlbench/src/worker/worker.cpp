@@ -20,6 +20,7 @@
 #include "runtime/etcd/etcd_rt.h"
 #include "utils/utils.h"
 
+#include <chrono>
 #include <unistd.h>
 
 // Null runtime for storage backends that don't need ETCD
@@ -95,8 +96,12 @@ createRT(std::atomic<int> *terminate) {
 
 #if HAVE_ETCD
     if (XFERBENCH_RT_ETCD == xferBenchConfig::runtime_type) {
-        xferBenchEtcdRT *etcd_rt = new xferBenchEtcdRT(
-            xferBenchConfig::benchmark_group, xferBenchConfig::etcd_endpoints, total, terminate);
+        xferBenchEtcdRT *etcd_rt =
+            new xferBenchEtcdRT(xferBenchConfig::benchmark_group,
+                                xferBenchConfig::etcd_endpoints,
+                                total,
+                                terminate,
+                                std::chrono::milliseconds(xferBenchConfig::etcd_barrier_poll_ms));
         if (etcd_rt->setup() != 0) {
             std::cerr << "Failed to setup ETCD runtime" << std::endl;
             delete etcd_rt;

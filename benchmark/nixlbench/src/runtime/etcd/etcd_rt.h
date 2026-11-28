@@ -19,6 +19,7 @@
 #define NIXL_BENCHMARK_NIXLBENCH_SRC_RUNTIME_ETCD_ETCD_RT_H
 
 #include <atomic>
+#include <chrono>
 #include <string>
 #include <memory>
 #include <mutex>
@@ -56,6 +57,9 @@ private:
     int my_rank; // Rank information
     int global_size;
     uint64_t barrier_gen;
+    // How often barrier() polls for the other ranks. A rank leaves the barrier at its first
+    // poll after the last rank arrives, so ranks leave up to one interval apart.
+    std::chrono::milliseconds barrier_poll;
     std::atomic<int> *terminate;
 
     bool error() const { return terminate != nullptr && *terminate; };
@@ -80,7 +84,8 @@ public:
     xferBenchEtcdRT(const std::string &benchmark_group,
                     const std::string &etcd_endpoints,
                     const int size,
-                    std::atomic<int> *terminate = nullptr);
+                    std::atomic<int> *terminate = nullptr,
+                    std::chrono::milliseconds barrier_poll = std::chrono::seconds(3));
     ~xferBenchEtcdRT();
 
     // Setup function to initialize connection and perform registration
