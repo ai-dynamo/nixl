@@ -21,7 +21,7 @@ Each matrix represents one LLM forward pass with compute time estimation.
 Disclaimers:
 - For now there is only support for TP and CP
 - The compute time estimation is naive (configurable via --flops-per-gpu, default 1000 TFLOPS for H100)
-- The batching is very naive and just aggregates requests into batches until it exceeds max_batch_mem or batch_size
+- Batches respect the configured KV memory and request-count limits.
 
 Example usage:
 python inference_workload_matgen.py generate \
@@ -175,16 +175,15 @@ def gen_batches(
     num_user_requests: int,
     task_config: TaskConfig,
     model_config: ModelConfig,
-    max_batch_mem: float = 100e9,  # 100GB - capacity of a gpu
 ):
     """
-    For now very naive, aggregate requests into batches until it exceeds max_batch_mem or batch_size
+    Group requests in arrival order within the configured KV memory and batch-size limits.
     Args:
         - num_user_requests: Number of user requests
         - task_config: Task configuration
     """
     batches = []
-    curr = []
+    curr: List[UserRequest] = []
     curr_mem = 0
     for _ in range(num_user_requests):
         req = UserRequest.rand(
@@ -193,15 +192,25 @@ def gen_batches(
             task_config.min_isl,
             task_config.max_isl,
         )
-        curr_mem += model_config.kv_cache_size(req.isl)
-        curr.append(req)
-        if curr_mem > task_config.max_batch_mem or len(curr) >= task_config.batch_size:
+        req_mem = model_config.kv_cache_size(req.isl)
+        if req_mem > task_config.max_batch_mem:
+            raise ValueError(
+                f"Request with {req.isl} tokens needs {req_mem} bytes of KV, "
+                f"which exceeds the batch memory budget of {task_config.max_batch_mem} bytes"
+            )
+        if curr and (
+            len(curr) >= task_config.batch_size
+            or curr_mem + req_mem > task_config.max_batch_mem
+        ):
             batches.append(Batch(user_requests=curr))
             curr = []
             curr_mem = 0
+        curr_mem += req_mem
+        curr.append(req)
     if curr:
         batches.append(Batch(user_requests=curr))
-        logger.warning("Last batch is incomplete, with size %d", len(curr))
+        if len(curr) < task_config.batch_size:
+            logger.warning("Last batch is incomplete, with size %d", len(curr))
 
     return batches
 
