@@ -245,8 +245,8 @@ RUN --mount=type=secret,id=ghconfig,target=/root/.gitconfig cd /workspace && \
     make -j${NPROC:-$(nproc)} && make install
 
 # Build curl against the selected OpenSSL for aws-sdk-cpp.
-RUN wget ${WGET_RETRY_OPTS} https://curl.se/download/curl-8.19.0.tar.gz && \
-    tar xzf curl-8.19.0.tar.gz && cd curl-8.19.0 && \
+RUN wget ${WGET_RETRY_OPTS} https://curl.se/download/curl-8.23.0.tar.gz && \
+    tar xzf curl-8.23.0.tar.gz && cd curl-8.23.0 && \
     ./configure --prefix=/usr/local --with-ssl=/usr/local/openssl --without-libpsl --enable-shared && \
     make -j${NPROC:-$(nproc)} && make install
 
