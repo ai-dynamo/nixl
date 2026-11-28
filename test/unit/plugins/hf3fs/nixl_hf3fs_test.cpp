@@ -43,7 +43,10 @@ namespace {
     constexpr int default_num_transfers = 10;  // Same as original HF3FS test
     constexpr size_t default_transfer_size = 1024;
     constexpr char test_phrase[] = "NIXL HF3FS Test Pattern 2025";
-    constexpr size_t test_phrase_len = sizeof(test_phrase) - 1;  // -1 to exclude null terminator
+    constexpr char repost_test_phrase_1[] = "NIXL HF3FS Repost Test Pattern 1111";
+    constexpr char repost_test_phrase_2[] = "NIXL HF3FS Repost Test Pattern 2222";
+    static_assert(sizeof(repost_test_phrase_1) == sizeof(repost_test_phrase_2),
+                  "Test phrases must be the same length");
     constexpr char test_file_name[] = "testfile";
     constexpr mode_t std_file_permissions = 0744;
 
@@ -73,15 +76,16 @@ namespace {
     }
 
     // Helper function to fill buffer with repeating pattern
-    void fill_test_pattern(void* buffer, size_t size) {
+    void
+    fill_test_pattern(void *buffer, size_t size, const char *phrase = test_phrase) {
         char* buf = (char*)buffer;
-        size_t phrase_len = test_phrase_len;
+        size_t phrase_len = strlen(phrase);
         size_t offset = 0;
 
         while (offset < size) {
             size_t remaining = size - offset;
             size_t copy_len = (remaining < phrase_len) ? remaining : phrase_len;
-            memcpy(buf + offset, test_phrase, copy_len);
+            memcpy(buf + offset, phrase, copy_len);
             offset += copy_len;
         }
     }
@@ -146,6 +150,207 @@ namespace {
             probe_path = "/mnt/3fs/nixl_hf3fs_path_mode_smoke.bin";
         }
         return nixl_test::runPathModeSmoke("HF3FSPathModeSmoke", "HF3FS", probe_path, 4096);
+    }
+
+    // Posts one WRITE request twice with different buffer contents, then reads the files back.
+    // A request may be posted again once it is done, and each post must write the buffer content
+    // at the time of that post.
+    int
+    runRepostTest(const std::string &test_files_dir_path, nixlTime::us_t wait_time, int max_waits) {
+        constexpr int num_transfers = 16;
+        constexpr size_t transfer_size = 128 * 1024;
+        const char *repost_phrases[] = {repost_test_phrase_1, repost_test_phrase_2};
+
+        print_segment_title("NIXL STORAGE REPOST TEST STARTING (HF3FS PLUGIN)");
+
+        nixlAgentConfig cfg;
+        cfg.useProgThread = true;
+        nixlAgent agent("HF3FSRepostTester", cfg);
+
+        // The DRAM path copies WRITE data into an IOV; DRAM_ZC writes from the buffer itself.
+        nixl_b_params_t params;
+        params["mem_config"] = "dram";
+        nixlBackendH *hf3fs = nullptr;
+        nixl_status_t ret = agent.createBackend("HF3FS", params, hf3fs);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Error creating HF3FS backend: " << ret << std::endl;
+            return 1;
+        }
+
+        print_segment_title(phase_title("Allocating and initializing buffers"));
+
+        std::vector<std::unique_ptr<void, MallocDeleter>> dram_addr;
+        dram_addr.reserve(num_transfers);
+        std::vector<tempFile> fd;
+        fd.reserve(num_transfers);
+        std::unique_ptr<nixlBlobDesc[]> dram_buf(new nixlBlobDesc[num_transfers]);
+        std::unique_ptr<nixlBlobDesc[]> ftrans(new nixlBlobDesc[num_transfers]);
+        nixl_reg_dlist_t dram_for_hf3fs(DRAM_SEG);
+        nixl_reg_dlist_t file_for_hf3fs(FILE_SEG);
+
+        for (int i = 0; i < num_transfers; i++) {
+            void *ptr = aligned_alloc(page_size, transfer_size);
+            if (!ptr) {
+                std::cerr << "DRAM allocation failed" << std::endl;
+                return 1;
+            }
+            dram_addr.emplace_back(ptr);
+
+            std::string name =
+                generate_timestamped_filename("repost_" + std::string(test_file_name));
+            name = test_files_dir_path + "/" + name + "_" + std::to_string(i);
+            try {
+                fd.emplace_back(name, O_RDWR | O_CREAT | O_TRUNC, std_file_permissions);
+            }
+            catch (const std::exception &e) {
+                std::cerr << "ERROR: Failed to create file: " << name << " - " << e.what()
+                          << std::endl;
+                return 1;
+            }
+
+            dram_buf[i].addr = (uintptr_t)(dram_addr.back().get());
+            dram_buf[i].len = transfer_size;
+            dram_buf[i].devId = 0;
+            dram_for_hf3fs.addDesc(dram_buf[i]);
+
+            ftrans[i].addr = 0; // offset
+            ftrans[i].len = transfer_size;
+            ftrans[i].devId = fd[i];
+            file_for_hf3fs.addDesc(ftrans[i]);
+
+            printProgress(float(i + 1) / num_transfers);
+        }
+
+        print_segment_title(phase_title("Registering memory with NIXL"));
+
+        ret = agent.registerMem(dram_for_hf3fs);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register DRAM memory with NIXL" << std::endl;
+            return 1;
+        }
+        ret = agent.registerMem(file_for_hf3fs);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Failed to register file memory with NIXL" << std::endl;
+            return 1;
+        }
+
+        nixl_xfer_dlist_t file_for_hf3fs_list = file_for_hf3fs.trim();
+        nixl_xfer_dlist_t dram_for_hf3fs_list = dram_for_hf3fs.trim();
+
+        nixlXferReqH *treq = nullptr;
+        ret = agent.createXferReq(
+            NIXL_WRITE, dram_for_hf3fs_list, file_for_hf3fs_list, "HF3FSRepostTester", treq);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Error creating transfer request: " << ret << std::endl;
+            return 1;
+        }
+
+        // Post the same write request twice, with new buffer content before each post
+        for (int post = 0; post < 2; post++) {
+            print_segment_title(phase_title(post == 0 ? "1st Memory to File Transfer" :
+                                                        "2nd Memory to File Transfer"));
+            for (int i = 0; i < num_transfers; i++) {
+                fill_test_pattern(dram_addr[i].get(), transfer_size, repost_phrases[post]);
+            }
+
+            nixl_status_t status = agent.postXferReq(treq);
+            if (status < 0) {
+                std::cerr << "Failed to post write transfer request - status: " << status
+                          << std::endl;
+                agent.releaseXferReq(treq);
+                return 1;
+            }
+
+            // Wait for transfer to complete
+            int num_waits = 0;
+            do {
+                status = agent.getXferStatus(treq);
+                if (status < 0) {
+                    std::cerr << "Error during write transfer - status: " << status << std::endl;
+                    agent.releaseXferReq(treq);
+                    return 1;
+                }
+                if (num_waits++ >= max_waits) {
+                    std::cerr << "Write operation timed out after " << max_waits << " retries"
+                              << std::endl;
+                    agent.releaseXferReq(treq);
+                    return 1;
+                }
+                usleep(wait_time);
+            } while (status == NIXL_IN_PROG);
+        }
+        agent.releaseXferReq(treq);
+
+        print_segment_title(phase_title("Syncing files"));
+        for (int i = 0; i < num_transfers; i++) {
+            if (fsync(fd[i]) < 0) {
+                std::cerr << "Failed to sync file " << i << " - " << strerror(errno) << std::endl;
+                return 1;
+            }
+        }
+
+        print_segment_title(phase_title("Clearing DRAM buffers"));
+        for (int i = 0; i < num_transfers; i++) {
+            clear_buffer(dram_addr[i].get(), transfer_size);
+        }
+
+        print_segment_title(phase_title("File to Memory Transfer"));
+
+        ret = agent.createXferReq(
+            NIXL_READ, dram_for_hf3fs_list, file_for_hf3fs_list, "HF3FSRepostTester", treq);
+        if (ret != NIXL_SUCCESS) {
+            std::cerr << "Error creating read transfer request: " << ret << std::endl;
+            return 1;
+        }
+
+        nixl_status_t status = agent.postXferReq(treq);
+        if (status < 0) {
+            std::cerr << "Failed to post read transfer request - status: " << status << std::endl;
+            agent.releaseXferReq(treq);
+            return 1;
+        }
+
+        // Wait for transfer to complete
+        int num_waits = 0;
+        do {
+            status = agent.getXferStatus(treq);
+            if (status < 0) {
+                std::cerr << "Error during read transfer - status: " << status << std::endl;
+                agent.releaseXferReq(treq);
+                return 1;
+            }
+            if (num_waits++ >= max_waits) {
+                std::cerr << "Read operation timed out after " << max_waits << " retries"
+                          << std::endl;
+                agent.releaseXferReq(treq);
+                return 1;
+            }
+            usleep(wait_time);
+        } while (status == NIXL_IN_PROG);
+        agent.releaseXferReq(treq);
+
+        print_segment_title(phase_title("Validating read data"));
+
+        std::unique_ptr<char[]> expected_buffer = std::make_unique<char[]>(transfer_size);
+        fill_test_pattern(expected_buffer.get(), transfer_size, repost_test_phrase_2);
+        int num_mismatched = 0;
+        for (int i = 0; i < num_transfers; i++) {
+            if (memcmp(dram_addr[i].get(), expected_buffer.get(), transfer_size) != 0) {
+                num_mismatched++;
+            }
+        }
+        if (num_mismatched != 0) {
+            std::cerr << num_mismatched << " of " << num_transfers
+                      << " files do not hold the data of the second post" << std::endl;
+            return 1;
+        }
+        std::cout << "All data validated successfully!" << std::endl;
+
+        print_segment_title("Freeing resources");
+        agent.deregisterMem(file_for_hf3fs);
+        agent.deregisterMem(dram_for_hf3fs);
+
+        return 0;
     }
 }
 
@@ -640,6 +845,10 @@ int main(int argc, char *argv[])
     std::cout << "Total time: " << format_duration(total_time) << std::endl;
     std::cout << "Total data: " << std::fixed << std::setprecision(2) << total_data_gb << " GB" << std::endl;
     std::cout << line_str << std::endl;
+
+    if (int rc = runRepostTest(test_files_dir_path, wait_time, max_waits); rc != 0) {
+        return rc;
+    }
 
     return 0;
 }
