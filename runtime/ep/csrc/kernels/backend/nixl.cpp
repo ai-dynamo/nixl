@@ -29,7 +29,7 @@
 
 namespace nixl::runtime::ep::elastic::nixl {
 
-bool is_fabric_handle_supported(const int& device_id) {
+bool is_fabric_handle_supported(int device_id) {
     // The caller has initialised the CUDA runtime on this device (torch's current device)
     CUdevice device; int fabric = 0;
     CUDA_DRIVER_CHECK(lazy_cuDeviceGet(&device, device_id));
@@ -78,7 +78,7 @@ static void set_direct_transport_default(std::string& engine_config) {
 }
 
 // Kernel edges stay within a domain or join the same internal position across domains.
-static bool needs_endpoint(const NIXLEPContext& ctx, const int& wr) {
+static bool needs_endpoint(const NIXLEPContext& ctx, int wr) {
     const int n = ctx.max_num_scaleup_ranks;
     const auto& slots = ctx.get_world_to_slot();
     return slots[wr] / n == slots[ctx.world_rank] / n or slots[wr] % n == slots[ctx.world_rank] % n;
@@ -147,12 +147,12 @@ static nixl_status_t invalidate_remote_md(nixlAgent& agent, const std::string& n
 }
 
 // A refused peer request names both ends
-[[noreturn]] static void refuse(const int& world_rank, const int& wr, const char* what) {
+[[noreturn]] static void refuse(int world_rank, int wr, const char* what) {
     throw EPException("NIXL", __FILE__, __LINE__, "world rank " + std::to_string(world_rank) + ", peer " + std::to_string(wr) + ": " + what);
 }
 
-NIXLEPContext::NIXLEPContext(const std::string& agent_name, const int& world_rank, const int& num_world_ranks,
-                             const int& max_num_scaleup_ranks, const int64_t& num_region_bytes, const int& num_channels):
+NIXLEPContext::NIXLEPContext(const std::string& agent_name, int world_rank, int num_world_ranks,
+                             int max_num_scaleup_ranks, int64_t num_region_bytes, int num_channels):
     world_rank(world_rank), num_world_ranks(num_world_ranks), max_num_scaleup_ranks(max_num_scaleup_ranks),
     num_region_bytes(num_region_bytes), peers(num_world_ranks), connected(num_world_ranks, 0),
     world_to_slot(num_world_ranks, -1), endpoint_connected(num_world_ranks, 0),
@@ -468,7 +468,7 @@ void NIXLEPContext::disconnect_ranks(const std::vector<int>& world_ranks, const 
     });
 }
 
-bool NIXLEPContext::is_connected(const int& wr) const {
+bool NIXLEPContext::is_connected(int wr) const {
     if (wr < 0 or wr >= num_world_ranks)
         refuse(world_rank, wr, "Peer world rank outside the declared maximum world (pass one below max_num_scaleout_ranks * max_num_scaleup_ranks)");
     return wr == world_rank or connected[wr] != 0;

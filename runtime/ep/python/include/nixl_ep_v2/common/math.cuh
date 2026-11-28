@@ -27,12 +27,12 @@ __forceinline__ __device__ __host__ constexpr T constexpr_align(T a, T b) {
 }
 
 template <typename dtype_t>
-__forceinline__ __device__ __host__ bool is_decoded_positive_ready(const dtype_t& value) {
+__forceinline__ __device__ __host__ bool is_decoded_positive_ready(dtype_t value) {
     return value >= 0;
 }
 
 template <typename dtype_t>
-__forceinline__ __device__ __host__ dtype_t encode_decode_positive(const dtype_t& value) {
+__forceinline__ __device__ __host__ dtype_t encode_decode_positive(dtype_t value) {
     return -value - static_cast<dtype_t>(1);
 }
 
@@ -42,7 +42,7 @@ __forceinline__ __device__ __host__ dtype_t* advance_ptr(void* ptr, const int64_
 }
 
 template <typename dtype_a_t, typename dtype_b_t>
-__device__ __forceinline__ dtype_b_t pack2(const dtype_a_t& x, const dtype_a_t& y) {
+__device__ __forceinline__ dtype_b_t pack2(dtype_a_t x, dtype_a_t y) {
     EP_STATIC_ASSERT(sizeof(dtype_a_t) * 2 == sizeof(dtype_b_t), "Invalid dtypes");
     dtype_b_t packed;
     auto unpacked_ptr = reinterpret_cast<dtype_a_t*>(&packed);
@@ -51,7 +51,7 @@ __device__ __forceinline__ dtype_b_t pack2(const dtype_a_t& x, const dtype_a_t& 
 }
 
 template <typename dtype_a_t, typename dtype_b_t>
-__device__ __forceinline__ void unpack2(const dtype_b_t& packed, dtype_a_t& x, dtype_a_t& y) {
+__device__ __forceinline__ void unpack2(dtype_b_t packed, dtype_a_t& x, dtype_a_t& y) {
     EP_STATIC_ASSERT(sizeof(dtype_a_t) * 2 == sizeof(dtype_b_t), "Invalid dtypes");
     auto unpacked_ptr = reinterpret_cast<const dtype_a_t*>(&packed);
     x = unpacked_ptr[0], y = unpacked_ptr[1];

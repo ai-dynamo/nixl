@@ -73,7 +73,7 @@ struct WorkspaceLayout {
 
     // Word `i` of the contiguous "rank counts then expert counts" view with `num_rank_slots` rank slots
     template <bool kIsSendBuffer>
-    __forceinline__ __device__ __host__ int64_t* get_scaleup_count_ptr(const int& i, const int& num_rank_slots) const {
+    __forceinline__ __device__ __host__ int64_t* get_scaleup_count_ptr(int i, int num_rank_slots) const {
         return i < num_rank_slots ?
             get_scaleup_rank_count_ptr<kIsSendBuffer>() + i :
             get_scaleup_expert_count_ptr<kIsSendBuffer>() + (i - num_rank_slots);
@@ -86,7 +86,7 @@ struct WorkspaceLayout {
 
     template <bool kIsSendBuffer>
     __forceinline__ __device__ __host__ int* get_scaleout_rank_count_ptr(
-        const int& scaleout_rank_idx = 0, const int& scaleup_rank_idx = 0) const {
+        int scaleout_rank_idx = 0, int scaleup_rank_idx = 0) const {
         const auto base_ptr = math::advance_ptr<int>(get_scaleup_atomic_sender_counter(), kNumScaleupAtomicCounterBytes) +
                               (kIsSendBuffer ? 0 : topology::kNumMaxRanksCap);
         return base_ptr + scaleout_rank_idx * topology::kNumMaxScaleupRanksCap + scaleup_rank_idx;
@@ -94,25 +94,25 @@ struct WorkspaceLayout {
 
     template <bool kIsSendBuffer>
     __forceinline__ __device__ __host__ int* get_scaleout_expert_count_ptr(
-        const int& scaleout_rank_idx = 0, const int& expert_idx = 0) const {
+        int scaleout_rank_idx = 0, int expert_idx = 0) const {
         const auto base_ptr = math::advance_ptr<int>(get_scaleout_rank_count_ptr<true>(), kNumScaleoutRankCountBytes) +
                               (kIsSendBuffer ? 0 : topology::kNumMaxScaleoutRanksCap * kNumMaxExperts);
         return base_ptr + scaleout_rank_idx * kNumMaxExperts + expert_idx;
     }
 
     __forceinline__ __device__ __host__ int* get_channel_scaleup_tail_ptr(
-        const int& channel_idx, const int& scaleup_rank_idx) const {
+        int channel_idx, int scaleup_rank_idx) const {
         const auto base_ptr = math::advance_ptr<int>(
             get_scaleout_expert_count_ptr<true>(), kNumScaleoutExpertCountBytes);
         return base_ptr + (channel_idx * topology::kNumMaxScaleupRanksCap + scaleup_rank_idx);
     }
 
     // Each connected pair counts arrivals monotonically; reconnect restarts both words.
-    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_signal_ptr(const int& world_rank) const {
+    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_signal_ptr(int world_rank) const {
         return math::advance_ptr<int64_t>(get_channel_scaleup_tail_ptr(0, 0), kNumChannelScaleupTailBytes) + world_rank;
     }
 
-    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_expected_ptr(const int& world_rank) const {
+    __forceinline__ __device__ __host__ int64_t* get_peer_barrier_expected_ptr(int world_rank) const {
         return math::advance_ptr<int64_t>(get_peer_barrier_signal_ptr(0), kNumPeerBarrierRowBytes) + world_rank;
     }
 
@@ -131,8 +131,8 @@ struct WorkspaceLayout {
 };
 
 // Notify shared memory: rank and expert counts, in whole strides of the notify threads.
-__forceinline__ __device__ __host__ constexpr int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_experts,
-                                                                           const int& num_notify_threads) {
+__forceinline__ __device__ __host__ constexpr int get_num_notify_smem_bytes(int num_max_ranks, int num_experts,
+                                                                           int num_notify_threads) {
     return math::constexpr_align(num_max_ranks + num_experts, num_notify_threads) * sizeof(int);
 }
 
@@ -143,8 +143,8 @@ struct TokenLayout {
     void* base;
 
     __forceinline__ __device__ __host__
-    TokenLayout(const int& num_hidden_bytes, const int& num_sf_bytes,
-                const int& num_topk, const bool& with_metadata, void* base = nullptr) :
+    TokenLayout(int num_hidden_bytes, int num_sf_bytes,
+                int num_topk, bool with_metadata, void* base = nullptr) :
         num_hidden_bytes(num_hidden_bytes),
         num_sf_bytes(num_sf_bytes),
         // Metadata includes: top-k indices, weight and source rank/token index
@@ -216,8 +216,8 @@ struct BufferLayout {
 
     __forceinline__ __device__ __host__
     BufferLayout(const TokenLayout& token_layout,
-                 const int& num_ranks,
-                 const int& max_num_tokens_per_rank,
+                 int num_ranks,
+                 int max_num_tokens_per_rank,
                  void* base = nullptr) :
         token_layout(token_layout),
         num_ranks(num_ranks), num_max_tokens_per_rank(max_num_tokens_per_rank),
@@ -244,14 +244,14 @@ struct BufferLayout {
     }
 
     __forceinline__ __device__ __host__
-    BufferLayout get_rank_buffer(const int& rank_idx) const {
+    BufferLayout get_rank_buffer(int rank_idx) const {
         return BufferLayout(token_layout,
                             1, num_max_tokens_per_rank,
                             static_cast<int8_t*>(base) + get_num_bytes_per_rank() * rank_idx);
     }
 
     __forceinline__ __device__ __host__
-    BufferLayout get_channel_buffer(const int& channel_idx, const int& num_tokens_per_channel) const {
+    BufferLayout get_channel_buffer(int channel_idx, int num_tokens_per_channel) const {
         EP_UNIFIED_ASSERT(num_max_tokens_per_rank % num_tokens_per_channel == 0);
         return BufferLayout(token_layout,
                             // Do not use `num_max_tokens_per_rank / num_tokens_per_channel` as the false stride
@@ -260,7 +260,7 @@ struct BufferLayout {
     }
 
     __forceinline__ __device__ __host__
-    TokenLayout get_token_buffer(const int& token_idx, const bool& global = false) const {
+    TokenLayout get_token_buffer(int token_idx, bool global = false) const {
         EP_UNIFIED_ASSERT(num_ranks == 1 or global);
         auto token_buffer = token_layout;
         token_buffer.set_base_ptr(static_cast<int8_t*>(base) + get_num_bytes_per_token() * token_idx);

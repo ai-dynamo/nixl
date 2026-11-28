@@ -134,7 +134,7 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
                 const int channel_idx = token_idx % num_channels;
                 const auto completion_ptr = ready_atomic_buff +
                     channel_idx * topology::kNumMaxScaleoutRanksCap + stored_dst_rank_idx;
-                comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+                comm::timeout_while<kNumTimeoutCycles>([&](bool is_last_check) {
                     const auto signal = ptx::ld_volatile<int64_t>(completion_ptr);
                     if (signal > token_idx) {
                         ptx::fence_acq_rel_sys();
@@ -161,13 +161,13 @@ combine_reduce_epilogue_impl(nv_bfloat16* combined_x,
             int topk_slot_idx[kNumTokensInLayout];
             compute_topk_slots(
                 topk_slot_idx, reduce_valid_mask,
-                [=](const int& idx) {
+                [=](int idx) {
                     return use_rank_layout ? ptx::exchange(stored_dst_rank_idx, idx) : idx;
                 }
             );
             combine_reduce<kHiddenVec, kUnrollFactor, kNumTokensInLayout>(
                 lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-                /* Get source base */ [=](const int& slot_idx) {
+                /* Get source base */ [=](int slot_idx) {
                     return static_cast<combine_vec_t*>(
                         comm_buffer.get_rank_buffer(slot_idx).get_token_buffer(token_idx).get_base_ptr());
                 },

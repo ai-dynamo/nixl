@@ -45,10 +45,10 @@ __device__ __forceinline__ void timeout_while(const func_t& func, int64_t start_
 
 // Strided wait: `func(i, is_last_check)` for every `i` of this thread's stride, one timeout budget for the loop
 template <int64_t kNumTimeoutCycles, typename func_t>
-__device__ __forceinline__ void timeout_while_strided(const int& begin, const int& end, const int& stride, const func_t& func) {
+__device__ __forceinline__ void timeout_while_strided(int begin, int end, int stride, const func_t& func) {
     const auto start_clock = clock64();
     for (int i = begin; i < end; i += stride)
-        timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) { return func(i, is_last_check); }, start_clock);
+        timeout_while<kNumTimeoutCycles>([&](bool is_last_check) { return func(i, is_last_check); }, start_clock);
 }
 
 // A status-bearing atomic retires this peer/channel's earlier RDMA operations as well as the atomic itself.
@@ -59,7 +59,7 @@ __device__ __forceinline__ void red_add_rel_and_wait(const nixl::NIXLTransport& 
     const bool rdma = transport.get_p2p_ptr(word, world_rank) == nullptr;
     transport.red_add_rel(word, value, world_rank, rdma ? &completion : nullptr);
     if (rdma)
-        timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+        timeout_while<kNumTimeoutCycles>([&](bool is_last_check) {
             const auto status = nixlGpuGetXferStatus<nixl_gpu_level_t::THREAD>(completion);
             if (status == NIXL_SUCCESS)
                 return true;
@@ -77,8 +77,8 @@ __device__ __forceinline__ void red_add_rel_and_wait(const nixl::NIXLTransport& 
 
 // Channel 0 for notify warps and mapped-only or one-channel contexts; otherwise stripe over the fixed launch grid.
 template <int kNumLaunchSMs, int kNumChannelsPerSM, bool kWithNotifyWarps = false>
-__device__ __forceinline__ int get_channel_idx(const int& sm_idx, const int& channel_in_sm_idx,
-                                               const int& num_channels, const bool& is_notify_warp = false) {
+__device__ __forceinline__ int get_channel_idx(int sm_idx, int channel_in_sm_idx,
+                                               int num_channels, bool is_notify_warp = false) {
     if (num_channels <= 1)
         return 0;
 
@@ -114,7 +114,7 @@ template <int kNumThreads, int64_t kNumTimeoutCycles, int kTag, int kNumMaxScale
 __device__ __forceinline__ void peer_barrier_leg_rt(const nixl::NIXLTransport& transport,
                                                     const layout::WorkspaceLayout& workspace,
                                                     const topology::EPTopology& topo,
-                                                    const Leg& leg, const int& thread_idx) {
+                                                    Leg leg, int thread_idx) {
     const bool scaleout_leg = leg == Leg::kScaleout;
     const int my_world_rank = transport.ctx.world_rank;
     const int num_ranks = scaleout_leg ? topo.num_scaleout_ranks : topo.num_scaleup_ranks;
@@ -137,7 +137,7 @@ __device__ __forceinline__ void peer_barrier_leg_rt(const nixl::NIXLTransport& t
 
             // Wait for the peer's arrival
             const auto signal_ptr = workspace.get_peer_barrier_signal_ptr(world_rank);
-            timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+            timeout_while<kNumTimeoutCycles>([=](bool is_last_check) {
                 const auto signal = ptx::ld_acquire_sys<int64_t>(signal_ptr);
                 if (signal >= expected)
                     return true;
@@ -162,7 +162,7 @@ template <int kNumThreads, int64_t kNumTimeoutCycles, int kTag, int kNumMaxScale
 __device__ __forceinline__ void gpu_barrier_rt(const nixl::NIXLDeviceContext& ctx,
                                                const layout::WorkspaceLayout& workspace,
                                                const topology::EPTopology& topo,
-                                               const int& sm_idx, const int& thread_idx,
+                                               int sm_idx, int thread_idx,
                                                bool do_scaleout = true) {
     // A general TMA store wait to prevent proxy memory issues
     if constexpr (kFlushStores) {
@@ -183,7 +183,7 @@ __device__ __forceinline__ void gpu_barrier_rt(const nixl::NIXLDeviceContext& ct
 
     // Barrier arrivals go on channel 0
     const nixl::NIXLTransport barrier_transport(ctx, 0);
-    const auto leg = [&](const Leg& which) {
+    const auto leg = [&](Leg which) {
         peer_barrier_leg_rt<kNumThreads, kNumTimeoutCycles, kTag, kNumMaxScaleupRanks>(
             barrier_transport, workspace, topo, which, thread_idx);
     };

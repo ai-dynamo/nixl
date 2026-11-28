@@ -32,7 +32,7 @@ public:
         library_include_path = std::filesystem::path(library_root_path) / "include";
     }
 
-    std::string get_hash_value(const std::string& code, const bool& exclude_code = true) {
+    std::string get_hash_value(const std::string& code, bool exclude_code = true) {
         std::stringstream ss;
         for (const auto& i: get_includes(code))
             ss << get_hash_value_by_path(library_include_path / i) << "$";

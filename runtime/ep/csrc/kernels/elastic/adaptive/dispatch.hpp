@@ -64,7 +64,7 @@ static void __instantiate_kernel() {
             args.num_timeout_cycles);
     }
 
-    static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
+    static void launch_impl(jit::KernelHandle kernel, const jit::LaunchConfigHandle& config, Args args) {
         EP_CUDA_UNIFIED_CHECK(jit::launch_kernel(
             kernel, config,
             args.x, args.sf, args.topk_idx, args.topk_weights,
@@ -86,25 +86,25 @@ static void __instantiate_kernel() {
 constexpr int kNumNotifyWarps = 4;
 
 // Notify shared memory at the kernel's template maxima.
-static int get_num_notify_smem_bytes(const int& num_max_ranks, const int& num_max_expert_slots) {
+static int get_num_notify_smem_bytes(int num_max_ranks, int num_max_expert_slots) {
     return layout::get_num_notify_smem_bytes(num_max_ranks, num_max_expert_slots, kNumNotifyWarps * 32);
 }
 
 // Dispatch token layout with routing metadata
 static layout::TokenLayout get_dispatch_token_layout(
-    const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk) {
+    int num_hidden_bytes, int num_sf_packs, int num_topk) {
     return layout::TokenLayout(num_hidden_bytes, num_sf_packs * sizeof(sf_pack_t), num_topk, /* with_metadata */ true);
 }
 
-static layout::TokenLayout get_combine_token_layout(const int& hidden) {
+static layout::TokenLayout get_combine_token_layout(int hidden) {
     return layout::TokenLayout(hidden * sizeof(nv_bfloat16), 0, 0, /* with_metadata */ false);
 }
 
 // Decide the number of channels per SM by shared memory consumption (both dispatch and combine must fit)
-static int get_num_channels_per_sm(const int& hidden, const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                   const int& num_max_expert_slots, const int& num_max_ranks,
-                                   const int& num_smem_bytes,
-                                   const bool& prefer_overlap_with_compute) {
+static int get_num_channels_per_sm(int hidden, int num_hidden_bytes, int num_sf_packs, int num_topk,
+                                   int num_max_expert_slots, int num_max_ranks,
+                                   int num_smem_bytes,
+                                   bool prefer_overlap_with_compute) {
     const auto dispatch_token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
     const auto combine_token_layout = get_combine_token_layout(hidden);
     int num_channels_per_sm = std::min<int>(
@@ -129,19 +129,19 @@ static void launch_dispatch(void* x, void* sf,
                             int* psum_num_recv_tokens_per_expert,
                             int* num_unaligned_recv_tokens_per_expert,
                             int* token_metadata_at_forward,
-                            const int& num_tokens, const int& num_max_tokens_per_rank,
-                            const int& num_hidden_bytes,
-                            const int& num_sf_packs, const int& sf_token_stride, const int& sf_hidden_stride,
-                            const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
+                            int num_tokens, int num_max_tokens_per_rank,
+                            int num_hidden_bytes,
+                            int num_sf_packs, int sf_token_stride, int sf_hidden_stride,
+                            int num_experts_per_rank, int num_topk, int expert_alignment,
                             void* buffer, void* send_buffer,
                             void* mapped_host_workspace,
                             const topology::EPTopology* topology,
-                            const int& num_max_scaleout_ranks, const int& num_max_scaleup_ranks,
-                            const int& num_launch_sms,
-                            const int& num_channels_per_sm,
-                            const int& num_smem_bytes,
-                            const int64_t& num_timeout_cycles,
-                            const bool& do_cpu_sync,
+                            int num_max_scaleout_ranks, int num_max_scaleup_ranks,
+                            int num_launch_sms,
+                            int num_channels_per_sm,
+                            int num_smem_bytes,
+                            int64_t num_timeout_cycles,
+                            bool do_cpu_sync,
                             const at::cuda::CUDAStream& stream) {
     // Notify warps, then the scale-out and forward warps: each channel owns one warp of each kind
     const int num_threads = (kNumNotifyWarps + 2 * num_channels_per_sm) * 32;
@@ -220,7 +220,7 @@ static void __instantiate_kernel() {
                            args.num_experts_per_rank, args.num_topk, args.expert_alignment);
     }
 
-    static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
+    static void launch_impl(jit::KernelHandle kernel, const jit::LaunchConfigHandle& config, Args args) {
         EP_CUDA_UNIFIED_CHECK(jit::launch_kernel(kernel, config,
                                                  args.buffer, args.workspace,
                                                  args.psum_num_recv_tokens_per_scaleup_rank,
@@ -244,14 +244,14 @@ static void launch_dispatch_copy_epilogue(void* buffer, void* workspace,
                                           int* recv_src_metadata,
                                           int* channel_linked_list,
                                           int* num_unaligned_recv_tokens_per_expert,
-                                          const int& num_recv_tokens, const bool& direct_only, const int& num_max_scaleup_ranks, const int& num_max_tokens_per_rank,
-                                          const int& num_hidden_bytes,
-                                          const int& num_sf_packs, const int& recv_sf_token_stride, const int& recv_sf_hidden_stride,
-                                          const int& num_experts_per_rank, const int& num_topk, const int& expert_alignment,
+                                          int num_recv_tokens, bool direct_only, int num_max_scaleup_ranks, int num_max_tokens_per_rank,
+                                          int num_hidden_bytes,
+                                          int num_sf_packs, int recv_sf_token_stride, int recv_sf_hidden_stride,
+                                          int num_experts_per_rank, int num_topk, int expert_alignment,
                                           const topology::EPTopology* topology,
-                                          const int& num_sms, const int& num_launch_sms, const int& num_smem_bytes,
-                                          const int& num_channels_per_sm,
-                                          const bool& do_expand, const bool& do_zero_padding,
+                                          int num_sms, int num_launch_sms, int num_smem_bytes,
+                                          int num_channels_per_sm,
+                                          bool do_expand, bool do_zero_padding,
                                           const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
     const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);

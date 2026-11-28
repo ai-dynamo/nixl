@@ -30,7 +30,7 @@ namespace nixl::runtime::ep::elastic::nixl {
 
 // A failed transport mutation must not leave a captured graph free to replay on inconsistent state.
 template <typename func_t>
-static void mutate_transport_or_abort(const int& world_rank, const char* operation, const func_t& func) {
+static void mutate_transport_or_abort(int world_rank, const char* operation, const func_t& func) {
     try {
         func();
     } catch (const std::exception& e) {
@@ -66,8 +66,8 @@ public:
     void* region_base() const { return reinterpret_cast<void*>(static_cast<uintptr_t>(region.ptr)); }
     int64_t num_region_bytes = 0;
 
-    NIXLEPContext(const std::string& agent_name, const int& world_rank, const int& num_world_ranks,
-                  const int& max_num_scaleup_ranks, const int64_t& num_region_bytes, const int& num_channels);
+    NIXLEPContext(const std::string& agent_name, int world_rank, int num_world_ranks,
+                  int max_num_scaleup_ranks, int64_t num_region_bytes, int num_channels);
     ~NIXLEPContext() noexcept;
 
     // Attempt all releases, warning on failure (idempotent).
@@ -91,7 +91,7 @@ public:
     // Invalid requests leave state unchanged; failures after retirement begins abort.
     void disconnect_ranks(const std::vector<int>& world_ranks, const topology::EPTopology& next, cudaStream_t stream);
 
-    bool is_connected(const int& wr) const;
+    bool is_connected(int wr) const;
     std::vector<int> get_connected_ranks() const;
 
     // Validate active endpoints, then publish staged views; call after draining, outside capture.
@@ -155,6 +155,6 @@ private:
 
 // Whether the device exports fabric-shareable memory handles (`CU_DEVICE_ATTRIBUTE_HANDLE_TYPE_FABRIC_SUPPORTED`); the Python
 // fabric evidence asks here instead of binding the driver itself
-bool is_fabric_handle_supported(const int& device_id);
+bool is_fabric_handle_supported(int device_id);
 
 }  // namespace nixl::runtime::ep::elastic::nixl

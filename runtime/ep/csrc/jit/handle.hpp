@@ -41,15 +41,15 @@ static KernelHandle load_kernel(const std::filesystem::path& cubin_path, const s
     return kernel;
 }
 
-static void unload_library(const LibraryHandle& library) {
+static void unload_library(LibraryHandle library) {
     const auto error = lazy_cuModuleUnload(library);
     EP_HOST_ASSERT(error == CUDA_SUCCESS or error == CUDA_ERROR_DEINITIALIZED);
 }
 
-static LaunchConfigHandle construct_launch_config(const KernelHandle& kernel,
-                                                  const cudaStream_t& stream, const int& smem_size,
-                                                  const dim3& grid_dim, const dim3& block_dim, const int& cluster_dim,
-                                                  const bool& cooperative, const bool& enable_pdl) {
+static LaunchConfigHandle construct_launch_config(KernelHandle kernel,
+                                                  cudaStream_t stream, int smem_size,
+                                                  const dim3& grid_dim, const dim3& block_dim, int cluster_dim,
+                                                  bool cooperative, bool enable_pdl) {
     if (smem_size > 0)
         CUDA_DRIVER_CHECK(lazy_cuFuncSetAttribute(kernel, CU_FUNC_ATTRIBUTE_MAX_DYNAMIC_SHARED_SIZE_BYTES, smem_size));
 
@@ -95,7 +95,7 @@ static LaunchConfigHandle construct_launch_config(const KernelHandle& kernel,
 }
 
 template <typename... arg_ts>
-static auto launch_kernel(const KernelHandle& kernel, const LaunchConfigHandle& config, arg_ts&&... args) {
+static auto launch_kernel(KernelHandle kernel, const LaunchConfigHandle& config, arg_ts&&... args) {
     void *ptr_args[] = {get_kernel_arg_ptr(args)...};
     return lazy_cuLaunchKernelEx(&config, kernel, ptr_args, nullptr);
 }

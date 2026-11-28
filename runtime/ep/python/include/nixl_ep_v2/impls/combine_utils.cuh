@@ -42,7 +42,7 @@ void compute_topk_slots(int (&topk_slot_idx)[kNumValidTopk], uint32_t mask,
 template <int kHiddenVec, int kUnrollFactor, int kNumExpectedTopk, int kNumValidTopk,
           typename vec_t, typename get_src_buffer_ptr_func_t, typename wait_buffer_func_t>
 __device__ __forceinline__
-void combine_reduce(const int& lane_idx, int (&topk_slot_idx)[kNumValidTopk],
+void combine_reduce(int lane_idx, int (&topk_slot_idx)[kNumValidTopk],
                     vec_t* dst_buffer_ptr,
                     const get_src_buffer_ptr_func_t& get_src_buffer_ptr_func,
                     const wait_buffer_func_t& wait_buffer_func,

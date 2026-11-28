@@ -148,12 +148,12 @@ adaptive_combine_impl(nv_bfloat16* x,
     constexpr int kNumRegistersForForwardWarps = 256 - kNumRegistersForScaleupWarps;
 
     // Local reduction of a token's valid top-k rows of `x` into the warp's TMA buffer (direct path and hybrid scale-up warps)
-    const auto reduce_topk_into_smem = [&](const int& stored_topk_slot_idx, const uint32_t& reduce_valid_mask) {
+    const auto reduce_topk_into_smem = [&](int stored_topk_slot_idx, uint32_t reduce_valid_mask) {
         // Sort valid top-k indices to front
         int topk_slot_idx[kNumTopk];
         compute_topk_slots(
             topk_slot_idx, reduce_valid_mask,
-            [=](const int& idx) {
+            [=](int idx) {
                 return ptx::exchange(stored_topk_slot_idx, idx);
             }
         );
@@ -162,7 +162,7 @@ adaptive_combine_impl(nv_bfloat16* x,
         constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, 4>();
         combine_reduce<kHiddenVec, kUnrollFactor, 1>(
             lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-            /* Get source base */ [=](const int& slot_idx) {
+            /* Get source base */ [=](int slot_idx) {
                 return math::advance_ptr<combine_vec_t>(
                     x, slot_idx * static_cast<int64_t>(kNumHiddenBytes));
             },
@@ -180,7 +180,7 @@ adaptive_combine_impl(nv_bfloat16* x,
     // Direct mode uses no forwarding stage or linked list.
     if (is_direct) {
         // A rank's position inside its domain (from its rank index): the NVLink peer the direct path addresses
-        const auto position_of = [=](const int& rank) { return rank % num_scaleup_ranks; };
+        const auto position_of = [=](int rank) { return rank % num_scaleup_ranks; };
 
         // Rotate the warp index by rank so that peers spread their writes.
         const auto rotated_warp_idx = (warp_idx + scaleup_rank_idx) % kNumWarps;
@@ -294,7 +294,7 @@ adaptive_combine_impl(nv_bfloat16* x,
         int stored_num_tokens_sent[kNumScaleupRanksPerLane] = {};
         int stored_old_num_tokens_sent[kNumScaleupRanksPerLane] = {};
         const auto tail_ptr = workspace_layout.get_channel_scaleup_tail_ptr(channel_idx, scaleup_rank_idx);
-        const auto update_tails = [&](const bool& finish = false) {
+        const auto update_tails = [&](bool finish = false) {
             ++ update_counter;
             if (finish or update_counter == kNumScaleupUpdateInterval) {
                 // Wait all TMA stores to finish
@@ -580,7 +580,7 @@ adaptive_combine_impl(nv_bfloat16* x,
             }
 
             // Wait all tails to arrive
-            comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+            comm::timeout_while<kNumTimeoutCycles>([&](bool is_last_check) {
                 bool arrived = true;
                 #pragma unroll
                 for (int j = 0; j < kNumScaleupRanksPerLane; ++ j)
@@ -694,7 +694,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 int topk_slot_idx[kNumTopk];
                 compute_topk_slots(
                     topk_slot_idx, reduce_valid_mask,
-                    [=](const int& idx) {
+                    [=](int idx) {
                         return ptx::exchange(stored_src_buffer_idx, idx);
                     }
                 );
@@ -703,7 +703,7 @@ adaptive_combine_impl(nv_bfloat16* x,
                 constexpr int kUnrollFactor = get_max_unroll_factor<kHiddenVec, kAdjustRegisters ? 8 : 4>();
                 combine_reduce<kHiddenVec, kUnrollFactor, 1>(
                     lane_idx, topk_slot_idx, static_cast<combine_vec_t*>(tma_buffer.get_base_ptr()),
-                    /* Get source base */ [=](const int& slot_idx) {
+                    /* Get source base */ [=](int slot_idx) {
                         return static_cast<combine_vec_t*>(scaleup_buffer.get_token_buffer(slot_idx, true).get_base_ptr());
                     },
                     /* Wait buffer release */ [=]() {
@@ -773,7 +773,7 @@ adaptive_combine_impl(nv_bfloat16* x,
         // The next entry barrier orders reuse of completion words and the shared SEND arena.
         if (not use_incremental_combine and topo.is_scaleout_active(lane_idx)) {
             const auto wait_ptr = ready_atomic_buff + channel_idx * topology::kNumMaxScaleoutRanksCap + lane_idx;
-            comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+            comm::timeout_while<kNumTimeoutCycles>([&](bool is_last_check) {
                 const auto signal = ptx::ld_acquire_sys<int64_t>(wait_ptr);
                 if (signal == kExpectedSignal)
                     return true;

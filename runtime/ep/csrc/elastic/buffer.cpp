@@ -28,16 +28,16 @@ namespace nixl::runtime::ep::elastic {
 
 using namespace adaptive;
 
-buffer::buffer(const int64_t& num_buffer_bytes,
-               const bool& allow_multiple_reduction,
-               const bool& use_fp8_dispatch,
-               const bool& prefer_overlap_with_compute,
-               const int& num_cpu_timeout_secs, const int& num_gpu_timeout_secs,
-               const bool& explicitly_destroy,
-               const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
-               const int& world_rank,
-               const int& num_nixl_channels, const std::string& agent_name_prefix,
-               const int& num_experts_per_rank, const int& num_launch_sms):
+buffer::buffer(int64_t num_buffer_bytes,
+               bool allow_multiple_reduction,
+               bool use_fp8_dispatch,
+               bool prefer_overlap_with_compute,
+               int num_cpu_timeout_secs, int num_gpu_timeout_secs,
+               bool explicitly_destroy,
+               int max_num_scaleout_ranks, int max_num_scaleup_ranks,
+               int world_rank,
+               int num_nixl_channels, const std::string& agent_name_prefix,
+               int num_experts_per_rank, int num_launch_sms):
     num_buffer_bytes(num_buffer_bytes),
     explicitly_destroy(explicitly_destroy),
     comm_stream(get_global_comm_stream()),
@@ -153,7 +153,7 @@ torch::Stream buffer::get_comm_stream() const {
     return comm_stream;
 }
 
-void buffer::update_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
+void buffer::update_topology_masks(int mode, uint32_t scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
                                    const std::vector<int>& disconnect_ranks) {
     EP_HOST_ASSERT(c10::cuda::currentStreamCaptureStatusMayInitCtx() == c10::cuda::CaptureStatus::None and
                    "Topology updates must run outside CUDA-graph capture, between launches");
@@ -184,7 +184,7 @@ void buffer::update_topology_masks(const int& mode, const uint32_t& scaleout_mas
     nixl::mutate_transport_or_abort(nixl_context->world_rank, "topology update", [&] { publish_topology(next, stream); });
 }
 
-topology::EPTopology buffer::make_topology(const int& mode, const uint32_t& scaleout_mask, const topology::ScaleupMask& scaleup_mask) const {
+topology::EPTopology buffer::make_topology(int mode, uint32_t scaleout_mask, const topology::ScaleupMask& scaleup_mask) const {
     EP_HOST_ASSERT(mode == topology::kModeDirect or mode == topology::kModeHybrid);
     EP_HOST_ASSERT((max_num_scaleout_ranks > 1 or mode == topology::kModeDirect) and
                    "A buffer with max_num_scaleout_ranks=1 reserves no scale-out storage; use direct mode");
@@ -330,7 +330,7 @@ std::tuple<torch::Tensor, std::vector<std::string>> buffer::read_profile() const
     return {values, std::vector<std::string>(profile::kPhaseNames, profile::kPhaseNames + profile::kNumPhases)};
 }
 
-void buffer::barrier(const bool& use_comm_stream, const bool& with_cpu_sync) const {
+void buffer::barrier(bool use_comm_stream, bool with_cpu_sync) const {
     const auto compute_stream = at::cuda::getCurrentCUDAStream();
     const auto stream = use_comm_stream ? comm_stream : compute_stream;
     if (use_comm_stream)
@@ -353,7 +353,7 @@ void buffer::barrier(const bool& use_comm_stream, const bool& with_cpu_sync) con
 }
 
 torch::cuda::CUDAStream buffer::stream_control_prologue(const std::optional<EventHandle>& previous_event,
-                                                        const bool& allocate_on_comm_stream,
+                                                        bool allocate_on_comm_stream,
                                                         c10::cuda::OptionalCUDAStreamGuard& stream_guard) const {
     // Allocate all tensors on communication stream if set
     // NOTES: do not allocate tensors upfront!
@@ -384,8 +384,8 @@ void buffer::stream_control_before_epilogue(const std::optional<EventHandle>& pr
 
 std::optional<EventHandle> buffer::stream_control_epilogue(const std::vector<std::optional<torch::Tensor>>& tensors,
                                                            const at::cuda::CUDAStream& compute_stream,
-                                                           const bool& allocate_on_comm_stream,
-                                                           const bool& async_with_compute_stream) const {
+                                                           bool allocate_on_comm_stream,
+                                                           bool async_with_compute_stream) const {
     // Ensure memory access safety between two streams
     std::optional<EventHandle> event;
     if (async_with_compute_stream) {
@@ -411,9 +411,9 @@ std::optional<EventHandle> buffer::stream_control_epilogue(const std::vector<std
     return event;
 }
 
-std::tuple<int64_t, int64_t> buffer::get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
-                                                              const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                                              const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+std::tuple<int64_t, int64_t> buffer::get_dispatch_buffer_size(int num_max_tokens_per_rank,
+                                                              int num_hidden_bytes, int num_sf_packs, int num_topk,
+                                                              int num_scaleout_ranks, int num_scaleup_ranks) {
     const auto token_layout = get_dispatch_token_layout(num_hidden_bytes, num_sf_packs, num_topk);
 
     const auto scaleup_recv_buffer = layout::BufferLayout<false>(
@@ -429,9 +429,9 @@ std::tuple<int64_t, int64_t> buffer::get_dispatch_buffer_size(const int& num_max
             scaleout_send_buffer.get_num_bytes()};
 }
 
-std::tuple<int64_t, int64_t> buffer::get_combine_buffer_size(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                                             const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                                             const bool& allow_multiple_reduction) {
+std::tuple<int64_t, int64_t> buffer::get_combine_buffer_size(int num_max_tokens_per_rank, int hidden, int num_topk,
+                                                             int num_scaleout_ranks, int num_scaleup_ranks,
+                                                             bool allow_multiple_reduction) {
     const auto token_layout = get_combine_token_layout(hidden);
 
     const int num_tokens_in_scaleup_layout = allow_multiple_reduction ? std::min(num_scaleup_ranks, num_topk) : num_topk;
@@ -450,13 +450,13 @@ std::tuple<int64_t, int64_t> buffer::get_combine_buffer_size(const int& num_max_
             scaleout_send_buffer.get_num_bytes()};
 }
 
-int buffer::get_max_num_fp8_sf_packs(const int& hidden) {
+int buffer::get_max_num_fp8_sf_packs(int hidden) {
     return math::ceil_div(hidden, 32);
 }
 
-std::tuple<int64_t, int64_t> buffer::get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                                            const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
-                                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks) {
+std::tuple<int64_t, int64_t> buffer::get_buffer_arena_sizes(int num_max_tokens_per_rank, int hidden, int num_topk,
+                                                            bool allow_multiple_reduction, bool use_fp8_dispatch,
+                                                            int num_scaleout_ranks, int num_scaleup_ranks) {
     const auto elem_size = use_fp8_dispatch ? sizeof(__nv_fp8_e4m3) : sizeof(nv_bfloat16);
     const auto num_sf_packs = use_fp8_dispatch ? get_max_num_fp8_sf_packs(hidden) : 0;
     const auto [num_dispatch_recv_bytes, num_dispatch_send_bytes] = get_dispatch_buffer_size(
@@ -466,18 +466,18 @@ std::tuple<int64_t, int64_t> buffer::get_buffer_arena_sizes(const int& num_max_t
     return {std::max(num_dispatch_recv_bytes, num_combine_recv_bytes), std::max(num_dispatch_send_bytes, num_combine_send_bytes)};
 }
 
-int64_t buffer::get_send_buffer_offset(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const {
+int64_t buffer::get_send_buffer_offset(int num_max_tokens_per_rank, int hidden, int num_topk) const {
     const auto [num_recv_bytes, num_send_bytes] = get_buffer_arena_sizes(
         num_max_tokens_per_rank, hidden, num_topk, allow_multiple_reduction, use_fp8_dispatch, max_num_scaleout_ranks, max_num_scaleup_ranks);
     EP_HOST_ASSERT(num_recv_bytes + num_send_bytes <= num_buffer_bytes);
     return num_buffer_bytes - num_send_bytes;
 }
 
-int64_t buffer::calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
-                                      const int& num_max_tokens_per_rank, const int& hidden,
+int64_t buffer::calculate_buffer_size(int max_num_scaleout_ranks, int max_num_scaleup_ranks,
+                                      int num_max_tokens_per_rank, int hidden,
                                       int num_topk,
-                                      const bool& use_fp8_dispatch,
-                                      const bool& allow_multiple_reduction) {
+                                      bool use_fp8_dispatch,
+                                      bool allow_multiple_reduction) {
     EP_HOST_ASSERT(num_max_tokens_per_rank > 0 and hidden > 0);
 
     // The worst case SF bytes must be less than the main part
@@ -503,15 +503,15 @@ buffer::dispatch(const torch::Tensor& x,
                  const torch::Tensor& topk_idx,
                  const std::optional<torch::Tensor>& topk_weights,
                  const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
-                 const int& num_max_tokens_per_rank,
-                 const int& expert_alignment,
+                 int num_max_tokens_per_rank,
+                 int expert_alignment,
                  const std::optional<EventHandle>& previous_event,
                  const std::optional<EventHandle>& previous_event_before_epilogue,
-                 const bool& async_with_compute_stream,
-                 const bool& allocate_on_comm_stream,
-                 const bool& do_handle_copy, const bool& do_cpu_sync,
-                 const bool& do_expand, const bool& do_zero_padding,
-                 const bool& use_tma_aligned_col_major_sf) const {
+                 bool async_with_compute_stream,
+                 bool allocate_on_comm_stream,
+                 bool do_handle_copy, bool do_cpu_sync,
+                 bool do_expand, bool do_zero_padding,
+                 bool use_tma_aligned_col_major_sf) const {
     // Zero padding only makes sense with expand mode
     EP_HOST_ASSERT(not do_zero_padding or do_expand);
 
@@ -594,7 +594,7 @@ buffer::dispatch(const torch::Tensor& x,
 
     // Handle tensors: maximum-world storage handed back as extent-shaped views
     const auto int_options = at::TensorOptions(torch::kCUDA).dtype(torch::kInt);
-    const auto alloc_flat = [&](const int64_t& capacity, const std::vector<int64_t>& extent_shape) {
+    const auto alloc_flat = [&](int64_t capacity, const std::vector<int64_t>& extent_shape) {
         const auto extent_numel = std::accumulate(extent_shape.begin(), extent_shape.end(), int64_t(1), std::multiplies<>());
         EP_HOST_ASSERT(extent_numel <= capacity);
         return torch::empty({capacity}, int_options).slice(0, 0, extent_numel).view(extent_shape);
@@ -873,13 +873,13 @@ buffer::combine(const torch::Tensor& x,
                 const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
                 const torch::Tensor& token_metadata_at_forward,
                 const torch::Tensor& channel_linked_list,
-                const bool& recv_count_is_exact,
-                const int& num_max_tokens_per_rank,
+                bool recv_count_is_exact,
+                int num_max_tokens_per_rank,
                 const std::optional<EventHandle>& previous_event,
                 const std::optional<EventHandle>& previous_event_before_epilogue,
-                const bool& async_with_compute_stream,
-                const bool& allocate_on_comm_stream,
-                const bool& use_expanded_layout) const {
+                bool async_with_compute_stream,
+                bool allocate_on_comm_stream,
+                bool use_expanded_layout) const {
     const auto& topo = active_rank_topology();
 
     // Check data

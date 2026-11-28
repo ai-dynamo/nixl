@@ -29,7 +29,7 @@ static_assert(kNumMaxScaleupRanksCap % 64 == 0, "The position mask is whole 64-b
 struct ScaleupMask {
     uint64_t words[kNumScaleupMaskWords];
 
-    __device__ __host__ __forceinline__ bool test(const int& idx) const {
+    __device__ __host__ __forceinline__ bool test(int idx) const {
         // A predicate chain, not a dynamic index (a dynamically indexed register array goes to local memory; per token and lane)
         uint64_t word = 0ull;
         #pragma unroll
@@ -86,17 +86,17 @@ struct alignas(128) EPTopology {
     // The transport context (memory views, p2p pointers, channels): loaded from here, so a change of peers needs no re-capture
     const nixl::NIXLDeviceContext* transport;
 
-    __device__ __host__ __forceinline__ bool is_scaleout_active(const int& idx) const {
+    __device__ __host__ __forceinline__ bool is_scaleout_active(int idx) const {
         return idx >= 0 and idx < num_scaleout_ranks and ((scaleout_mask >> idx) & 1u);
     }
 
     // The range check is `ScaleupMask::test`'s: bits at or beyond the extent `num_scaleup_ranks` are zero by construction
     // (the host derives the extent from the mask)
-    __device__ __host__ __forceinline__ bool is_scaleup_active(const int& idx) const {
+    __device__ __host__ __forceinline__ bool is_scaleup_active(int idx) const {
         return scaleup_mask.test(idx);
     }
 
-    __device__ __host__ __forceinline__ bool is_active(const int& scaleout_idx, const int& scaleup_idx) const {
+    __device__ __host__ __forceinline__ bool is_active(int scaleout_idx, int scaleup_idx) const {
         return is_scaleout_active(scaleout_idx) and is_scaleup_active(scaleup_idx);
     }
 
@@ -126,19 +126,19 @@ static_assert(sizeof(EPTopology) == 128, "The topology descriptor is one 128-byt
 
 // Membership specialised on the declared maximum: with at most 64 positions only word 0 can hold an active bit (per token and lane)
 template <int kNumMaxScaleupRanks>
-__device__ __forceinline__ bool is_scaleup_active(const EPTopology& topo, const int& idx) {
+__device__ __forceinline__ bool is_scaleup_active(const EPTopology& topo, int idx) {
     if constexpr (kNumMaxScaleupRanks <= 64)
         return idx >= 0 and idx < topo.num_scaleup_ranks and ((topo.scaleup_mask.words[0] >> idx) & 1ull);
     return topo.is_scaleup_active(idx);
 }
 
 template <int kNumMaxScaleupRanks>
-__device__ __forceinline__ bool is_rank_active(const EPTopology& topo, const int& rank_idx) {
+__device__ __forceinline__ bool is_rank_active(const EPTopology& topo, int rank_idx) {
     return topo.is_scaleout_active(rank_idx / topo.num_scaleup_ranks) and is_scaleup_active<kNumMaxScaleupRanks>(topo, rank_idx % topo.num_scaleup_ranks);
 }
 
 // Public rank IDs are independent of the internal domain/position layout.
-__device__ __host__ __forceinline__ int rank_slot(const EPTopology& topo, const int& world_rank) {
+__device__ __host__ __forceinline__ int rank_slot(const EPTopology& topo, int world_rank) {
     if (world_rank < 0 or world_rank >= topo.num_world_ranks)
         return -1;
 #ifdef __CUDA_ARCH__
@@ -150,7 +150,7 @@ __device__ __host__ __forceinline__ int rank_slot(const EPTopology& topo, const 
 
 // Public expert IDs use world ranks; internal counters and token metadata use the current extent.
 template <int kNumMaxScaleupRanks, int kNumExpertsPerRank>
-__device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, const int& expert_idx) {
+__device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, int expert_idx) {
     if (expert_idx < 0)
         return -1;
     const int owner = expert_idx / kNumExpertsPerRank;
@@ -166,12 +166,12 @@ __device__ __forceinline__ int world_expert_to_extent(const EPTopology& topo, co
 
 // World ranks of our peers (`world_rank`): the scale-up peer at position `k` of our domain, the rail peer in domain `d`
 template <int kNumMaxScaleupRanks>
-__device__ __host__ __forceinline__ int scaleup_peer(const EPTopology& topo, const int& k) {
+__device__ __host__ __forceinline__ int scaleup_peer(const EPTopology& topo, int k) {
     return topo.slot_to_world[topo.scaleout_rank_idx * kNumMaxScaleupRanks + k];
 }
 
 template <int kNumMaxScaleupRanks>
-__device__ __host__ __forceinline__ int scaleout_peer(const EPTopology& topo, const int& d) {
+__device__ __host__ __forceinline__ int scaleout_peer(const EPTopology& topo, int d) {
     return topo.slot_to_world[d * kNumMaxScaleupRanks + topo.scaleup_rank_idx];
 }
 

@@ -92,7 +92,7 @@ adaptive_dispatch_impl(
     const auto rank_idx = scaleout_rank_idx * num_scaleup_ranks + scaleup_rank_idx;
 
     // A rank's position inside its domain (from its rank index)
-    const auto position_of = [=](const int& rank) { return rank % num_scaleup_ranks; };
+    const auto position_of = [=](int rank) { return rank % num_scaleup_ranks; };
 
     // Workspaces
     const auto workspace_layout = layout::WorkspaceLayout(ctx.local_base);
@@ -143,7 +143,7 @@ adaptive_dispatch_impl(
     __syncwarp();
 
     // Preload next token
-    const auto preload_next_token = [&](const int& token_idx) {
+    const auto preload_next_token = [&](int token_idx) {
         if (token_idx >= num_tokens)
             return;
 
@@ -221,7 +221,7 @@ adaptive_dispatch_impl(
             // Reduce all SM's count
             // Wait for every launched block to arrive
             for (int i = thread_idx; i < num_ranks + num_experts; i += kNumNotifyThreads) {
-                comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+                comm::timeout_while<kNumTimeoutCycles>([=](bool is_last_check) {
                     const auto status = ptx::ld_volatile<int64_t>(workspace_layout.get_notify_reduction_workspace_ptr() + i);
                     if ((status >> 32) == kNumLaunchSMs) {
                         // Encode and write into the send buffer (hybrid) or shared memory (direct)
@@ -303,7 +303,7 @@ adaptive_dispatch_impl(
                         continue;
                     }
                     const auto slot_ptr = workspace_layout.get_scaleup_count_ptr<false>(i, num_scaleup_ranks);
-                    comm::timeout_while<kNumTimeoutCycles>([=](const bool& is_last_check) {
+                    comm::timeout_while<kNumTimeoutCycles>([=](bool is_last_check) {
                         // NOTES: the global memory type has 64 bits
                         const auto count = static_cast<int>(ptx::ld_volatile<int64_t>(slot_ptr));
                         const auto decoded = math::encode_decode_positive(count);
@@ -367,7 +367,7 @@ adaptive_dispatch_impl(
 
                 // Util functions to get metadata from scale-out peers
                 // NOTES: each count word is polled on its own until it reads as ready: a 4-byte word lands whole (see `put_words`)
-                const auto recv_and_reduce = [=](const auto& get_ptr_func, const int& slot, const bool& is_expert_reduction = false) -> int {
+                const auto recv_and_reduce = [=](const auto& get_ptr_func, int slot, bool is_expert_reduction = false) -> int {
                     int count = 0;
                     for (int j = 0; j < num_scaleout_ranks; ++ j) {
                         // Masked domains send nothing
@@ -375,7 +375,7 @@ adaptive_dispatch_impl(
                             continue;
                         const auto ptr = get_ptr_func(j);
                         int decoded;
-                        comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check){
+                        comm::timeout_while<kNumTimeoutCycles>([&](bool is_last_check){
                             decoded = math::encode_decode_positive(ptx::ld_acquire_sys<int>(ptr));
                             if (math::is_decoded_positive_ready(decoded))
                                 return true;
@@ -400,7 +400,7 @@ adaptive_dispatch_impl(
                 // Write into all scale-up peers' rank-level counters
                 for (int i = thread_idx; i < num_scaleup_ranks; i += kNumNotifyThreads) {
                     // Wait scale-out arrival and reduce (a masked position's words too: the active domains send an encoded zero for it)
-                    const auto count = recv_and_reduce([=](const int& scaleout_peer_idx) {
+                    const auto count = recv_and_reduce([=](int scaleout_peer_idx) {
                         return workspace_layout.get_scaleout_rank_count_ptr<false>(scaleout_peer_idx, i);
                     }, i);
                     if (not topology::is_scaleup_active<kNumMaxScaleupRanks>(topo, i))
@@ -417,7 +417,7 @@ adaptive_dispatch_impl(
                 // Atomic add into all scale-up peers' expert-level counters
                 for (int i = thread_idx; i < num_experts_per_scaleout; i += kNumNotifyThreads) {
                     // Wait scale-out arrival and reduce
-                    const auto count = recv_and_reduce([=](const int& scaleout_peer_idx) {
+                    const auto count = recv_and_reduce([=](int scaleout_peer_idx) {
                         return workspace_layout.get_scaleout_expert_count_ptr<false>(scaleout_peer_idx, i);
                     }, i, true);
 
@@ -441,7 +441,7 @@ adaptive_dispatch_impl(
                 // NOTES: here we only care the prefix sum by scale-up peers (used for later epilogue), not all ranks
                 // Strided over the notify threads: a small world can have more counters than the notify warps have threads
                 comm::timeout_while_strided<kNumTimeoutCycles>(thread_idx, num_scaleup_ranks + num_experts_per_rank, kNumNotifyThreads,
-                    [&](const int& i, const bool& is_last_check) {
+                    [&](int i, bool is_last_check) {
                     if (i < num_scaleup_ranks and not topology::is_scaleup_active<kNumMaxScaleupRanks>(topo, i)) {
                         rank_expert_count[i] = 0;
                         if constexpr (kDoCPUSync)
@@ -604,7 +604,7 @@ adaptive_dispatch_impl(
         const bool use_incremental_combine = combine_policy::use_incremental(topo, num_tokens);
         auto* channel_ready_atomic_buff = ready_atomic_buff +
             channel_idx * topology::kNumMaxScaleoutRanksCap + scaleout_rank_idx;
-        const auto update_scaleout_tail = [&](const bool& finish_flag = false) {
+        const auto update_scaleout_tail = [&](bool finish_flag = false) {
             if (topo.is_scaleout_active(lane_idx) and
                 (stored_scaleout_tail >= stored_old_scaleout_tail + kScaleoutUpdateInterval or finish_flag)) {
                 const auto signaled_tail = math::pack2<int, int64_t>(
@@ -713,7 +713,7 @@ adaptive_dispatch_impl(
         token_metadata_at_forward += channel_idx * (num_tokens_in_linked_list * kNumForwardMetadataDims);
 
         // Transform linked list index
-        const auto transform_linked_list_idx = [=](const int& idx) {
+        const auto transform_linked_list_idx = [=](int idx) {
             return channel_idx * (num_tokens_in_linked_list * num_scaleup_ranks) +
                 idx * num_scaleup_ranks + scaleup_rank_idx;
         };
@@ -734,7 +734,7 @@ adaptive_dispatch_impl(
             recv_scaleout_rank_idx = hi_mask ? ptx::ffs(hi_mask) : ptx::ffs(wip_mask);
 
             // Wait for this rank to have data (or finish)
-            comm::timeout_while<kNumTimeoutCycles>([&](const bool& is_last_check) {
+            comm::timeout_while<kNumTimeoutCycles>([&](bool is_last_check) {
                 const uint32_t arrived_or_finished =
                     stored_scaleout_tail_idx > stored_scaleout_old_tail_idx or stored_finish_flag > 0;
                 if (ptx::exchange(arrived_or_finished, recv_scaleout_rank_idx))

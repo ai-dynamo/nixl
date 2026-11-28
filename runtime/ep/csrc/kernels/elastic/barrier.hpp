@@ -42,14 +42,14 @@ static void __instantiate_kernel() {
                            args.launch_args.num_threads, args.num_max_scaleup_ranks, args.num_timeout_cycles);
     }
 
-    static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
+    static void launch_impl(jit::KernelHandle kernel, const jit::LaunchConfigHandle& config, Args args) {
         EP_CUDA_UNIFIED_CHECK(jit::launch_kernel(kernel, config, args.topology));
     }
 };
 
 static BarrierRuntime::Args get_barrier_args(const topology::EPTopology* topology,
-                                             const bool& direct_only, const int& num_max_scaleup_ranks,
-                                             const int64_t& num_timeout_cycles) {
+                                             bool direct_only, int num_max_scaleup_ranks,
+                                             int64_t num_timeout_cycles) {
     constexpr auto kNumThreads = 512;
     return {
         .direct_only = direct_only, .num_max_scaleup_ranks = num_max_scaleup_ranks, .num_timeout_cycles = num_timeout_cycles,
@@ -57,13 +57,13 @@ static BarrierRuntime::Args get_barrier_args(const topology::EPTopology* topolog
         .launch_args = jit::LaunchArgs(1, kNumThreads)};
 }
 
-static void build_barrier(const bool& direct_only, const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles) {
+static void build_barrier(bool direct_only, int num_max_scaleup_ranks, int64_t num_timeout_cycles) {
     const auto args = get_barrier_args(nullptr, direct_only, num_max_scaleup_ranks, num_timeout_cycles);
     jit::compiler->build("barrier", BarrierRuntime::generate(args));
 }
 
 static void launch_barrier(const topology::EPTopology* topology,
-                           const bool& direct_only, const int& num_max_scaleup_ranks, const int64_t& num_timeout_cycles,
+                           bool direct_only, int num_max_scaleup_ranks, int64_t num_timeout_cycles,
                            const at::cuda::CUDAStream& stream) {
     const auto args = get_barrier_args(topology, direct_only, num_max_scaleup_ranks, num_timeout_cycles);
     const auto runtime = jit::compiler->build("barrier", BarrierRuntime::generate(args));

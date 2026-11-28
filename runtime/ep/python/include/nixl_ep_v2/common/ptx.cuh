@@ -53,13 +53,13 @@ __forceinline__ __device__ int elect_one_sync() {
 }
 
 /// TMA and `cp.async`
-__forceinline__ __device__ void mbarrier_init_with_fence(mbarrier* ptr, const int& arrive_count = 1) {
+__forceinline__ __device__ void mbarrier_init_with_fence(mbarrier* ptr, int arrive_count = 1) {
     asm volatile("mbarrier.init.shared::cta.b64 [%1], %0;" ::
                  "r"(arrive_count), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(ptr))));
     asm volatile("fence.mbarrier_init.release.cluster;" ::);
 }
 
-__forceinline__ __device__ void mbarrier_arrive_and_set_tx(mbarrier* ptr, const int& num_bytes) {
+__forceinline__ __device__ void mbarrier_arrive_and_set_tx(mbarrier* ptr, int num_bytes) {
     asm volatile("mbarrier.arrive.expect_tx.shared::cta.b64 _, [%1], %0; \n\t" ::
                  "r"(num_bytes), "r"(static_cast<uint32_t>(__cvta_generic_to_shared(ptr))));
 }
@@ -112,8 +112,8 @@ enum TMACacheHint: int64_t {
 };
 
 __forceinline__ __device__ void tma_load_1d(
-    const void* dst_ptr, const void* src_ptr, mbarrier* ptr, const int& num_bytes,
-    const TMACacheHint& hint = TMACacheHint::kEvictFirst) {
+    const void* dst_ptr, const void* src_ptr, mbarrier* ptr, int num_bytes,
+    TMACacheHint hint = TMACacheHint::kEvictFirst) {
     // NOTES: normally, the loaded part will be evicted soon
     asm volatile(
         "cp.async.bulk.shared::cluster.global.mbarrier::complete_tx::bytes.L2::cache_hint [%0], [%1], %2, [%3], %4;\n" ::
@@ -126,8 +126,8 @@ __forceinline__ __device__ void tma_load_1d(
 }
 
 __forceinline__ __device__ void tma_store_1d(
-    const void* dst_ptr, const void* src_ptr, const int& num_bytes,
-    const TMACacheHint& hint = TMACacheHint::kEvictNormal) {
+    const void* dst_ptr, const void* src_ptr, int num_bytes,
+    TMACacheHint hint = TMACacheHint::kEvictNormal) {
     // NOTES: normally, the stored part will be used soon
     asm volatile("cp.async.bulk.global.shared::cta.bulk_group.L2::cache_hint [%0], [%1], %2, %3;\n" ::
                  "l"(dst_ptr),
@@ -157,13 +157,13 @@ __forceinline__ __device__ void cp_async_mbarrier_arrive(mbarrier* ptr) {
 
 /// Barriers
 template <int kNumThreads>
-__forceinline__ __device__ void named_barrier(const int& idx) {
+__forceinline__ __device__ void named_barrier(int idx) {
     // Equivalent to `barrier.sync.aligned`, which requires all threads run the same location of code
     asm volatile("bar.sync %0, %1;" ::"r"(idx), "r"(kNumThreads));
 }
 
 /// LD/ST instructions
-__forceinline__ __device__ int4 ldg_with_gez_pred(const int4* ptr, const int& value, const TMACacheHint& cache_hint = TMACacheHint::kEvictFirst) {
+__forceinline__ __device__ int4 ldg_with_gez_pred(const int4* ptr, int value, TMACacheHint cache_hint = TMACacheHint::kEvictFirst) {
     int4 ret = make_int4(0, 0, 0, 0);
     asm volatile(
         "{\n\t"
@@ -202,12 +202,12 @@ __forceinline__ __device__ dtype_t ld_volatile(const void* ptr) {
     }
 }
 
-__forceinline__ __device__ void red_add(const int64_t* ptr, const int64_t& value) {
+__forceinline__ __device__ void red_add(const int64_t* ptr, int64_t value) {
     // TODO(NVCC): why don't NVCC support `s64`?
     asm volatile("red.gpu.global.add.u64 [%0], %1;" :: "l"(ptr), "l"(value));
 }
 
-__forceinline__ __device__ void red_add_rel_sys(const int64_t* ptr, const int64_t& value) {
+__forceinline__ __device__ void red_add_rel_sys(const int64_t* ptr, int64_t value) {
     asm volatile("red.release.sys.global.add.u64 [%0], %1;" :: "l"(ptr), "l"(value));
 }
 
@@ -270,7 +270,7 @@ __device__ __forceinline__ void fence_acq_rel_sys() {
 
 /// Intrinsics
 template <typename dtype_t>
-__device__ __forceinline__ dtype_t exchange(dtype_t ptr, const int& src_lane_idx) {
+__device__ __forceinline__ dtype_t exchange(dtype_t ptr, int src_lane_idx) {
     EP_STATIC_ASSERT(sizeof(dtype_t) % sizeof(int) == 0, "");
     const auto send_int_values = reinterpret_cast<int*>(&ptr);
     dtype_t recv_dtype;
@@ -281,37 +281,37 @@ __device__ __forceinline__ dtype_t exchange(dtype_t ptr, const int& src_lane_idx
     return recv_dtype;
 }
 
-__device__ __forceinline__ unsigned gather(const bool& value) {
+__device__ __forceinline__ unsigned gather(bool value) {
     return __ballot_sync(0xffffffff, value);
 }
 
-__device__ __forceinline__ bool all(const bool& value) {
+__device__ __forceinline__ bool all(bool value) {
     return __all_sync(0xffffffff, value);
 }
 
-__device__ __forceinline__ bool any(const bool& value) {
+__device__ __forceinline__ bool any(bool value) {
     return __any_sync(0xffffffff, value);
 }
 
-__device__ __forceinline__ unsigned reduce_or(const unsigned& value) {
+__device__ __forceinline__ unsigned reduce_or(unsigned value) {
     return __reduce_or_sync(0xffffffff, value);
 }
 
 // The lanes' positions folded into the mask of lane group `group` (bit `l` is position `group * 32 + l`; a negative position sets nothing)
-__device__ __forceinline__ unsigned gather_position_group(const int& position, const int& group) {
+__device__ __forceinline__ unsigned gather_position_group(int position, int group) {
     return reduce_or((position >= 0 and (position >> 5) == group) ? (1u << (position & 31)) : 0u);
 }
 
-__device__ __forceinline__ int reduce_add(const int& value) {
+__device__ __forceinline__ int reduce_add(int value) {
     return __reduce_add_sync(0xffffffff, value);
 }
 
-__device__ __forceinline__ unsigned match(const int& value) {
+__device__ __forceinline__ unsigned match(int value) {
     return __match_any_sync(0xffffffff, value);
 }
 
 template <typename dtype_t>
-__device__ __forceinline__ auto ffs(const dtype_t& value) {
+__device__ __forceinline__ auto ffs(dtype_t value) {
     if constexpr (sizeof(dtype_t) == 4) {
         return __ffs(static_cast<int>(value)) - 1;
     } else {
@@ -320,18 +320,18 @@ __device__ __forceinline__ auto ffs(const dtype_t& value) {
     }
 }
 
-__device__ __forceinline__ int get_master_lane_idx(const unsigned& mask) {
+__device__ __forceinline__ int get_master_lane_idx(unsigned mask) {
     // Equivalent to `31 - __clz(mask)`
     int highest_idx;
     asm volatile("bfind.u32 %0, %1;" : "=r"(highest_idx) : "r"(mask));
     return highest_idx;
 }
 
-__device__ __forceinline__ bool deduplicate(const int& value, const int& lane_idx) {
+__device__ __forceinline__ bool deduplicate(int value, int lane_idx) {
     return get_master_lane_idx(match(value)) == lane_idx;
 }
 
-__device__ __forceinline__ int warp_inclusive_sum(int value, const int& lane_idx) {
+__device__ __forceinline__ int warp_inclusive_sum(int value, int lane_idx) {
     #pragma unroll
     for (int offset = 1; offset < 32; offset <<= 1) {
         const auto synced = __shfl_up_sync(0xffffffff, value, offset);
@@ -341,7 +341,7 @@ __device__ __forceinline__ int warp_inclusive_sum(int value, const int& lane_idx
     return value;
 }
 
-__device__ __forceinline__ int warp_exclusive_sum(const int& value, const int& lane_idx) {
+__device__ __forceinline__ int warp_exclusive_sum(int value, int lane_idx) {
     return warp_inclusive_sum(value, lane_idx) - value;
 }
 

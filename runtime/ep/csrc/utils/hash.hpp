@@ -12,7 +12,7 @@
 
 namespace nixl::runtime::ep {
 
-static uint64_t fnv1a(const std::vector<char>& data, const uint64_t& seed) {
+static uint64_t fnv1a(const std::vector<char>& data, uint64_t seed) {
     uint64_t h = seed;
     constexpr uint64_t prime = 0x100000001b3ull;
     for (const char& c: data) {

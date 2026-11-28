@@ -24,7 +24,7 @@ struct LaunchArgs {
     bool cooperative;
     bool pdl_enabled;
 
-    LaunchArgs(const int& grid_dim_x, const int& num_threads, const int& smem_size = 0, const int& cluster_dim = 1, const bool& cooperative = false, const bool& pdl_enabled = false):
+    LaunchArgs(int grid_dim_x, int num_threads, int smem_size = 0, int cluster_dim = 1, bool cooperative = false, bool pdl_enabled = false):
         grid_dim({grid_dim_x, 1}), num_threads(num_threads), smem_size(smem_size), cluster_dim(cluster_dim), cooperative(cooperative), pdl_enabled(pdl_enabled) {}
 };
 

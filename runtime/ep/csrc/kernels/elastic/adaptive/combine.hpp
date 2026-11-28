@@ -63,7 +63,7 @@ static void __instantiate_kernel() {
                            args.launch_args.num_threads / 32);
     }
 
-    static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
+    static void launch_impl(jit::KernelHandle kernel, const jit::LaunchConfigHandle& config, Args args) {
         EP_CUDA_UNIFIED_CHECK(jit::launch_kernel(kernel, config,
                                                  args.x,
                                                  args.src_metadata,
@@ -85,15 +85,15 @@ static void launch_combine(void* x,
                            int* channel_linked_list,
                            void* buffer, void* send_buffer,
                            const topology::EPTopology* topology,
-                           const int& num_reduced_tokens, const int& num_combined_tokens, const int& num_max_tokens_per_rank,
-                           const int& hidden,
-                           const int& num_topk,
-                           const int64_t& num_timeout_cycles,
-                           const bool& direct_only, const int& num_max_scaleup_ranks,
-                           const int& num_launch_sms,
-                           const int& num_channels_per_sm,
-                           const int& num_smem_bytes,
-                           const bool& use_expanded_layout, const bool& allow_multiple_reduction,
+                           int num_reduced_tokens, int num_combined_tokens, int num_max_tokens_per_rank,
+                           int hidden,
+                           int num_topk,
+                           int64_t num_timeout_cycles,
+                           bool direct_only, int num_max_scaleup_ranks,
+                           int num_launch_sms,
+                           int num_channels_per_sm,
+                           int num_smem_bytes,
+                           bool use_expanded_layout, bool allow_multiple_reduction,
                            const at::cuda::CUDAStream& stream) {
     // Direct-only combine fills shared memory independently; hybrid keeps dispatch's two warps per channel.
     const auto token_layout = get_combine_token_layout(hidden);
@@ -177,7 +177,7 @@ static void __instantiate_kernel() {
                            args.num_timeout_cycles);
     }
 
-    static void launch_impl(const jit::KernelHandle& kernel, const jit::LaunchConfigHandle& config, Args args) {
+    static void launch_impl(jit::KernelHandle kernel, const jit::LaunchConfigHandle& config, Args args) {
         EP_CUDA_UNIFIED_CHECK(jit::launch_kernel(kernel, config,
                                                  args.combined_x,
                                                  args.combined_topk_idx,
@@ -191,17 +191,17 @@ static void __instantiate_kernel() {
 
 static void launch_combine_reduce_epilogue(void* combined_x,
                                            topk_idx_t* combined_topk_idx,
-                                           const int& num_combined_tokens, const int& num_max_tokens_per_rank,
-                                           const int& hidden,
-                                           const int& num_experts_per_rank, const int& num_topk,
-                                           const int64_t& num_timeout_cycles,
+                                           int num_combined_tokens, int num_max_tokens_per_rank,
+                                           int hidden,
+                                           int num_experts_per_rank, int num_topk,
+                                           int64_t num_timeout_cycles,
                                            void* buffer,
                                            void* bias_0, void* bias_1,
                                            const topology::EPTopology* topology,
-                                           const int& num_sms, const int& num_launch_sms, const int& num_smem_bytes,
-                                           const bool& direct_only, const int& num_max_scaleup_ranks,
-                                           const int& num_channels_per_sm,
-                                           const bool& use_expanded_layout, const bool& allow_multiple_reduction,
+                                           int num_sms, int num_launch_sms, int num_smem_bytes,
+                                           bool direct_only, int num_max_scaleup_ranks,
+                                           int num_channels_per_sm,
+                                           bool use_expanded_layout, bool allow_multiple_reduction,
                                            const at::cuda::CUDAStream& stream) {
     // Maximize shared memory utilization
     // Too many warps may cause performance degrade, so we limit into 1024

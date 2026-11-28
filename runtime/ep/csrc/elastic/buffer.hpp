@@ -25,16 +25,16 @@ public:
     // `(region base, device, world rank, registered bytes)`
     using peer_info_t = std::tuple<uint64_t, int, int, uint64_t>;
 
-    buffer(const int64_t& num_buffer_bytes,
-           const bool& allow_multiple_reduction,
-           const bool& use_fp8_dispatch,
-           const bool& prefer_overlap_with_compute,
-           const int& num_cpu_timeout_secs, const int& num_gpu_timeout_secs,
-           const bool& explicitly_destroy,
-           const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
-           const int& world_rank,
-           const int& num_nixl_channels, const std::string& agent_name_prefix,
-           const int& num_experts_per_rank, const int& num_launch_sms);
+    buffer(int64_t num_buffer_bytes,
+           bool allow_multiple_reduction,
+           bool use_fp8_dispatch,
+           bool prefer_overlap_with_compute,
+           int num_cpu_timeout_secs, int num_gpu_timeout_secs,
+           bool explicitly_destroy,
+           int max_num_scaleout_ranks, int max_num_scaleup_ranks,
+           int world_rank,
+           int num_nixl_channels, const std::string& agent_name_prefix,
+           int num_experts_per_rank, int num_launch_sms);
 
     ~buffer() noexcept;
 
@@ -46,7 +46,7 @@ public:
     // Validate the new world before activating prepared views and publishing it to the device.
 
     // Python-facing: the position mask as 64-bit words, least significant first (missing words are zero)
-    void update_topology_masks(const int& mode, const uint32_t& scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
+    void update_topology_masks(int mode, uint32_t scaleout_mask, const std::vector<uint64_t>& scaleup_mask_words,
                                const std::vector<int>& disconnect_ranks);
 
     int get_mode() const;
@@ -78,43 +78,43 @@ public:
     // One isolated pair or graph replay between reads; synchronization and reset are diagnostic-only.
     std::tuple<torch::Tensor, std::vector<std::string>> read_profile() const;
 
-    void barrier(const bool& use_comm_stream, const bool& with_cpu_sync) const;
+    void barrier(bool use_comm_stream, bool with_cpu_sync) const;
 
     torch::cuda::CUDAStream stream_control_prologue(const std::optional<EventHandle>& previous_event,
-                                                    const bool& allocate_on_comm_stream,
+                                                    bool allocate_on_comm_stream,
                                                     c10::cuda::OptionalCUDAStreamGuard& stream_guard) const;
 
     void stream_control_before_epilogue(const std::optional<EventHandle>& previous_event_before_epilogue) const;
 
     std::optional<EventHandle> stream_control_epilogue(const std::vector<std::optional<torch::Tensor>>& tensors,
                                                        const at::cuda::CUDAStream& compute_stream,
-                                                       const bool& allocate_on_comm_stream,
-                                                       const bool& async_with_compute_stream) const;
+                                                       bool allocate_on_comm_stream,
+                                                       bool async_with_compute_stream) const;
 
-    static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(const int& num_max_tokens_per_rank,
-                                            const int& num_hidden_bytes, const int& num_sf_packs, const int& num_topk,
-                                            const int& num_scaleout_ranks, const int& num_scaleup_ranks);
+    static std::tuple<int64_t, int64_t> get_dispatch_buffer_size(int num_max_tokens_per_rank,
+                                            int num_hidden_bytes, int num_sf_packs, int num_topk,
+                                            int num_scaleout_ranks, int num_scaleup_ranks);
 
-    static std::tuple<int64_t, int64_t> get_combine_buffer_size(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                           const int& num_scaleout_ranks, const int& num_scaleup_ranks,
-                                           const bool& allow_multiple_reduction);
+    static std::tuple<int64_t, int64_t> get_combine_buffer_size(int num_max_tokens_per_rank, int hidden, int num_topk,
+                                           int num_scaleout_ranks, int num_scaleup_ranks,
+                                           bool allow_multiple_reduction);
 
-    static int get_max_num_fp8_sf_packs(const int& hidden);
+    static int get_max_num_fp8_sf_packs(int hidden);
 
     // Dispatch and combine share RECEIVE at the start and SEND at the end, each sized for the larger requirement.
     // A declared one-domain maximum needs only scale-up RECEIVE storage.
-    static std::tuple<int64_t, int64_t> get_buffer_arena_sizes(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk,
-                                                               const bool& allow_multiple_reduction, const bool& use_fp8_dispatch,
-                                                               const int& num_scaleout_ranks, const int& num_scaleup_ranks);
+    static std::tuple<int64_t, int64_t> get_buffer_arena_sizes(int num_max_tokens_per_rank, int hidden, int num_topk,
+                                                               bool allow_multiple_reduction, bool use_fp8_dispatch,
+                                                               int num_scaleout_ranks, int num_scaleup_ranks);
 
-    int64_t get_send_buffer_offset(const int& num_max_tokens_per_rank, const int& hidden, const int& num_topk) const;
+    int64_t get_send_buffer_offset(int num_max_tokens_per_rank, int hidden, int num_topk) const;
 
     // Buffer size for a declared maximum world (the committed extent's sub-layouts are prefixes of the maximum ones)
-    static int64_t calculate_buffer_size(const int& max_num_scaleout_ranks, const int& max_num_scaleup_ranks,
-                                         const int& num_max_tokens_per_rank, const int& hidden,
+    static int64_t calculate_buffer_size(int max_num_scaleout_ranks, int max_num_scaleup_ranks,
+                                         int num_max_tokens_per_rank, int hidden,
                                          int num_topk,
-                                         const bool& use_fp8_dispatch,
-                                         const bool& allow_multiple_reduction);
+                                         bool use_fp8_dispatch,
+                                         bool allow_multiple_reduction);
 
     std::tuple<torch::Tensor, std::optional<torch::Tensor>,
                std::optional<torch::Tensor>, std::optional<torch::Tensor>,
@@ -130,15 +130,15 @@ public:
              const torch::Tensor& topk_idx,
              const std::optional<torch::Tensor>& topk_weights,
              const std::optional<torch::Tensor>& cumulative_local_expert_recv_stats,
-             const int& num_max_tokens_per_rank,
-             const int& expert_alignment,
+             int num_max_tokens_per_rank,
+             int expert_alignment,
              const std::optional<EventHandle>& previous_event,
              const std::optional<EventHandle>& previous_event_before_epilogue,
-             const bool& async_with_compute_stream,
-             const bool& allocate_on_comm_stream,
-             const bool& do_handle_copy, const bool& do_cpu_sync,
-             const bool& do_expand, const bool& do_zero_padding,
-             const bool& use_tma_aligned_col_major_sf) const;
+             bool async_with_compute_stream,
+             bool allocate_on_comm_stream,
+             bool do_handle_copy, bool do_cpu_sync,
+             bool do_expand, bool do_zero_padding,
+             bool use_tma_aligned_col_major_sf) const;
 
     std::tuple<torch::Tensor, std::optional<EventHandle>>
     combine(const torch::Tensor& x,
@@ -149,19 +149,19 @@ public:
             const torch::Tensor& psum_num_recv_tokens_per_scaleup_rank,
             const torch::Tensor& token_metadata_at_forward,
             const torch::Tensor& channel_linked_list,
-            const bool& recv_count_is_exact,
-            const int& num_max_tokens_per_rank,
+            bool recv_count_is_exact,
+            int num_max_tokens_per_rank,
             const std::optional<EventHandle>& previous_event,
             const std::optional<EventHandle>& previous_event_before_epilogue,
-            const bool& async_with_compute_stream,
-            const bool& allocate_on_comm_stream,
-            const bool& use_expanded_layout) const;
+            bool async_with_compute_stream,
+            bool allocate_on_comm_stream,
+            bool use_expanded_layout) const;
 
     // The 2 MB unit of the workspace, the GPU buffer and `calculate_buffer_size`
     static constexpr int64_t kNumAlignmentBytes = 2097152;
 
 private:
-    topology::EPTopology make_topology(const int& mode, const uint32_t& scaleout_mask, const topology::ScaleupMask& scaleup_mask) const;
+    topology::EPTopology make_topology(int mode, uint32_t scaleout_mask, const topology::ScaleupMask& scaleup_mask) const;
 
     void publish_topology(const topology::EPTopology& next, const at::cuda::CUDAStream& stream);
 

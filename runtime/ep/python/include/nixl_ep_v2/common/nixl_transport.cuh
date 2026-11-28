@@ -73,7 +73,7 @@ struct NIXLTransport {
     NIXLDeviceContext ctx;
     unsigned channel;
 
-    __device__ __forceinline__ NIXLTransport(const NIXLDeviceContext& ctx, const int& channel):
+    __device__ __forceinline__ NIXLTransport(const NIXLDeviceContext& ctx, int channel):
         ctx(ctx), channel(static_cast<unsigned>(channel)) {
         // Channel 0 also serves mapped-only contexts; the host requires NVLink pointers for their active peers.
         EP_DEVICE_ASSERT(0 <= channel and (channel == 0 or channel < ctx.num_channels) and "Channel outside the context's channel count");
@@ -87,15 +87,15 @@ struct NIXLTransport {
     // The peer's address of the same word, or nullptr when the peer is not reachable with loads/stores (our own table
     // entry holds `local_base`, so for ourselves this is `local_ptr`)
     template <typename dtype_t = void>
-    __device__ __forceinline__ dtype_t* get_p2p_ptr(dtype_t* local_ptr, const int& world_rank) const {
+    __device__ __forceinline__ dtype_t* get_p2p_ptr(dtype_t* local_ptr, int world_rank) const {
         const auto base = static_cast<uint8_t*>(ptx::ldg_ptr(ctx.p2p_ptrs + world_rank));
         return base == nullptr ? nullptr : reinterpret_cast<dtype_t*>(base + get_offset(local_ptr));
     }
 
     // RDMA write of `num_bytes` from our region to the same offset in the peer's region. `ring_doorbell == false`
     // defers the doorbell: the request is posted with the next operation on this channel that rings it
-    __device__ __forceinline__ void rdma_put(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
-                                             const int& world_rank, const bool& ring_doorbell = true) const {
+    __device__ __forceinline__ void rdma_put(void* dst_sym_ptr, const void* src_sym_ptr, int num_bytes,
+                                             int world_rank, bool ring_doorbell = true) const {
         const nixlMemViewElem src{ctx.local_mvh, 0, get_offset(src_sym_ptr)};
         const nixlMemViewElem dst{ctx.remote_mvh, static_cast<size_t>(world_rank), get_offset(dst_sym_ptr)};
         const auto status = nixlPut<nixl_gpu_level_t::THREAD>(src, dst, static_cast<size_t>(num_bytes), channel,
@@ -108,7 +108,7 @@ struct NIXLTransport {
     }
 
     // Use the transport atomic even when the peer is mapped, to order preceding deferred RDMA puts.
-    __device__ __forceinline__ void rdma_add(void* sym_ptr, const uint64_t& value, const int& world_rank,
+    __device__ __forceinline__ void rdma_add(void* sym_ptr, uint64_t value, int world_rank,
                                             nixlGpuXferStatusH* completion = nullptr) const {
         const nixlMemViewElem dst{ctx.remote_mvh, static_cast<size_t>(world_rank), get_offset(sym_ptr)};
         const auto status = nixlAtomicAdd<nixl_gpu_level_t::THREAD>(value, dst, channel, 0, completion);
@@ -120,9 +120,9 @@ struct NIXLTransport {
     }
 
     // Publish a batch's completion after its payload on the same peer and channel; the atomic rings the deferred puts.
-    __device__ __forceinline__ void rdma_put_and_signal(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
-                                                       int64_t* signal_sym_ptr, const int& world_rank,
-                                                       const uint64_t& signal_value) const {
+    __device__ __forceinline__ void rdma_put_and_signal(void* dst_sym_ptr, const void* src_sym_ptr, int num_bytes,
+                                                       int64_t* signal_sym_ptr, int world_rank,
+                                                       uint64_t signal_value) const {
         rdma_put(dst_sym_ptr, src_sym_ptr, num_bytes, world_rank, false);
         rdma_add(signal_sym_ptr, signal_value, world_rank);
     }
@@ -132,7 +132,7 @@ struct NIXLTransport {
     // completed). Never mix this with plain stores into the same word. An optional status tracks local RDMA completion;
     // mapped atomics leave it unused
     template <typename dtype_t>
-    __device__ __forceinline__ void red_add_rel(dtype_t* sym_ptr, const dtype_t& value, const int& world_rank,
+    __device__ __forceinline__ void red_add_rel(dtype_t* sym_ptr, dtype_t value, int world_rank,
                                                 nixlGpuXferStatusH* completion = nullptr) const {
         if (const auto dst_ptr = get_p2p_ptr(sym_ptr, world_rank); dst_ptr != nullptr) {
             ptx::red_add_rel_sys(dst_ptr, value);
@@ -144,8 +144,8 @@ struct NIXLTransport {
 
     // Copy `num_bytes` (a multiple of 4) of control words to the same offset on the peer: word stores over the mapping,
     // an RDMA put otherwise; the receiver polls each word on its own, so the words need no order
-    __device__ __forceinline__ void put_words(void* dst_sym_ptr, const void* src_sym_ptr, const int& num_bytes,
-                                              const int& world_rank, const bool& ring_doorbell = true) const {
+    __device__ __forceinline__ void put_words(void* dst_sym_ptr, const void* src_sym_ptr, int num_bytes,
+                                              int world_rank, bool ring_doorbell = true) const {
         if (const auto dst_ptr = get_p2p_ptr(dst_sym_ptr, world_rank); dst_ptr != nullptr) {
             const auto src = static_cast<const int*>(src_sym_ptr);
             const auto dst = static_cast<int*>(dst_ptr);
@@ -158,7 +158,7 @@ struct NIXLTransport {
 
     // Store one word on a peer reachable with stores (the scale-up peers of the hybrid path always are)
     template <typename dtype_t>
-    __device__ __forceinline__ void put_value(dtype_t* sym_ptr, const dtype_t& value, const int& world_rank) const {
+    __device__ __forceinline__ void put_value(dtype_t* sym_ptr, dtype_t value, int world_rank) const {
         ptx::st_relaxed_sys(get_p2p_ptr(sym_ptr, world_rank), value);
     }
 };
