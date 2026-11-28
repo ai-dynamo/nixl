@@ -30,5 +30,9 @@ else
   nixl_api_copy = fs.copyfile('_api.py')
 endif
 nixl_logging_copy = fs.copyfile('logging.py')
+nixl_cute_copy = []
+if get_option('build_cute')
+  nixl_cute_copy = fs.copyfile('cute.py')
+endif
 
 subdir('runtime')

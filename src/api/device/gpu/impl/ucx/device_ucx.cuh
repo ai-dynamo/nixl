@@ -155,18 +155,17 @@ getPtr(nixlMemViewH mvh, size_t index) {
     return ptr;
 }
 
-// Make the PUSH flag lookup dependent so older UCX headers can omit it.
+// PUSH was introduced with ucp_device_flush. Probe the flag without making a
+// device-function call in this host-side constant expression.
 template<level_t level, typename UcpFlags = ucp_device_flags_t>
-inline constexpr bool flush_supported = requires(nixlMemViewH remote, unsigned channel_id) {
-    ucp_device_flush<ucsDeviceLevel<level>::value>(
-        remoteMemList(remote), channel_id, UcpFlags::UCP_DEVICE_FLAG_PUSH);
-};
+inline constexpr bool flush_supported = requires { UcpFlags::UCP_DEVICE_FLAG_PUSH; };
 
 template<level_t level, typename UcpFlags = ucp_device_flags_t>
 __device__ nixl_status_t
 flush(const nixlMemViewH &remote, unsigned channel_id) {
     if constexpr (flush_supported<level, UcpFlags>) {
-        const auto status = ucp_device_flush<ucsDeviceLevel<level>::value>(
+        constexpr auto ucs_level = ucsDeviceLevel<level>::value;
+        const auto status = ucp_device_flush<ucs_level>(
             remoteMemList(remote), channel_id, UcpFlags::UCP_DEVICE_FLAG_PUSH);
         if (status == UCS_OK) [[likely]] {
             return NIXL_SUCCESS;
