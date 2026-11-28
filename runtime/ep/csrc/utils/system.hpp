@@ -31,7 +31,7 @@ namespace nixl::runtime::ep {
 
 // ReSharper disable once CppNotAllPathsReturnValue
 template <typename dtype_t>
-static dtype_t get_env(const std::string& name, const dtype_t& default_value = dtype_t()) {
+static dtype_t get_env(const std::string& name, dtype_t default_value = dtype_t()) {
     const auto c_str = std::getenv(name.c_str());
     if (c_str == nullptr)
         return default_value;
