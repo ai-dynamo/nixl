@@ -555,6 +555,12 @@ if ucx_dep.found()
     if have_ucx_sgl
         add_project_arguments('-DHAVE_UCX_SGL_API', language: 'cpp')
     endif
+
+    have_ucx_musa_memory_type = cpp.has_header_symbol(
+        'ucs/memory/memory_type.h', 'UCS_MEMORY_TYPE_MUSA', dependencies: ucx_dep)
+    if have_ucx_musa_memory_type
+        add_project_arguments('-DHAVE_UCX_MUSA_MEMORY_TYPE', language: 'cpp')
+    endif
 endif
 
 if get_option('disable_gds_backend')
