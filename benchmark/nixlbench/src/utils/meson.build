@@ -42,6 +42,10 @@ if nixlbench_rocm_enabled
   utils_deps += [rocm_dep]
 endif
 
+if numa_available
+  utils_deps += [numa_dep]
+endif
+
 utils_lib = static_library('utils',
   utils_sources,
   dependencies: utils_deps,
