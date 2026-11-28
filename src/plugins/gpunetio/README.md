@@ -171,6 +171,10 @@ used for lane qualification and then finished without reserving. To experiment w
 Applications must still retire successful reads, perform any required
 consistency operation and keep all graph resources alive. The public FIFO mode has workload-dependent cost.
 
+When combining GPUNETIO and UCX device code, include `<gpu/nixl_device.cuh>`
+before any UCX device header. This selects the installed DOCA SDK before UCX's
+bundled legacy headers, which reuse its include guards.
+
 CUDA consumers define `NIXL_ENABLE_GPUNETIO_DEVICE_API=1` and include
 `<gpu/nixl_device.cuh>` for scalar `get`, or
 `<gpu/impl/gpunetio/device_gpunetio_batch.cuh>` for the backend-specific

@@ -19,7 +19,76 @@
 
 #include <gpu/device_types.cuh>
 
+#if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
+// UCX 1.24 bundles older DOCA headers with the same guards as the installed SDK.
+// Its endpoint layout is UCX-owned; adapt only the legacy wire helpers it uses.
+namespace nixl::gpu::impl::ucx::detail {
+__device__ __forceinline__ void
+legacyRingDoorbell(uint64_t *doorbell, uint32_t qpn_ds, uint64_t producer) {
+    doca_gpu_dev_verbs_wqe_ctrl_seg segment{};
+    segment.qpn_ds = qpn_ds;
+    segment.opmod_idx_opcode =
+        doca_gpu_dev_verbs_bswap32(producer << DOCA_GPUNETIO_VERBS_WQE_IDX_SHIFT);
+    uint64_t value;
+    __builtin_memcpy(&value, &segment, sizeof(value));
+    doca_gpu_dev_verbs_fence_release<DOCA_GPUNETIO_VERBS_SYNC_SCOPE_GPU>();
+#ifdef DOCA_GPUNETIO_VERBS_HAS_STORE_RELAXED_MMIO
+    doca_gpu_dev_verbs_store_relaxed_mmio(doorbell, value);
+#else
+    cuda::atomic_ref<uint64_t, cuda::thread_scope_system>(*doorbell).store(
+        value, cuda::memory_order_relaxed);
+#endif
+}
+
+__device__ __forceinline__ void
+legacyUpdateDoorbellRecord(uint32_t *record, uint32_t producer) {
+    cuda::atomic_ref<uint32_t, cuda::thread_scope_system>(*record).store(
+        doca_gpu_dev_verbs_prepare_dbr(producer), cuda::memory_order_relaxed);
+}
+} // namespace nixl::gpu::impl::ucx::detail
+
+// Limit the legacy spellings to UCX's include; preserve application macros.
+#pragma push_macro("READ_ONCE")
+#pragma push_macro("DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT")
+#pragma push_macro("DOCA_GPUNETIO_IB_MLX5_OPCODE_NOP")
+#pragma push_macro("DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE")
+#pragma push_macro("DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_FENCE")
+#pragma push_macro("doca_gpunetio_ib_mlx5_wqe_ctrl_seg")
+#pragma push_macro("doca_gpu_dev_common_ring_db")
+#pragma push_macro("doca_gpu_dev_common_update_dbr")
+#ifndef READ_ONCE
+#define READ_ONCE(x) DOCA_GPUNETIO_VERBS_VOLATILE(x)
+#endif
+#undef DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT
+#define DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT DOCA_GPUNETIO_MLX5_WQE_SQ_SHIFT
+#undef DOCA_GPUNETIO_IB_MLX5_OPCODE_NOP
+#define DOCA_GPUNETIO_IB_MLX5_OPCODE_NOP DOCA_GPUNETIO_MLX5_OPCODE_NOP
+#undef DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE
+#define DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE DOCA_GPUNETIO_MLX5_WQE_CTRL_CQ_UPDATE
+#undef DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_FENCE
+// The legacy FENCE is fence + initiator-small (0x80), not SDK FENCE (0x40).
+static_assert(DOCA_GPUNETIO_MLX5_WQE_CTRL_SMALL_FENCE == 0x80);
+#define DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_FENCE DOCA_GPUNETIO_MLX5_WQE_CTRL_SMALL_FENCE
+#undef doca_gpunetio_ib_mlx5_wqe_ctrl_seg
+#define doca_gpunetio_ib_mlx5_wqe_ctrl_seg doca_gpu_dev_verbs_wqe_ctrl_seg
+#undef doca_gpu_dev_common_ring_db
+#define doca_gpu_dev_common_ring_db ::nixl::gpu::impl::ucx::detail::legacyRingDoorbell
+#undef doca_gpu_dev_common_update_dbr
+#define doca_gpu_dev_common_update_dbr ::nixl::gpu::impl::ucx::detail::legacyUpdateDoorbellRecord
+#endif
+
 #include <ucp/api/device/ucp_device_impl.h>
+
+#if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
+#pragma pop_macro("doca_gpu_dev_common_update_dbr")
+#pragma pop_macro("doca_gpu_dev_common_ring_db")
+#pragma pop_macro("doca_gpunetio_ib_mlx5_wqe_ctrl_seg")
+#pragma pop_macro("DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_FENCE")
+#pragma pop_macro("DOCA_GPUNETIO_IB_MLX5_WQE_CTRL_CQ_UPDATE")
+#pragma pop_macro("DOCA_GPUNETIO_IB_MLX5_OPCODE_NOP")
+#pragma pop_macro("DOCA_GPUNETIO_IB_MLX5_WQE_SQ_SHIFT")
+#pragma pop_macro("READ_ONCE")
+#endif
 
 #include <cassert>
 #include <cstring>

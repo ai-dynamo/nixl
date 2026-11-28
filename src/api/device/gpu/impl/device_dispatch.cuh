@@ -22,6 +22,13 @@
 #include <gpu/device_types.cuh>
 #include <gpu/impl/level_utils.cuh>
 
+// Select the enabled DOCA SDK before UCX can include its bundled legacy headers.
+#include <gpu/impl/gpunetio/device_gpunetio.cuh>
+
+namespace nixl::gpu::impl::gpunetio {
+inline constexpr bool available = NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE;
+}
+
 #if __has_include(<ucp/api/device/ucp_device_impl.h>)
 #include <gpu/impl/ucx/device_ucx.cuh>
 
@@ -64,12 +71,6 @@ flush(const nixlMemViewH &, unsigned) {
 
 } // namespace nixl::gpu::impl::ucx
 #endif
-
-#include <gpu/impl/gpunetio/device_gpunetio.cuh>
-
-namespace nixl::gpu::impl::gpunetio {
-inline constexpr bool available = NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE;
-}
 
 // The proxy implementation needs only CUDA, so unlike the UCX arm it is always
 // present and needs no capability gate.

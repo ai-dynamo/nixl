@@ -17,6 +17,11 @@
 // The direct device API is enabled explicitly and requires DOCA 3.5 or newer.
 #if defined(NIXL_ENABLE_GPUNETIO_DEVICE_API) && NIXL_ENABLE_GPUNETIO_DEVICE_API
 #define NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE 1
+#if (defined(DOCA_GPUNETIO_DEV_VERBS_COMMON_H) || defined(DOCA_GPUNETIO_DEV_VERBS_QP_H)) && \
+    !defined(DOCA_GPUNETIO_MLX5_WQE_SQ_SHIFT)
+#error \
+    "Legacy DOCA device headers are already loaded; include gpu/nixl_device.cuh before UCX device headers when GPUNETIO is enabled"
+#endif
 #include <cerrno>
 #include <doca_gpunetio_dev_verbs_cq.cuh>
 #include <doca_gpunetio_dev_verbs_onesided.cuh>
