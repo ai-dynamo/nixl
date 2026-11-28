@@ -16,9 +16,13 @@
  */
 #include "proxy_ring.h"
 
+#include <algorithm>
+
 #include "nixl_log.h"
 
 namespace nixl {
+
+constexpr uint32_t kProxyConsumerIdxPublishBatch = 32;
 
 nixl_status_t
 proxyRing::allocate(deviceOps &allocator,
@@ -32,6 +36,7 @@ proxyRing::allocate(deviceOps &allocator,
     }
 
     depth_ = depth;
+    publish_batch_ = std::min(depth / 4, kProxyConsumerIdxPublishBatch);
     control_ = &control;
     ops_ = &allocator;
     if (allocator.getActiveDevice(device_id_) != NIXL_SUCCESS) {
@@ -123,9 +128,16 @@ proxyRing::retireOldest(nixl_status_t status) noexcept {
         }
         __atomic_store_n(&slot->completed_idx, front.op_idx, __ATOMIC_RELEASE);
     }
-    if (publishConsumerIdx(consumer_idx + 1) != NIXL_SUCCESS) {
-        NIXL_FATAL << "proxyRing::retireOldest: failed to publish CI"
-                   << " consumer_idx=" << consumer_idx + 1;
+    const uint64_t next_idx = consumer_idx + 1;
+    consumer_idx_shadow_ = next_idx;
+
+    const bool ring_empty = next_idx == submit_idx_;
+    const bool batch_full = next_idx - published_consumer_idx_ >= publish_batch_;
+    if (ring_empty || batch_full) {
+        if (publishConsumerIdx(next_idx) != NIXL_SUCCESS) {
+            NIXL_FATAL << "proxyRing::retireOldest: failed to publish CI"
+                       << " consumer_idx=" << next_idx;
+        }
     }
     front = proxyRequestState{};
 }
@@ -192,6 +204,7 @@ proxyRing::publishConsumerIdx(uint64_t value) noexcept {
     const nixl_status_t status = control_->publishConsumerIdx(ring_index_, value);
     if (status == NIXL_SUCCESS) {
         consumer_idx_shadow_ = value;
+        published_consumer_idx_ = value;
     }
     return status;
 }
@@ -207,9 +220,11 @@ proxyRing::deallocate() noexcept {
     ops_ = nullptr;
     ring_index_ = 0;
     consumer_idx_shadow_ = 0;
+    published_consumer_idx_ = 0;
     inflight_.clear();
     submit_idx_ = 0;
     depth_ = 0;
+    publish_batch_ = 0;
     device_view_ = nixlProxyRingDesc{};
 }
 

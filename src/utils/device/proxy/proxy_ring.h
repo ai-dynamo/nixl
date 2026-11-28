@@ -166,8 +166,8 @@ private:
 
     /** Host-only submit frontier; consumer_idx_shadow_ remains the completion frontier. */
     uint64_t submit_idx_ = 0;
-    /** Host shadow of the authoritative GPU-visible consumer index. */
     uint64_t consumer_idx_shadow_ = 0;
+    uint64_t published_consumer_idx_ = 0;
     /** In-flight state retained until the completion frontier passes its ring slot. */
     std::vector<proxyRequestState> inflight_;
 
@@ -190,6 +190,7 @@ private:
     int device_id_ = 0;
     /** Host-side ring depth for the CPU worker; nixlProxyWorkRing itself is device-only. */
     uint32_t depth_ = 0;
+    uint32_t publish_batch_ = 0;
     nixlProxyRingDesc device_view_{};
 };
 
