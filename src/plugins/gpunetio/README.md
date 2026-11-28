@@ -86,26 +86,29 @@ nixl::gpu::xferStatusH status{};
 auto rc = nixl::gpu::get({local_view, 0, 0}, {remote_view, 0, 0},
                           bytes, 3, nixl::gpu::flags::defer, &status);
 // Check rc == NIXL_IN_PROG before using the accepted request.
-rc = nixl::gpu::flush(remote_view, 3);
+while (rc == NIXL_IN_PROG) {
+    rc = nixl::gpu::getXferStatus(status);
+}
 // Check rc == NIXL_SUCCESS before consuming data or reusing buffers.
 ```
 
-GET, getXferStatus and GET-channel flush support THREAD, WARP and BLOCK
+GET and getXferStatus support THREAD, WARP and BLOCK
 cooperation with one-dimensional blocks. WARP calls require all 32 lanes of a
 full warp; BLOCK calls require every thread in the block. A collective call
 requires matching arguments and a shared status handle when one is supplied.
 GRID returns
 `NIXL_ERR_NOT_SUPPORTED`. `getPtr` returns nullptr because an RDMA registration
-does not provide a local mapping of remote memory. GPUNETIO PUT and atomicAdd
+does not provide a local mapping of remote memory. GPUNETIO PUT, atomicAdd and flush
 return `NIXL_ERR_NOT_SUPPORTED` in this GET-only implementation.
 
 GET validates the entire requested range before posting and splits transfers
 above the SDK WQE limit into bounded chunks. A status covers the complete request.
-A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional;
-`flush(remote_view, channel)` blocks until the channel work accepted before the
-call completes or fails. A supplied status can be polled in any order. It can be
-reused once its request is final: polled to a terminal result, completed by a
-flush, or on a failed channel; reusing it earlier returns
+A successful submission returns `NIXL_IN_PROG`. Its status pointer is optional.
+Supply a status on the last GET in each channel's sequence and poll it to a
+terminal result. Its successful FIFO completion also covers earlier statusless
+GETs on that channel. A supplied status can be polled in any order and reused
+once its request is final: retired by a status poll or on a failed channel;
+reusing it earlier returns
 `NIXL_ERR_REPOST_ACTIVE`. Until getXferStatus has returned a terminal result for
 a status, polling it or passing it to `get` reads the state of the channel that
 accepted the request, so the engine that owns the channel must still exist.
@@ -115,19 +118,19 @@ from requests without a status. Completed requests stay complete if a later
 request fails; the failed channel rejects new work until teardown.
 
 `flags::defer` postpones doorbell publication until a nondeferred submission,
-status poll, flush, or queue-capacity pressure drives progress. Other flags are
+status poll, or queue-capacity pressure drives progress. Other flags are
 rejected. Multiple producers may submit on the same channel; a per-channel lock
 serializes queue reservation and completion checks, and contending callers spin
 until it is released. When the channel queue is full, `get` waits under that
 lock until completions free a slot. With an unresponsive peer this lasts until
 the transport reports an error, and other GETs on the channel wait behind it.
-`flush` waits for its completions without holding the lock. Concurrent requests
-on different channels remain independent. A channel held by a backend readSession returns
+Concurrent requests on different channels remain independent. A channel held by a backend readSession returns
 `NIXL_ERR_NOT_ALLOWED` to standard calls until the session finishes.
 
-getXferStatus and flush acquire completed RDMA reads before reporting success.
-The GET completion path checks every CQE, including requests without a status;
-flush supplies the completion boundary for those requests.
+getXferStatus acquires completed RDMA reads before reporting success.
+The GET completion path checks every CQE, including requests without a status.
+A nondeferred last GET publishes earlier deferred requests; polling its status
+provides their completion boundary.
 
 The backend-specific readSession extension retains its prepared-lane selector:
 set `nixl_opt_args_t::customParam` to `"native_channel=N"` when preparing matching
@@ -143,8 +146,8 @@ Each pool channel has independent ownership, generations, SQ/CQ and FIFO
 submission/completion tracking. Independent GETs may be in flight concurrently,
 including on the same channel. Keep in-flight GET destination ranges disjoint.
 Before consuming or reusing a destination, or issuing a GET that depends on its
-data, wait for its status to return `NIXL_SUCCESS` or for its channel flush to
-return `NIXL_SUCCESS`. Batch owners follow the readSession polling/retirement
+data, wait for its status (or a later GET's status on the same channel) to return
+`NIXL_SUCCESS`. Batch owners follow the readSession polling/retirement
 contract below.
 
 The native pool remains one peer per engine. Re-preparing a

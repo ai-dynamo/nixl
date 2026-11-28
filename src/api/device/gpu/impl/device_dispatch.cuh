@@ -258,7 +258,7 @@ flush(const nixlMemViewH &remote, unsigned channel_id) {
     case exec_mode_t::PROXY:
         return NIXL_ERR_NOT_SUPPORTED;
     case exec_mode_t::GPUNETIO_DIRECT:
-        return gpunetio::flush<level>(view->backend_memview, channel_id);
+        return NIXL_ERR_NOT_SUPPORTED;
     default:
         return NIXL_ERR_INVALID_PARAM;
     }

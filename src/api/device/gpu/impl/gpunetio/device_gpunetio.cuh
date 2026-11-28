@@ -208,7 +208,7 @@ submitGet(const memViewElem &local,
         if (status->mode != exec_mode_t{} && status->mode != exec_mode_t::GPUNETIO_DIRECT) {
             return NIXL_ERR_INVALID_PARAM;
         }
-        // A request completed by a flush, or on a failed channel, is final even if its
+        // A request retired by another poller, or on a failed channel, is final even if its
         // handle was never polled; only a still-outstanding request blocks reuse. Like
         // pollStatus, this reads old->lane: the engine that accepted it must still exist.
         const auto *old = statusPayload(status);
@@ -244,7 +244,7 @@ submitGet(const memViewElem &local,
     }
     auto *lane = r->context->channels + channel;
     auto phase = deviceAtomic(lane->phase);
-    // Retry without sleeping, here and in flush: a nanosleep backoff measured slower
+    // Retry without sleeping: a nanosleep backoff measured slower
     // with 128 THREAD callers sharing one channel.
     for (;;) {
         uint32_t previous = phase.load(cuda::memory_order_acquire);
@@ -314,51 +314,6 @@ pollStatus(xferStatusH &status) {
     return result;
 }
 
-__device__ inline nixl_status_t
-flushChannel(nixlMemViewH remote, unsigned channel) {
-    const auto *r = static_cast<const GpunetioDeviceView *>(remote);
-    if (!validView(r, gpunetio_device_view_role_remote) || channel >= r->context->channel_count) {
-        return NIXL_ERR_INVALID_PARAM;
-    }
-    auto *lane = r->context->channels + channel;
-    auto phase = deviceAtomic(lane->phase);
-    // Flush covers the work accepted before it. Take that target under the lock, then
-    // wait without holding the lock, so other callers keep using the channel.
-    bool have_target = false;
-    uint64_t target = 0;
-    for (;;) {
-        if (have_target &&
-            deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
-            return NIXL_SUCCESS;
-        }
-        uint32_t previous = phase.load(cuda::memory_order_acquire);
-        if (previous == gpunetio_lane_phase_failed || previous == gpunetio_lane_phase_posting) {
-            // A failure after the target leaves the flush successful, and a readSession only
-            // takes an idle lane, so a flush that already has a target has completed by then.
-            if (have_target &&
-                deviceAtomic(lane->next_retire).load(cuda::memory_order_acquire) >= target) {
-                return NIXL_SUCCESS;
-            }
-            return previous == gpunetio_lane_phase_failed ? NIXL_ERR_BACKEND : NIXL_ERR_NOT_ALLOWED;
-        }
-        if ((previous == gpunetio_lane_phase_idle || previous == gpunetio_lane_phase_posted) &&
-            phase.compare_exchange_weak(previous,
-                                        gpunetio_lane_phase_scalar,
-                                        cuda::memory_order_acquire,
-                                        cuda::memory_order_acquire)) {
-            if (!have_target) {
-                publish(lane);
-                target = lane->active_ticket;
-                have_target = true;
-            }
-            const auto result = progress(lane, target);
-            unlockLane(lane);
-            if (result != NIXL_IN_PROG) {
-                return result;
-            }
-        }
-    }
-}
 #endif
 
 template<level_t level>
@@ -394,25 +349,6 @@ get(const memViewElem &dst,
         nixl_status_t result = NIXL_IN_PROG;
         if (isLeader<level>()) {
             result = submitGet(dst, src, bytes, channel, flags, status);
-        }
-        result = broadcastStatus<level>(result);
-        if constexpr (level == level_t::WARP) {
-            sync<level>();
-        }
-        return result;
-    }
-#endif
-    return NIXL_ERR_NOT_SUPPORTED;
-}
-
-template<level_t level>
-__device__ nixl_status_t
-flush(nixlMemViewH remote, unsigned channel) {
-#if NIXL_GPUNETIO_DEVICE_API_HAS_SDK_PROFILE
-    if constexpr (level != level_t::GRID) {
-        nixl_status_t result = NIXL_IN_PROG;
-        if (isLeader<level>()) {
-            result = flushChannel(remote, channel);
         }
         result = broadcastStatus<level>(result);
         if constexpr (level == level_t::WARP) {
