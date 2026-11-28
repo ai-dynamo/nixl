@@ -30,8 +30,6 @@
 
 namespace nixl {
 
-inline constexpr uint64_t kProxyConsumerIdxPublishBatch = 32;
-
 /** One in-flight record, retained until the completion frontier passes its ring slot. */
 struct proxyRequestState {
     uint64_t op_idx = 0;

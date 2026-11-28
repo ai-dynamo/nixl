@@ -16,9 +16,13 @@
  */
 #include "proxy_ring.h"
 
+#include <algorithm>
+
 #include "nixl_log.h"
 
 namespace nixl {
+
+constexpr uint32_t kProxyConsumerIdxPublishBatch = 32;
 
 nixl_status_t
 proxyRing::allocate(deviceOps &allocator,
@@ -32,10 +36,7 @@ proxyRing::allocate(deviceOps &allocator,
     }
 
     depth_ = depth;
-    publish_batch_ = depth / 4;
-    if (publish_batch_ > kProxyConsumerIdxPublishBatch) {
-        publish_batch_ = kProxyConsumerIdxPublishBatch;
-    }
+    publish_batch_ = std::min(depth / 4, kProxyConsumerIdxPublishBatch);
     control_ = &control;
     ops_ = &allocator;
     if (allocator.getActiveDevice(device_id_) != NIXL_SUCCESS) {
