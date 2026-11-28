@@ -12,7 +12,6 @@
 
 struct nixlbenchDeviceCounters {
     uint64_t done;
-    uint64_t error;
 };
 
 /**
@@ -25,7 +24,7 @@ struct nixlbenchDeviceCounters {
  * @a numRegions is data region count: group @c g owns indices @c g*numRegions .. @c
  * (g+1)*numRegions-1. The host must append a counter buffer after all data descriptors, at index @a
  * counterIndex. The counter buffer contains one @ref nixlbenchDeviceCounters slot per channel.
- * Each slot contains a done counter and an error counter.
+ * Each slot contains a done counter. Errors are returned to the local host.
  *
  * Every group in the launched block transfers @a numIterations times.
  * The block as a whole performs @c numIterations * num_groups list transfers.
@@ -41,8 +40,10 @@ struct nixlbenchDeviceXferParams {
     size_t regionSize; ///< Bytes per region for this transfer pattern
     uint64_t numIterations; ///< Per-group number of complete region-list transfers
     unsigned channelNum; ///< Logical channels shared by groups using group_id % channelNum
+    uint32_t putsPerSubmit; ///< PUTs per group per submit; must be >= 1
     uint64_t *postDurationNs; ///< Per-iteration, per-group PUT posting duration output
     uint64_t *xferDurationNs; ///< Per-iteration, per-group completion polling duration output
+    nixl_status_t *deviceStatus; ///< Caller-owned device output buffer with one status per group
 };
 
 /**
@@ -59,12 +60,14 @@ struct nixlbenchDeviceXferParams {
  * On failure, logs to stderr. Synchronizes the device so device printf output from the kernel is
  * flushed before returning.
  *
- * @param params        Transfer parameters (handles, counts, size).
+ * Every group leader writes its final NIXL status to params.deviceStatus;
+ * The caller must read and check these statuses after a successful return.
+ *
+ * @param params        Transfer parameters (handles, counts, size, output buffers).
  * @param block_threads CUDA block dimension in the x direction.
- * @return NIXL_SUCCESS if the kernel launches and synchronizes without CUDA runtime errors;
+ * @return NIXL_SUCCESS if the kernel launches and synchronizes successfully;
  *         NIXL_ERR_INVALID_PARAM for invalid parameters;
- *         NIXL_ERR_BACKEND for CUDA launch or synchronization failures.
- *         Device transfer failures are reported separately through the remote error counter.
+ *         NIXL_ERR_BACKEND for CUDA runtime failures.
  */
 nixl_status_t
 nixlbenchLaunchDevicePut(const nixlbenchDeviceXferParams &params, unsigned block_threads);

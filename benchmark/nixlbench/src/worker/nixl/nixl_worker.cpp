@@ -2185,9 +2185,10 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     const size_t duration_bytes = sample_count * sizeof(uint64_t);
     uint64_t *device_post_duration_ns = nullptr;
     uint64_t *device_xfer_duration_ns = nullptr;
+    nixl_status_t *device_status = nullptr;
     auto duration_buffer_guard =
-        make_scope_guard([&device_post_duration_ns, &device_xfer_duration_ns] {
-            auto free_buffer = [](uint64_t *buffer) {
+        make_scope_guard([&device_post_duration_ns, &device_xfer_duration_ns, &device_status] {
+            auto free_buffer = [](void *buffer) {
                 if (buffer == nullptr) {
                     return;
                 }
@@ -2199,11 +2200,14 @@ execDeviceTransfer(nixlMemViewH local_mvh,
             };
             free_buffer(device_post_duration_ns);
             free_buffer(device_xfer_duration_ns);
+            free_buffer(device_status);
         });
     CHECK_CUDA_ERROR(cudaMalloc(&device_post_duration_ns, duration_bytes),
                      "Failed to allocate Device API post duration buffer");
     CHECK_CUDA_ERROR(cudaMalloc(&device_xfer_duration_ns, duration_bytes),
                      "Failed to allocate Device API transfer duration buffer");
+    CHECK_CUDA_ERROR(cudaMalloc(&device_status, num_groups * sizeof(nixl_status_t)),
+                     "Failed to allocate Device API group status buffer");
     CHECK_CUDA_ERROR(cudaMemset(device_post_duration_ns, 0xFF, duration_bytes),
                      "Failed to initialize Device API post duration buffer");
     CHECK_CUDA_ERROR(cudaMemset(device_xfer_duration_ns, 0xFF, duration_bytes),
@@ -2221,8 +2225,10 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     params.regionSize = region_size;
     params.numIterations = static_cast<uint64_t>(per_group_iter);
     params.channelNum = static_cast<unsigned>(xferBenchConfig::device_channel_num);
+    params.putsPerSubmit = xferBenchConfig::device_puts_per_submit;
     params.postDurationNs = device_post_duration_ns;
     params.xferDurationNs = device_xfer_duration_ns;
+    params.deviceStatus = device_status;
     xferBenchTimer total_timer;
     nixl_status_t st = nixlbenchLaunchDevicePut(params, static_cast<unsigned>(block_threads));
     const nixlTime::us_t total_duration = total_timer.lap();
@@ -2234,6 +2240,19 @@ execDeviceTransfer(nixlMemViewH local_mvh,
     }
     if (__builtin_expect(terminate_ptr && terminate_ptr->load(), 0)) {
         return -1;
+    }
+    std::vector<nixl_status_t> host_status(num_groups);
+    CHECK_CUDA_ERROR(cudaMemcpy(host_status.data(),
+                                device_status,
+                                num_groups * sizeof(nixl_status_t),
+                                cudaMemcpyDeviceToHost),
+                     "Failed to copy Device API group statuses");
+    for (size_t group = 0; group < num_groups; ++group) {
+        if (host_status[group] != NIXL_SUCCESS) {
+            std::cerr << "NIXL Device API group " << group
+                      << " failed: " << nixlEnumStrings::statusStr(host_status[group]) << std::endl;
+            return -1;
+        }
     }
     if (collect_iteration_stats) {
         std::vector<uint64_t> post_duration_ns(sample_count);
@@ -2303,10 +2322,10 @@ xferBenchNixlWorker::waitForDeviceCompletionCounter(const xferBenchIOV &counter_
         bool all_done = true;
         for (size_t channel = 0; channel < counters.size(); ++channel) {
             const auto &counter = counters[channel];
-            if ((counter.error > 0) || (counter.done > expected_per_channel)) {
+            if (counter.done > expected_per_channel) {
                 std::cerr << "NIXL Device API: " << phase << " failed on channel " << channel
                           << ": done=" << counter.done << " expected=" << expected_per_channel
-                          << " error=" << counter.error << std::endl;
+                          << std::endl;
                 terminate.store(1);
                 return false;
             }
