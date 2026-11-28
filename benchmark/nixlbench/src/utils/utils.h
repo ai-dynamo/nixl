@@ -218,6 +218,8 @@ public:
     static bool reregister_mem;
     static bool prepared_xfer;
     static int pipeline_depth;
+    static size_t memos_keys_per_thread;
+    static bool memos_reuse_local;
     static int gds_batch_pool_size;
     static int gds_batch_limit;
     static int gds_mt_num_threads;
